@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS cruft
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor scratch
+*.swp
+
+# Probe scratch / throwaway test files
+probe/_*
+
+# Local session captures / generated reports (Phase 5+)
+/sessions/
+/reports/

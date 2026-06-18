@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "serenitynow": {
+      "command": "serenitynow",
+      "args": [
+        "mcp-stdio"
+      ]
+    }
+  }
+}

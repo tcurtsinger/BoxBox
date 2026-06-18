@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "serenitynow": {
+      "command": "serenitynow",
+      "args": [
+        "mcp-stdio"
+      ],
+      "env": {
+        "SERENITYNOW_VAULT": "E:\\Notes\\SerenityNow",
+        "SERENITYNOW_DATA_DIR": "E:\\Notes\\SerenityNow Data"
+      }
+    }
+  }
+}
