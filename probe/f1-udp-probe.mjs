@@ -65,6 +65,8 @@ let participants = null;     // [{ name, num, public }]
 let liveTelemetryCars = 0;   // cars with engineRPM > 0 (cross-check vs Public flag)
 let lastPacketAt = 0;
 const startedAt = Date.now();
+const events = new Map();    // event 4-char code -> count
+const recentEvents = [];     // ring buffer of the last few events
 
 function ensure(id) {
   let s = stats.get(id);
@@ -122,6 +124,13 @@ function parseCarTelemetry(buf, format) {
   liveTelemetryCars = live;
 }
 
+function recordEvent(buf) {
+  const code = buf.toString('ascii', 29, 33);
+  events.set(code, (events.get(code) ?? 0) + 1);
+  recentEvents.push({ code, t: session.time ?? 0 });
+  if (recentEvents.length > 10) recentEvents.shift();
+}
+
 const sock = dgram.createSocket('udp4');
 
 sock.on('message', (buf) => {
@@ -135,6 +144,7 @@ sock.on('message', (buf) => {
   session.gameMajor = buf.readUInt8(3);
   session.gameMinor = buf.readUInt8(4);
   try { session.uid = buf.readBigUInt64LE(7).toString(); } catch { /* old node */ }
+  try { session.time = buf.readFloatLE(15); } catch { /* old node */ }
 
   const s = ensure(id);
   s.count++;
@@ -142,6 +152,7 @@ sock.on('message', (buf) => {
 
   try {
     if (id === 1) parseSession(buf);
+    else if (id === 3) recordEvent(buf);
     else if (id === 4) parseParticipants(buf, format);
     else if (id === 6) parseCarTelemetry(buf, format);
   } catch { /* tolerate malformed frames while probing */ }
@@ -216,11 +227,23 @@ function render() {
     out.push('Telemetry sharing: (waiting for Participants packet...)');
   }
 
+  if (events.size) {
+    out.push('');
+    out.push('Events: ' + [...events.entries()].map(([c, n]) => `${c} x${n}`).join('   '));
+    const recent = recentEvents.slice(-6).map((e) => `${e.code}@${e.t.toFixed(1)}s`).join('  ');
+    if (recent) out.push('  recent: ' + recent);
+  }
+
   out.push('');
   const motion = stats.get(0);
   out.push(motion && motion.count > 0
     ? `>>> MOTION (track-map data): RECEIVED - ${motion.count} pkts, ${motion.rate}/s. Live track map is feasible. <<<`
     : '>>> MOTION (track-map data): NOT RECEIVED yet - track map likely unavailable to a spectator. <<<');
+
+  const fc = stats.get(8);
+  if (fc && fc.count > 0) {
+    out.push(`>>> FINAL CLASSIFICATION received (${fc.count}) - this is the post-session report trigger. <<<`);
+  }
 
   if (Date.now() - lastPacketAt > 3000) {
     out.push('');
