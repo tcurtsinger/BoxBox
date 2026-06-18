@@ -3,6 +3,11 @@
 
 export const HEADER_SIZE = 29;
 
+// ERS energy store capacity (Joules), used for battery-percentage display. The
+// MFD value is derived from store energy; the 2026 regs may raise this, so
+// revisit once confirmed against live CarStatus data.
+export const ERS_MAX_JOULES = 4_000_000;
+
 export const PacketId = {
   Motion: 0,
   Session: 1,
@@ -57,6 +62,13 @@ export const SAFETY_CAR_STATUS: Record<number, string> = {
   1: "Full",
   2: "Virtual",
   3: "Formation Lap",
+};
+
+export const ERS_DEPLOY_MODE: Record<number, string> = {
+  0: "None",
+  1: "Medium",
+  2: "Hotlap",
+  3: "Overtake", // the 2026 pack labels mode 3 "Boost"
 };
 
 export const PIT_STATUS: Record<number, string> = {

@@ -1,5 +1,5 @@
 import { BufferReader } from "./reader.ts";
-import { maxCarsForFormat } from "./constants.ts";
+import { maxCarsForFormat, ERS_MAX_JOULES } from "./constants.ts";
 import type {
   PacketHeader,
   SessionData,
@@ -8,6 +8,15 @@ import type {
   LiveryColour,
   LapDataData,
   LapEntry,
+  CarTelemetryData,
+  CarTelemetryEntry,
+  CarStatusData,
+  CarStatusEntry,
+  CarDamageData,
+  CarDamageEntry,
+  EventData,
+  FinalClassificationData,
+  FinalClassificationEntry,
 } from "./types.ts";
 
 // --- Session (id 1) -----------------------------------------------------------
@@ -181,4 +190,280 @@ export function parseLapData(rd: BufferReader, header: PacketHeader): LapDataDat
   const timeTrialPBCarIdx = rd.u8();
   const timeTrialRivalCarIdx = rd.u8();
   return { cars, timeTrialPBCarIdx, timeTrialRivalCarIdx };
+}
+
+// --- Car Telemetry (id 6) -----------------------------------------------------
+// engineTemperature is u16 pre-2026, u8 in the 2026 pack (stride 60 -> 59).
+export function parseCarTelemetry(rd: BufferReader, header: PacketHeader): CarTelemetryData {
+  const engineTempWide = header.packetFormat < 2026;
+  const maxCars = maxCarsForFormat(header.packetFormat);
+  const cars: CarTelemetryEntry[] = [];
+
+  for (let i = 0; i < maxCars; i++) {
+    const speed = rd.u16();
+    const throttle = rd.f32();
+    const steer = rd.f32();
+    const brake = rd.f32();
+    rd.u8(); // clutch
+    const gear = rd.i8();
+    const engineRPM = rd.u16();
+    const drs = rd.u8();
+    const revLightsPercent = rd.u8();
+    rd.u16(); // revLightsBitValue
+    const brakesTemperature = rd.u16Array(4);
+    const tyresSurfaceTemperature = rd.u8Array(4);
+    const tyresInnerTemperature = rd.u8Array(4);
+    const engineTemperature = engineTempWide ? rd.u16() : rd.u8();
+    const tyresPressure = rd.f32Array(4);
+    const surfaceType = rd.u8Array(4);
+
+    cars.push({
+      index: i,
+      speed,
+      throttle,
+      brake,
+      steer,
+      gear,
+      engineRPM,
+      drs: drs === 1,
+      revLightsPercent,
+      brakesTemperature,
+      tyresSurfaceTemperature,
+      tyresInnerTemperature,
+      engineTemperature,
+      tyresPressure,
+      surfaceType,
+    });
+  }
+
+  const mfdPanelIndex = rd.u8();
+  rd.u8(); // mfdPanelIndexSecondaryPlayer
+  const suggestedGear = rd.i8();
+  return { cars, mfdPanelIndex, suggestedGear };
+}
+
+// --- Car Status (id 7) --------------------------------------------------------
+// The 2026 pack inserts ersHarvestLimitPerLap (stride 55 -> 59).
+export function parseCarStatus(rd: BufferReader, header: PacketHeader): CarStatusData {
+  const is2026 = header.packetFormat >= 2026;
+  const maxCars = maxCarsForFormat(header.packetFormat);
+  const cars: CarStatusEntry[] = [];
+
+  for (let i = 0; i < maxCars; i++) {
+    rd.u8(); // tractionControl
+    rd.u8(); // antiLockBrakes
+    const fuelMix = rd.u8();
+    rd.u8(); // frontBrakeBias
+    rd.u8(); // pitLimiterStatus
+    const fuelInTank = rd.f32();
+    const fuelCapacity = rd.f32();
+    const fuelRemainingLaps = rd.f32();
+    const maxRPM = rd.u16();
+    rd.u16(); // idleRPM
+    rd.u8(); // maxGears
+    const drsAllowed = rd.u8();
+    const drsActivationDistance = rd.u16();
+    const actualTyreCompound = rd.u8();
+    const visualTyreCompound = rd.u8();
+    const tyresAgeLaps = rd.u8();
+    const vehicleFIAFlags = rd.i8();
+    rd.f32(); // enginePowerICE
+    rd.f32(); // enginePowerMGUK
+    const ersStoreEnergy = rd.f32();
+    const ersDeployMode = rd.u8();
+    rd.f32(); // ersHarvestedThisLapMGUK
+    rd.f32(); // ersHarvestedThisLapMGUH
+    if (is2026) rd.f32(); // ersHarvestLimitPerLap (2026 only)
+    const ersDeployedThisLap = rd.f32();
+    rd.u8(); // networkPaused
+
+    const batteryPct = Math.max(0, Math.min(100, (ersStoreEnergy / ERS_MAX_JOULES) * 100));
+
+    cars.push({
+      index: i,
+      fuelMix,
+      fuelInTank,
+      fuelCapacity,
+      fuelRemainingLaps,
+      maxRPM,
+      drsAllowed: drsAllowed === 1,
+      drsActivationDistance,
+      actualTyreCompound,
+      visualTyreCompound,
+      tyresAgeLaps,
+      vehicleFIAFlags,
+      ersStoreEnergy,
+      ersDeployMode,
+      ersDeployedThisLap,
+      batteryPct,
+    });
+  }
+
+  return { cars };
+}
+
+// --- Car Damage (id 10) -------------------------------------------------------
+// Per-car struct is 46 bytes, identical across formats.
+export function parseCarDamage(rd: BufferReader, header: PacketHeader): CarDamageData {
+  const maxCars = maxCarsForFormat(header.packetFormat);
+  const cars: CarDamageEntry[] = [];
+
+  for (let i = 0; i < maxCars; i++) {
+    const tyresWear = rd.f32Array(4);
+    const tyresDamage = rd.u8Array(4);
+    const brakesDamage = rd.u8Array(4);
+    rd.u8Array(4); // tyreBlisters
+    const frontLeftWingDamage = rd.u8();
+    const frontRightWingDamage = rd.u8();
+    const rearWingDamage = rd.u8();
+    const floorDamage = rd.u8();
+    const diffuserDamage = rd.u8();
+    const sidepodDamage = rd.u8();
+    const drsFault = rd.u8();
+    const ersFault = rd.u8();
+    const gearBoxDamage = rd.u8();
+    const engineDamage = rd.u8();
+    rd.u8(); // engineMGUHWear
+    rd.u8(); // engineESWear
+    rd.u8(); // engineCEWear
+    rd.u8(); // engineICEWear
+    rd.u8(); // engineMGUKWear
+    rd.u8(); // engineTCWear
+    rd.u8(); // engineBlown
+    rd.u8(); // engineSeized
+
+    cars.push({
+      index: i,
+      tyresWear,
+      tyresDamage,
+      brakesDamage,
+      frontLeftWingDamage,
+      frontRightWingDamage,
+      rearWingDamage,
+      floorDamage,
+      diffuserDamage,
+      sidepodDamage,
+      gearBoxDamage,
+      engineDamage,
+      drsFault: drsFault === 1,
+      ersFault: ersFault === 1,
+    });
+  }
+
+  return { cars };
+}
+
+// --- Event (id 3) -------------------------------------------------------------
+// A 4-char code followed by a code-specific union. We decode the race-control
+// relevant codes; others carry just `code`. (Severity on COLL is 2026-only.)
+export function parseEvent(rd: BufferReader, header: PacketHeader): EventData {
+  const is2026 = header.packetFormat >= 2026;
+  const code = rd.str(4);
+  const e: EventData = { code };
+
+  switch (code) {
+    case "FTLP":
+      e.vehicleIdx = rd.u8();
+      e.lapTime = rd.f32();
+      break;
+    case "RTMT":
+      e.vehicleIdx = rd.u8();
+      e.reason = rd.u8();
+      break;
+    case "DRSD":
+      e.reason = rd.u8();
+      break;
+    case "TMPT":
+    case "RCWN":
+    case "DTSV":
+      e.vehicleIdx = rd.u8();
+      break;
+    case "PENA":
+      e.penaltyType = rd.u8();
+      e.infringementType = rd.u8();
+      e.vehicleIdx = rd.u8();
+      e.otherVehicleIdx = rd.u8();
+      e.time = rd.u8();
+      e.lapNum = rd.u8();
+      e.placesGained = rd.u8();
+      break;
+    case "SPTP":
+      e.vehicleIdx = rd.u8();
+      e.speed = rd.f32();
+      break;
+    case "STLG":
+      e.numLights = rd.u8();
+      break;
+    case "SGSV":
+      e.vehicleIdx = rd.u8();
+      if (is2026) e.stopTime = rd.f32();
+      break;
+    case "OVTK":
+      e.overtakingVehicleIdx = rd.u8();
+      e.beingOvertakenVehicleIdx = rd.u8();
+      break;
+    case "SCAR":
+      e.safetyCarType = rd.u8();
+      e.safetyCarEventType = rd.u8();
+      break;
+    case "COLL":
+      e.vehicleIdx = rd.u8();
+      e.otherVehicleIdx = rd.u8();
+      if (is2026) e.severity = rd.u8();
+      break;
+    default:
+      break; // SSTA, SEND, CHQF, DRSE, LGOT, RDFL, FLBK, BUTN: no payload decoded
+  }
+
+  return e;
+}
+
+// --- Final Classification (id 8) ----------------------------------------------
+// Sent at session end - the post-session report trigger. 46-byte entries.
+export function parseFinalClassification(
+  rd: BufferReader,
+  header: PacketHeader,
+): FinalClassificationData {
+  const maxCars = maxCarsForFormat(header.packetFormat);
+  const numCars = rd.u8();
+  const classification: FinalClassificationEntry[] = [];
+
+  for (let i = 0; i < maxCars; i++) {
+    const position = rd.u8();
+    const numLaps = rd.u8();
+    const gridPosition = rd.u8();
+    const points = rd.u8();
+    const numPitStops = rd.u8();
+    const resultStatus = rd.u8();
+    const resultReason = rd.u8();
+    const bestLapTimeInMS = rd.u32();
+    const totalRaceTime = rd.f64();
+    const penaltiesTime = rd.u8();
+    const numPenalties = rd.u8();
+    const numTyreStints = rd.u8();
+    const tyreStintsActual = rd.u8Array(8);
+    const tyreStintsVisual = rd.u8Array(8);
+    const tyreStintsEndLaps = rd.u8Array(8);
+
+    classification.push({
+      index: i,
+      position,
+      numLaps,
+      gridPosition,
+      points,
+      numPitStops,
+      resultStatus,
+      resultReason,
+      bestLapTimeInMS,
+      totalRaceTime,
+      penaltiesTime,
+      numPenalties,
+      numTyreStints,
+      tyreStintsActual,
+      tyreStintsVisual,
+      tyreStintsEndLaps,
+    });
+  }
+
+  return { numCars, classification };
 }

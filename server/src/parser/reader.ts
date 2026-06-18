@@ -81,4 +81,22 @@ export class BufferReader {
     const nul = slice.indexOf(0);
     return slice.toString("utf8", 0, nul === -1 ? len : nul);
   }
+
+  u8Array(n: number): number[] {
+    const a: number[] = [];
+    for (let i = 0; i < n; i++) a.push(this.u8());
+    return a;
+  }
+
+  u16Array(n: number): number[] {
+    const a: number[] = [];
+    for (let i = 0; i < n; i++) a.push(this.u16());
+    return a;
+  }
+
+  f32Array(n: number): number[] {
+    const a: number[] = [];
+    for (let i = 0; i < n; i++) a.push(this.f32());
+    return a;
+  }
 }

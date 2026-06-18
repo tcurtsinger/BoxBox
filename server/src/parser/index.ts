@@ -1,6 +1,15 @@
 import { BufferReader } from "./reader.ts";
 import { parseHeader } from "./header.ts";
-import { parseSession, parseParticipants, parseLapData } from "./packets.ts";
+import {
+  parseSession,
+  parseParticipants,
+  parseLapData,
+  parseCarTelemetry,
+  parseCarStatus,
+  parseCarDamage,
+  parseEvent,
+  parseFinalClassification,
+} from "./packets.ts";
 import { HEADER_SIZE, PacketId } from "./constants.ts";
 import type { ParsedPacket } from "./types.ts";
 
@@ -23,8 +32,18 @@ export function parsePacket(buf: Buffer): ParsedPacket | null {
       return { id: 1, header, data: parseSession(rd, header) };
     case PacketId.LapData:
       return { id: 2, header, data: parseLapData(rd, header) };
+    case PacketId.Event:
+      return { id: 3, header, data: parseEvent(rd, header) };
     case PacketId.Participants:
       return { id: 4, header, data: parseParticipants(rd, header) };
+    case PacketId.CarTelemetry:
+      return { id: 6, header, data: parseCarTelemetry(rd, header) };
+    case PacketId.CarStatus:
+      return { id: 7, header, data: parseCarStatus(rd, header) };
+    case PacketId.FinalClassification:
+      return { id: 8, header, data: parseFinalClassification(rd, header) };
+    case PacketId.CarDamage:
+      return { id: 10, header, data: parseCarDamage(rd, header) };
     default:
       return { id: header.packetId, header, data: null };
   }

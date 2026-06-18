@@ -5,6 +5,11 @@ import type {
   SessionData,
   ParticipantsData,
   LapDataData,
+  CarTelemetryData,
+  CarStatusData,
+  CarDamageData,
+  EventData,
+  FinalClassificationData,
 } from "../src/parser/index.ts";
 
 // Minimal little-endian writer mirroring BufferReader, for building fixtures.
@@ -42,6 +47,11 @@ class W {
   f32(v: number): this {
     this.buf.writeFloatLE(v, this.pos);
     this.pos += 4;
+    return this;
+  }
+  f64(v: number): this {
+    this.buf.writeDoubleLE(v, this.pos);
+    this.pos += 8;
     return this;
   }
   str(s: string, len: number): this {
@@ -234,4 +244,161 @@ test("unhandled packet ids still return the header", () => {
 
 test("buffers smaller than a header return null", () => {
   assert.equal(parsePacket(Buffer.alloc(10)), null);
+});
+
+test("CarTelemetry: 59-byte stride, speed/gear/DRS and tyre temps", () => {
+  const w = new W(1448);
+  writeHeader(w, 6);
+  const base = w.pos;
+  w.u16(312).f32(1).f32(0).f32(0).u8(0).i8(7).u16(11500).u8(1).u8(80).u16(0)
+    .u16(300).u16(300).u16(310).u16(310) // brakesTemperature[4]
+    .u8(90).u8(90).u8(88).u8(88) // tyresSurfaceTemperature[4]
+    .u8(95).u8(95).u8(92).u8(92) // tyresInnerTemperature[4]
+    .u8(110) // engineTemperature (u8 in 2026)
+    .f32(23.5).f32(23.5).f32(22).f32(22) // tyresPressure[4]
+    .u8(0).u8(0).u8(0).u8(0); // surfaceType[4]
+  assert.equal(w.pos - base, 59, "car telemetry stride must be 59 (2026)");
+  w.skip(23 * 59);
+  w.u8(2).u8(255).i8(0); // mfdPanelIndex, secondary, suggestedGear
+  assert.equal(w.pos, 1448);
+
+  const pkt = parsePacket(w.buf);
+  assert.ok(pkt && pkt.id === 6);
+  const t = pkt.data as CarTelemetryData;
+  assert.equal(t.cars.length, 24);
+  assert.equal(t.cars[0]?.speed, 312);
+  assert.equal(t.cars[0]?.gear, 7);
+  assert.equal(t.cars[0]?.drs, true);
+  assert.equal(t.cars[0]?.engineRPM, 11500);
+  assert.equal(t.cars[0]?.engineTemperature, 110);
+  assert.deepEqual(t.cars[0]?.tyresSurfaceTemperature, [90, 90, 88, 88]);
+  assert.equal(t.mfdPanelIndex, 2);
+});
+
+test("CarStatus: 2026 stride with ersHarvestLimitPerLap, battery % derived", () => {
+  const w = new W(1445);
+  writeHeader(w, 7);
+  const base = w.pos;
+  w.u8(0).u8(0).u8(2).u8(58).u8(0) // tc, abs, fuelMix=2, brakeBias, pitLimiter
+    .f32(10.5).f32(110).f32(3.5) // fuelInTank, capacity, remainingLaps
+    .u16(13000).u16(4000).u8(8) // maxRPM, idleRPM, maxGears
+    .u8(1).u16(0) // drsAllowed, drsActivationDistance
+    .u8(16).u8(16).u8(5).i8(0) // actual, visual, age, fiaFlags
+    .f32(0).f32(0) // enginePowerICE, MGUK
+    .f32(2_000_000).u8(2) // ersStoreEnergy, ersDeployMode
+    .f32(0).f32(0) // harvested MGUK, MGUH
+    .f32(4_000_000) // ersHarvestLimitPerLap (2026)
+    .f32(500000).u8(0); // ersDeployedThisLap, networkPaused
+  assert.equal(w.pos - base, 59, "car status stride must be 59 (2026)");
+  w.skip(23 * 59);
+  assert.equal(w.pos, 1445);
+
+  const pkt = parsePacket(w.buf);
+  assert.ok(pkt && pkt.id === 7);
+  const s = pkt.data as CarStatusData;
+  assert.equal(s.cars.length, 24);
+  assert.equal(s.cars[0]?.fuelMix, 2);
+  assert.equal(s.cars[0]?.fuelRemainingLaps, 3.5);
+  assert.equal(s.cars[0]?.actualTyreCompound, 16);
+  assert.equal(s.cars[0]?.tyresAgeLaps, 5);
+  assert.equal(s.cars[0]?.drsAllowed, true);
+  assert.equal(s.cars[0]?.ersStoreEnergy, 2_000_000);
+  assert.equal(s.cars[0]?.batteryPct, 50);
+});
+
+test("CarDamage: 46-byte stride, wear and faults", () => {
+  const w = new W(1133);
+  writeHeader(w, 10);
+  const base = w.pos;
+  w.f32(10.5).f32(11).f32(12).f32(13) // tyresWear[4]
+    .u8(1).u8(1).u8(2).u8(2) // tyresDamage[4]
+    .u8(0).u8(0).u8(0).u8(0) // brakesDamage[4]
+    .u8(0).u8(0).u8(0).u8(0) // tyreBlisters[4]
+    .u8(5).u8(0).u8(0).u8(0).u8(0).u8(0) // FL/FR wing, rear wing, floor, diffuser, sidepod
+    .u8(0).u8(1) // drsFault, ersFault
+    .u8(0).u8(3) // gearBox, engineDamage
+    .u8(0).u8(0).u8(0).u8(0).u8(0).u8(0) // engine wear MGUH/ES/CE/ICE/MGUK/TC
+    .u8(0).u8(0); // engineBlown, engineSeized
+  assert.equal(w.pos - base, 46, "car damage stride must be 46");
+  w.skip(23 * 46);
+  assert.equal(w.pos, 1133);
+
+  const pkt = parsePacket(w.buf);
+  assert.ok(pkt && pkt.id === 10);
+  const d = pkt.data as CarDamageData;
+  assert.equal(d.cars.length, 24);
+  assert.equal(d.cars[0]?.tyresWear[0], 10.5);
+  assert.equal(d.cars[0]?.frontLeftWingDamage, 5);
+  assert.equal(d.cars[0]?.engineDamage, 3);
+  assert.equal(d.cars[0]?.drsFault, false);
+  assert.equal(d.cars[0]?.ersFault, true);
+});
+
+test("Event PENA decodes penalty detail", () => {
+  const w = new W(45);
+  writeHeader(w, 3);
+  w.str("PENA", 4).u8(5).u8(12).u8(3).u8(7).u8(5).u8(10).u8(0);
+  const pkt = parsePacket(w.buf);
+  assert.ok(pkt && pkt.id === 3);
+  const e = pkt.data as EventData;
+  assert.equal(e.code, "PENA");
+  assert.equal(e.penaltyType, 5);
+  assert.equal(e.infringementType, 12);
+  assert.equal(e.vehicleIdx, 3);
+  assert.equal(e.otherVehicleIdx, 7);
+  assert.equal(e.lapNum, 10);
+});
+
+test("Event COLL decodes both cars and 2026 severity", () => {
+  const w = new W(45);
+  writeHeader(w, 3);
+  w.str("COLL", 4).u8(4).u8(9).u8(2);
+  const pkt = parsePacket(w.buf);
+  assert.ok(pkt && pkt.id === 3);
+  const e = pkt.data as EventData;
+  assert.equal(e.code, "COLL");
+  assert.equal(e.vehicleIdx, 4);
+  assert.equal(e.otherVehicleIdx, 9);
+  assert.equal(e.severity, 2);
+});
+
+test("Event SCAR decodes safety-car type and phase", () => {
+  const w = new W(45);
+  writeHeader(w, 3);
+  w.str("SCAR", 4).u8(1).u8(0);
+  const pkt = parsePacket(w.buf);
+  assert.ok(pkt && pkt.id === 3);
+  const e = pkt.data as EventData;
+  assert.equal(e.code, "SCAR");
+  assert.equal(e.safetyCarType, 1);
+  assert.equal(e.safetyCarEventType, 0);
+});
+
+test("FinalClassification: report fields and tyre stints", () => {
+  const w = new W(1134);
+  writeHeader(w, 8);
+  w.u8(20); // numCars
+  const base = w.pos;
+  w.u8(1).u8(20).u8(2).u8(25).u8(1).u8(3).u8(2) // pos, laps, grid, points, stops, status, reason
+    .u32(88000) // bestLapTimeInMS
+    .f64(3600.5) // totalRaceTime
+    .u8(5).u8(1).u8(2) // penaltiesTime, numPenalties, numTyreStints
+    .u8(16).u8(18).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0) // tyreStintsActual[8]
+    .u8(16).u8(18).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0) // tyreStintsVisual[8]
+    .u8(10).u8(20).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0); // tyreStintsEndLaps[8]
+  assert.equal(w.pos - base, 46, "classification entry stride must be 46");
+  w.skip(23 * 46);
+  assert.equal(w.pos, 1134);
+
+  const pkt = parsePacket(w.buf);
+  assert.ok(pkt && pkt.id === 8);
+  const fc = pkt.data as FinalClassificationData;
+  assert.equal(fc.numCars, 20);
+  assert.equal(fc.classification.length, 24);
+  assert.equal(fc.classification[0]?.position, 1);
+  assert.equal(fc.classification[0]?.points, 25);
+  assert.equal(fc.classification[0]?.bestLapTimeInMS, 88000);
+  assert.equal(fc.classification[0]?.totalRaceTime, 3600.5);
+  assert.equal(fc.classification[0]?.numTyreStints, 2);
+  assert.deepEqual(fc.classification[0]?.tyreStintsActual.slice(0, 2), [16, 18]);
 });
