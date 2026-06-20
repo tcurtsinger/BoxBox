@@ -1,0 +1,75 @@
+import { createServer } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { SessionState } from "../state.ts";
+
+export interface HttpHandle {
+  close(): void;
+  clientCount(): number;
+}
+
+// Serves the live race state to browser clients:
+//   GET /events     - Server-Sent Events stream of state snapshots
+//   GET /api/state  - one-shot snapshot (JSON)
+//   GET /healthz    - liveness check
+// SSE is one-way and zero-dependency (Node's built-in http), which fits a
+// read-mostly console; steward actions (Phase 3) POST back over the same server.
+export function startHttpServer(
+  state: SessionState,
+  opts: { port?: number; broadcastMs?: number } = {},
+): HttpHandle {
+  const port = opts.port ?? 8080;
+  const broadcastMs = opts.broadcastMs ?? 250;
+  const clients = new Set<ServerResponse>();
+
+  const sseFrame = (): string => `event: state\ndata: ${JSON.stringify(state.snapshot())}\n\n`;
+
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    res.setHeader("Access-Control-Allow-Origin", "*"); // local LAN tool; the dev UI runs on another port
+    const url = (req.url ?? "/").split("?")[0];
+
+    if (url === "/healthz") {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("ok");
+      return;
+    }
+
+    if (url === "/api/state") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(state.snapshot()));
+      return;
+    }
+
+    if (url === "/events") {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+      res.write(sseFrame()); // push current state immediately on connect
+      clients.add(res);
+      req.on("close", () => clients.delete(res));
+      return;
+    }
+
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("not found");
+  });
+
+  const timer = setInterval(() => {
+    if (clients.size === 0) return;
+    const frame = sseFrame();
+    for (const res of clients) res.write(frame);
+  }, broadcastMs);
+
+  server.listen(port);
+
+  return {
+    close() {
+      clearInterval(timer);
+      for (const res of clients) res.end();
+      clients.clear();
+      server.close();
+    },
+    clientCount: () => clients.size,
+  };
+}

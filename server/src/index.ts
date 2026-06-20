@@ -3,15 +3,18 @@
 //   node src/index.ts [port]
 import { SessionState } from "./state.ts";
 import { attachUdp } from "./net/udp.ts";
+import { startHttpServer } from "./net/http.ts";
 import type { DriverState, Incident } from "./state.ts";
 import { SESSION_TYPE, SAFETY_CAR_STATUS } from "./parser/constants.ts";
 
 const PORT = Number.isFinite(Number(process.argv[2]))
   ? Number(process.argv[2])
   : Number(process.env.F1_UDP_PORT) || 20777;
+const HTTP_PORT = Number(process.env.F1_HTTP_PORT) || 8080;
 
 const state = new SessionState();
 const udp = attachUdp(state, { port: PORT });
+const http = startHttpServer(state, { port: HTTP_PORT });
 const startedAt = Date.now();
 let lastCount = 0;
 
@@ -48,8 +51,9 @@ function render(): void {
   lastCount = snap.packetCount;
   const out: string[] = [];
 
+  const n = http.clientCount();
   out.push(
-    `BoxBox ingest   :${PORT}   uptime ${dur(Date.now() - startedAt)}   packets ${snap.packetCount} (${rate}/s)`,
+    `BoxBox ingest   UDP :${PORT}   HTTP/SSE :${HTTP_PORT} (${n} client${n === 1 ? "" : "s"})   uptime ${dur(Date.now() - startedAt)}   packets ${snap.packetCount} (${rate}/s)`,
   );
 
   if (snap.packetCount === 0) {
@@ -120,6 +124,7 @@ render();
 
 process.on("SIGINT", () => {
   udp.close();
+  http.close();
   console.log("\nBoxBox ingest stopped.");
   process.exit(0);
 });
