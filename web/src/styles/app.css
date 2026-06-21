@@ -574,33 +574,95 @@
   color: var(--text-dim);
 }
 
-/* ---- View toggle (Live / Review) ---- */
-.view-toggle {
+/* ---- Menu bar ---- */
+.menubar {
+  position: relative;
+  z-index: 50;
   display: flex;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
+  align-items: stretch;
+  padding: 0 6px;
+  background: #0c1117;
+  border-bottom: 1px solid var(--border);
 }
-.vt {
-  padding: 6px 14px;
+.menu {
+  position: relative;
+}
+.menu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
   background: transparent;
   border: none;
   font-family: var(--sans);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 13px;
   color: var(--text-dim);
   cursor: pointer;
 }
-.vt:hover {
+.menu-btn:hover,
+.menu-btn.open {
+  background: var(--bg-elev);
   color: var(--text);
 }
-.vt + .vt {
-  border-left: 1px solid var(--border);
+.menu-btn-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
 }
-.vt-on {
+.menu-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 188px;
+  padding: 4px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item:hover {
   background: #1e2a38;
-  color: #fff;
-  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.menu-check {
+  width: 12px;
+  color: var(--accent);
+  font-size: 11px;
+}
+.menu-item-label {
+  flex: 1;
+  white-space: nowrap;
+}
+.menu-badge {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--amber);
+  color: #1a1205;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
 }
 
 /* ---- Buttons ---- */
@@ -903,21 +965,35 @@
   color: var(--text);
 }
 
-/* ---- Names: header button ---- */
-.btn-names {
-  padding: 6px 12px;
-  background: transparent;
+/* ---- About modal ---- */
+.about {
+  width: 420px;
+  max-width: 92vw;
+  padding: 16px;
+  background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  font-family: var(--sans);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-dim);
-  cursor: pointer;
+  border-radius: 8px;
 }
-.btn-names:hover {
+.about-tagline {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.about-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  margin: 0;
+  font-size: 13px;
+}
+.about-grid dt {
+  color: var(--text-faint);
+}
+.about-grid dd {
+  margin: 0;
+  font-family: var(--mono);
   color: var(--text);
-  border-color: var(--text-faint);
 }
 
 /* ---- Names: inline edit in the driver drawer ---- */

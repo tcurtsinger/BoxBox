@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useSnapshot } from "./api/useSnapshot";
 import type { ConnState } from "./api/useSnapshot";
+import { MenuBar } from "./components/MenuBar";
 import { SessionHeader } from "./components/SessionHeader";
+import { AboutModal } from "./components/AboutModal";
 import { TimingTower } from "./components/TimingTower";
 import { IncidentFeed } from "./components/IncidentFeed";
 import { DriverDetail } from "./components/DriverDetail";
@@ -15,6 +17,7 @@ export function App() {
   const [view, setView] = useState<"live" | "review">("live");
   const [flagOpen, setFlagOpen] = useState(false);
   const [rosterOpen, setRosterOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   const drivers = snapshot?.drivers ?? [];
   const incidents = snapshot?.incidents ?? [];
@@ -25,14 +28,14 @@ export function App() {
 
   return (
     <div className="app">
-      <SessionHeader
-        snapshot={snapshot}
-        conn={conn}
+      <MenuBar
         view={view}
         onSetView={setView}
-        onOpenRoster={() => setRosterOpen(true)}
+        onOpenNames={() => setRosterOpen(true)}
+        onAbout={() => setAboutOpen(true)}
         pendingCount={pendingCount}
       />
+      <SessionHeader snapshot={snapshot} conn={conn} />
 
       {view === "live" ? (
         <div className="content">
@@ -54,6 +57,7 @@ export function App() {
       )}
       {flagOpen && <FlagForm drivers={drivers} onClose={() => setFlagOpen(false)} />}
       {rosterOpen && <RosterModal drivers={drivers} onClose={() => setRosterOpen(false)} />}
+      {aboutOpen && <AboutModal conn={conn} onClose={() => setAboutOpen(false)} />}
     </div>
   );
 }

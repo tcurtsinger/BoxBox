@@ -6,10 +6,6 @@ import { clock } from "../presentation/format";
 interface Props {
   snapshot: SessionSnapshot | null;
   conn: ConnState;
-  view: "live" | "review";
-  onSetView: (view: "live" | "review") => void;
-  onOpenRoster: () => void;
-  pendingCount: number;
 }
 
 const CONN_LABEL: Record<ConnState, string> = {
@@ -18,7 +14,7 @@ const CONN_LABEL: Record<ConnState, string> = {
   error: "RECONNECTING",
 };
 
-export function SessionHeader({ snapshot, conn, view, onSetView, onOpenRoster, pendingCount }: Props) {
+export function SessionHeader({ snapshot, conn }: Props) {
   const s = snapshot?.session ?? null;
   const sessionLabel = s ? (SESSION_TYPE[s.sessionType] ?? `Type ${s.sessionType}`) : "No session";
   const sc = s ? (SAFETY_CAR_STATUS[s.safetyCarStatus] ?? "") : "";
@@ -45,22 +41,6 @@ export function SessionHeader({ snapshot, conn, view, onSetView, onOpenRoster, p
         <Meta label="Track" value={s ? `${s.trackTemperature}°C` : "-"} />
         <Meta label="Air" value={s ? `${s.airTemperature}°C` : "-"} />
         {showSc && <span className="sc-flag">SC: {sc}</span>}
-      </div>
-
-      <button className="btn-names" onClick={onOpenRoster} title="Set manual driver names">
-        Names
-      </button>
-
-      <div className="view-toggle">
-        <button className={`vt${view === "live" ? " vt-on" : ""}`} onClick={() => onSetView("live")}>
-          Live
-        </button>
-        <button
-          className={`vt${view === "review" ? " vt-on" : ""}`}
-          onClick={() => onSetView("review")}
-        >
-          Review{pendingCount > 0 ? ` ${pendingCount}` : ""}
-        </button>
       </div>
 
       <div className={`conn conn-${conn}`}>
