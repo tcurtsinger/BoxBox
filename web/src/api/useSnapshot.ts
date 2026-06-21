@@ -1,11 +1,6 @@
 import { useEffect, useState } from "react";
 import type { SessionSnapshot } from "../types";
-
-// Default to the same host the UI is served from, on the server's port. This
-// makes the console work both on the observer's machine and from another LAN
-// box pointed at it, with no rebuild. Override with VITE_SERVER_URL.
-const SERVER =
-  import.meta.env.VITE_SERVER_URL ?? `http://${location.hostname}:8080`;
+import { SERVER } from "./server";
 
 export type ConnState = "connecting" | "live" | "error";
 

@@ -4,33 +4,45 @@ import { clock } from "../presentation/format";
 interface Props {
   incidents: Incident[];
   drivers: DriverState[];
+  onFlag: () => void;
 }
 
-export function IncidentFeed({ incidents, drivers }: Props) {
+// Live capture log: auto incidents accumulate and the steward can flag more.
+// No adjudication here, that happens post-race in the Review queue.
+export function IncidentFeed({ incidents, drivers, onFlag }: Props) {
   const nameOf = (i: number) => drivers.find((d) => d.index === i)?.name || `Car ${i}`;
   const recent = [...incidents].reverse(); // newest first
 
   return (
     <aside className="incident-feed">
       <div className="feed-head">
-        Incidents <span className="feed-count">{incidents.length}</span>
+        <span>
+          Incidents <span className="feed-count">{incidents.length}</span>
+        </span>
+        <button className="btn-flag" onClick={onFlag}>
+          + Flag
+        </button>
       </div>
       <div className="feed-body">
         {recent.length === 0 ? (
-          <div className="feed-empty">No incidents logged.</div>
+          <div className="feed-empty">No incidents captured yet.</div>
         ) : (
-          recent.map((inc, k) => (
-            <div className={`incident code-${inc.code}`} key={`${inc.sessionTime}-${inc.code}-${k}`}>
+          recent.map((inc) => (
+            <div className={`incident code-${inc.code} st-${inc.status}`} key={inc.id}>
               <div className="incident-top">
                 <span className="incident-when">
                   {inc.lapNum !== null ? `L${inc.lapNum}` : clock(inc.sessionTime)}
                 </span>
                 <span className="incident-label">{inc.label}</span>
+                {inc.source === "manual" && <span className="incident-src">flagged</span>}
+                {inc.status !== "pending" && <span className="incident-st">{inc.status}</span>}
               </div>
               {inc.carIndices.length > 0 && (
                 <div className="incident-cars">{inc.carIndices.map(nameOf).join(", ")}</div>
               )}
-              {summary(inc) && <div className="incident-detail">{summary(inc)}</div>}
+              {(inc.note || summary(inc)) && (
+                <div className="incident-detail">{inc.note || summary(inc)}</div>
+              )}
             </div>
           ))
         )}

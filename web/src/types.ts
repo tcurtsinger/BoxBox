@@ -74,13 +74,25 @@ export interface DriverState {
   gearboxDamage: number;
 }
 
+export type IncidentStatus = "pending" | "approved" | "dismissed";
+
+export interface Ruling {
+  outcome: string; // free text, set when the steward approves
+  decidedAtMs: number;
+}
+
 export interface Incident {
+  id: string;
+  source: "auto" | "manual";
   sessionTime: number;
   lapNum: number | null;
   code: string;
   label: string;
   carIndices: number[];
   detail: Record<string, number>;
+  status: IncidentStatus;
+  note: string;
+  ruling: Ruling | null;
 }
 
 // Detail is only needed by the Phase 5 report, not the console.
