@@ -194,6 +194,15 @@
   color: var(--green);
   border: 1px solid #2c4456;
 }
+.badge-ovt {
+  background: var(--boost);
+  color: #fff;
+}
+.badge-ovt-avail {
+  background: transparent;
+  color: var(--boost);
+  border: 1px solid var(--boost);
+}
 
 .col-tyre {
   display: flex;

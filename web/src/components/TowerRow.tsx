@@ -8,9 +8,10 @@ interface Props {
   d: DriverState;
   selected: boolean;
   onSelect: (index: number) => void;
+  regs2026: boolean;
 }
 
-export function TowerRow({ d, selected, onSelect }: Props) {
+export function TowerRow({ d, selected, onSelect, regs2026 }: Props) {
   const t = tyre(d.tyreVisual);
   const f = flag(d.fiaFlags);
   const pitting = d.pitStatus > 0;
@@ -36,7 +37,16 @@ export function TowerRow({ d, selected, onSelect }: Props) {
             {f.label}
           </span>
         )}
-        {d.drsAllowed && <span className="badge badge-drs">DRS</span>}
+        {/* 2026: overtake (electrical boost). 2025: DRS. */}
+        {regs2026 ? (
+          d.overtakeActive ? (
+            <span className="badge badge-ovt">OVERTAKE</span>
+          ) : d.overtakeAvailable ? (
+            <span className="badge badge-ovt-avail">OVT</span>
+          ) : null
+        ) : (
+          d.drsAllowed && <span className="badge badge-drs">DRS</span>
+        )}
       </span>
 
       <span className="col-tyre">

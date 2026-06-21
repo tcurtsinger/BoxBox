@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { DriverState } from "../types";
 import { teamColor } from "../presentation/teams";
 import { tyre } from "../presentation/tyres";
-import { ERS_DEPLOY_MODE } from "../presentation/labels";
+import { ERS_DEPLOY_MODE, ACTIVE_AERO_MODE } from "../presentation/labels";
 import { lapTime, fuelLaps, gearLabel } from "../presentation/format";
 
 // tyre / temp / wear arrays are ordered RL, RR, FL, FR. Lay them out as a
@@ -16,11 +16,13 @@ const CORNERS = [
 
 interface Props {
   driver: DriverState;
+  regs2026: boolean;
   onClose: () => void;
 }
 
-export function DriverDetail({ driver, onClose }: Props) {
+export function DriverDetail({ driver, regs2026, onClose }: Props) {
   const t = tyre(driver.tyreVisual);
+  const overtake = driver.overtakeActive ? "Active" : driver.overtakeAvailable ? "Ready" : "-";
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -43,6 +45,14 @@ export function DriverDetail({ driver, onClose }: Props) {
           <Stat label="Speed" value={`${driver.speed} kph`} />
           <Stat label="Gear" value={gearLabel(driver.gear)} />
           <Stat label="Lap" value={String(driver.currentLapNum)} />
+          {regs2026 ? (
+            <>
+              <Stat label="Aero" value={ACTIVE_AERO_MODE[driver.activeAeroMode] ?? "-"} />
+              <Stat label="Overtake" value={overtake} />
+            </>
+          ) : (
+            <Stat label="DRS" value={driver.drsAllowed ? "Allowed" : "-"} />
+          )}
         </div>
 
         <Section title="Tyres (surface / inner · wear)">

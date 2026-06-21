@@ -50,3 +50,9 @@ export const DRIVER_STATUS: Record<number, string> = {
   3: "Out Lap",
   4: "On Track",
 };
+
+// 2026 active-aero state (CarTelemetry2). Replaced DRS under the new regs.
+export const ACTIVE_AERO_MODE: Record<number, string> = {
+  0: "Corner",
+  1: "Straight",
+};

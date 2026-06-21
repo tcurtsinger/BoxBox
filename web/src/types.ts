@@ -55,7 +55,10 @@ export interface DriverState {
   batteryPct: number;
   ersDeployMode: number;
   fiaFlags: number;
-  drsAllowed: boolean;
+  drsAllowed: boolean; // 2025 only
+  overtakeActive: boolean; // 2026: electrical overtake boost
+  overtakeAvailable: boolean;
+  activeAeroMode: number; // 2026: 0 = corner, 1 = straight
   // telemetry
   speed: number;
   gear: number;
