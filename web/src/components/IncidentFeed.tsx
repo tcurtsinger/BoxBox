@@ -1,4 +1,5 @@
 import type { DriverState, Incident } from "../types";
+import { nameByIndex } from "../presentation/driver";
 import { clock } from "../presentation/format";
 
 interface Props {
@@ -10,7 +11,7 @@ interface Props {
 // Live capture log: auto incidents accumulate and the steward can flag more.
 // No adjudication here, that happens post-race in the Review queue.
 export function IncidentFeed({ incidents, drivers, onFlag }: Props) {
-  const nameOf = (i: number) => drivers.find((d) => d.index === i)?.name || `Car ${i}`;
+  const nameOf = (i: number) => nameByIndex(drivers, i);
   const recent = [...incidents].reverse(); // newest first
 
   return (

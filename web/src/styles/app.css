@@ -902,3 +902,108 @@
   font-size: 12px;
   color: var(--text);
 }
+
+/* ---- Names: header button ---- */
+.btn-names {
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.btn-names:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+/* ---- Names: inline edit in the driver drawer ---- */
+.detail-name-btn {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  font-family: var(--sans);
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text);
+  cursor: pointer;
+}
+.name-edit-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.detail-name-btn:hover .name-edit-hint {
+  color: var(--text-dim);
+}
+.detail-name-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.detail-name-edit .flag-input {
+  width: 180px;
+}
+
+/* ---- Names: roster modal ---- */
+.roster-form {
+  width: 480px;
+  max-width: 92vw;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.roster-note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.roster-warn {
+  color: var(--amber);
+  font-weight: 700;
+}
+.roster-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+.roster-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.roster-dot {
+  width: 4px;
+  height: 18px;
+  border-radius: 2px;
+  flex: none;
+}
+.roster-no {
+  width: 34px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  flex: none;
+}
+.roster-input {
+  flex: 1;
+}
+.roster-missing .roster-input {
+  border-color: var(--amber);
+}
+.roster-feed-warn {
+  font-size: 11px;
+  color: var(--amber);
+  white-space: nowrap;
+}

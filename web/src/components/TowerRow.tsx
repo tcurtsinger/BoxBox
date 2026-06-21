@@ -2,6 +2,7 @@ import type { DriverState } from "../types";
 import { teamColor } from "../presentation/teams";
 import { tyre } from "../presentation/tyres";
 import { flag } from "../presentation/flags";
+import { driverName } from "../presentation/driver";
 import { lapTime, gap, fuelLaps } from "../presentation/format";
 
 interface Props {
@@ -31,7 +32,7 @@ export function TowerRow({ d, selected, onSelect }: Props) {
 
       <span className="col-driver">
         {f && <span className="flag-dot" style={{ background: f.color }} title={`${f.label} flag`} />}
-        <span className="driver-name">{d.name || `Car ${d.index}`}</span>
+        <span className="driver-name">{driverName(d)}</span>
         {d.penaltiesSec > 0 && <span className="pen-text">+{d.penaltiesSec}s</span>}
       </span>
 

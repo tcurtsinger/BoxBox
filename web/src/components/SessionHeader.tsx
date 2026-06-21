@@ -8,6 +8,7 @@ interface Props {
   conn: ConnState;
   view: "live" | "review";
   onSetView: (view: "live" | "review") => void;
+  onOpenRoster: () => void;
   pendingCount: number;
 }
 
@@ -17,7 +18,7 @@ const CONN_LABEL: Record<ConnState, string> = {
   error: "RECONNECTING",
 };
 
-export function SessionHeader({ snapshot, conn, view, onSetView, pendingCount }: Props) {
+export function SessionHeader({ snapshot, conn, view, onSetView, onOpenRoster, pendingCount }: Props) {
   const s = snapshot?.session ?? null;
   const sessionLabel = s ? (SESSION_TYPE[s.sessionType] ?? `Type ${s.sessionType}`) : "No session";
   const sc = s ? (SAFETY_CAR_STATUS[s.safetyCarStatus] ?? "") : "";
@@ -45,6 +46,10 @@ export function SessionHeader({ snapshot, conn, view, onSetView, pendingCount }:
         <Meta label="Air" value={s ? `${s.airTemperature}°C` : "-"} />
         {showSc && <span className="sc-flag">SC: {sc}</span>}
       </div>
+
+      <button className="btn-names" onClick={onOpenRoster} title="Set manual driver names">
+        Names
+      </button>
 
       <div className="view-toggle">
         <button className={`vt${view === "live" ? " vt-on" : ""}`} onClick={() => onSetView("live")}>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { DriverState, Incident } from "../types";
 import { approveIncident, dismissIncident, reopenIncident } from "../api/actions";
+import { nameByIndex } from "../presentation/driver";
 import { clock } from "../presentation/format";
 
 interface Props {
@@ -11,7 +12,7 @@ interface Props {
 // Post-race workspace: work through the captured queue. Each pending incident
 // gets a free-text outcome then Approve, or Dismiss. Decided ones can be reopened.
 export function ReviewQueue({ incidents, drivers }: Props) {
-  const nameOf = (i: number) => drivers.find((d) => d.index === i)?.name || `Car ${i}`;
+  const nameOf = (i: number) => nameByIndex(drivers, i);
   const pending = incidents.filter((i) => i.status === "pending");
   const decided = incidents.filter((i) => i.status !== "pending").reverse();
 

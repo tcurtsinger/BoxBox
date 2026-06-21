@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { DriverState } from "../types";
 import { flagIncident } from "../api/actions";
+import { driverName } from "../presentation/driver";
 
 interface Props {
   drivers: DriverState[];
@@ -49,7 +50,7 @@ export function FlagForm({ drivers, onClose }: Props) {
               onClick={() => toggle(d.index)}
             >
               <span className="flag-car-pos">{d.position || "-"}</span>
-              {d.name || `Car ${d.index}`}
+              {driverName(d)}
             </button>
           ))}
         </div>

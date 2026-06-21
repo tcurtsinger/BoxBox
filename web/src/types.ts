@@ -30,6 +30,7 @@ export interface DriverState {
   nationality: number;
   aiControlled: boolean;
   telemetryPublic: boolean;
+  nameOverride: string | null; // manual fallback when the feed name is missing or redacted to "Player"
   // timing
   position: number;
   gridPosition: number;

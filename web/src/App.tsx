@@ -7,12 +7,14 @@ import { IncidentFeed } from "./components/IncidentFeed";
 import { DriverDetail } from "./components/DriverDetail";
 import { ReviewQueue } from "./components/ReviewQueue";
 import { FlagForm } from "./components/FlagForm";
+import { RosterModal } from "./components/RosterModal";
 
 export function App() {
   const { snapshot, conn } = useSnapshot();
   const [selected, setSelected] = useState<number | null>(null);
   const [view, setView] = useState<"live" | "review">("live");
   const [flagOpen, setFlagOpen] = useState(false);
+  const [rosterOpen, setRosterOpen] = useState(false);
 
   const drivers = snapshot?.drivers ?? [];
   const incidents = snapshot?.incidents ?? [];
@@ -28,6 +30,7 @@ export function App() {
         conn={conn}
         view={view}
         onSetView={setView}
+        onOpenRoster={() => setRosterOpen(true)}
         pendingCount={pendingCount}
       />
 
@@ -50,6 +53,7 @@ export function App() {
         <DriverDetail driver={selectedDriver} regs2026={regs2026} onClose={() => setSelected(null)} />
       )}
       {flagOpen && <FlagForm drivers={drivers} onClose={() => setFlagOpen(false)} />}
+      {rosterOpen && <RosterModal drivers={drivers} onClose={() => setRosterOpen(false)} />}
     </div>
   );
 }

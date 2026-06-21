@@ -1,7 +1,10 @@
+import { useState } from "react";
 import type { ReactNode } from "react";
 import type { DriverState } from "../types";
 import { teamColor } from "../presentation/teams";
 import { tyre } from "../presentation/tyres";
+import { driverName } from "../presentation/driver";
+import { setDriverName } from "../api/actions";
 import { ERS_DEPLOY_MODE, ACTIVE_AERO_MODE } from "../presentation/labels";
 import { lapTime, fuelLaps, gearLabel } from "../presentation/format";
 
@@ -24,6 +27,13 @@ export function DriverDetail({ driver, regs2026, onClose }: Props) {
   const t = tyre(driver.tyreVisual);
   const overtake = driver.overtakeActive ? "Active" : driver.overtakeAvailable ? "Ready" : "-";
 
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const save = () => {
+    void setDriverName(driver.index, draft.trim()).catch(() => {});
+    setEditing(false);
+  };
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <aside className="detail" onClick={(e) => e.stopPropagation()}>
@@ -31,7 +41,34 @@ export function DriverDetail({ driver, regs2026, onClose }: Props) {
           <div className="detail-id">
             <span className="detail-pos">P{driver.position || "-"}</span>
             <span className="detail-no">#{driver.raceNumber}</span>
-            <span className="detail-name">{driver.name || `Car ${driver.index}`}</span>
+            {editing ? (
+              <span className="detail-name-edit">
+                <input
+                  className="flag-input"
+                  autoFocus
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder={driver.name?.trim() || `Car ${driver.index}`}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") save();
+                    else if (e.key === "Escape") setEditing(false);
+                  }}
+                />
+                <button className="btn-link" onClick={save}>Save</button>
+              </span>
+            ) : (
+              <button
+                className="detail-name detail-name-btn"
+                title="Edit display name"
+                onClick={() => {
+                  setDraft(driver.nameOverride ?? "");
+                  setEditing(true);
+                }}
+              >
+                {driverName(driver)}
+                <span className="name-edit-hint">✎</span>
+              </button>
+            )}
           </div>
           <button className="detail-close" onClick={onClose} aria-label="Close">
             &times;

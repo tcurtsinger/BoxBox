@@ -30,3 +30,8 @@ export function dismissIncident(id: string): Promise<void> {
 export function reopenIncident(id: string): Promise<void> {
   return post("/api/incidents/reopen", { id });
 }
+
+// Set a manual display-name override for a car; pass an empty string to clear it.
+export function setDriverName(index: number, name: string): Promise<void> {
+  return post("/api/drivers/name", { index, name });
+}
