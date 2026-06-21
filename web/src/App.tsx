@@ -22,12 +22,7 @@ export function App() {
       <div className="content">
         <main className="tower-wrap">
           {hasDrivers ? (
-            <TimingTower
-              snapshot={snapshot}
-              selected={selected}
-              onSelect={setSelected}
-              regs2026={regs2026}
-            />
+            <TimingTower snapshot={snapshot} selected={selected} onSelect={setSelected} />
           ) : (
             <EmptyState conn={conn} />
           )}

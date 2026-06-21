@@ -7,10 +7,9 @@ interface Props {
   snapshot: SessionSnapshot;
   selected: number | null;
   onSelect: (index: number) => void;
-  regs2026: boolean;
 }
 
-export function TimingTower({ snapshot, selected, onSelect, regs2026 }: Props) {
+export function TimingTower({ snapshot, selected, onSelect }: Props) {
   const stale = Date.now() - snapshot.lastUpdate > STALE_MS;
 
   return (
@@ -23,7 +22,6 @@ export function TimingTower({ snapshot, selected, onSelect, regs2026 }: Props) {
 
       <div className="tower-head">
         <span className="col-pos">P</span>
-        <span className="col-no">No</span>
         <span className="col-driver">Driver</span>
         <span className="col-tyre">Tyre</span>
         <span className="col-batt">Battery</span>
@@ -36,13 +34,7 @@ export function TimingTower({ snapshot, selected, onSelect, regs2026 }: Props) {
 
       <div className="tower-body">
         {snapshot.drivers.map((d) => (
-          <TowerRow
-            key={d.index}
-            d={d}
-            selected={d.index === selected}
-            onSelect={onSelect}
-            regs2026={regs2026}
-          />
+          <TowerRow key={d.index} d={d} selected={d.index === selected} onSelect={onSelect} />
         ))}
       </div>
     </div>
