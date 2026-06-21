@@ -29,3 +29,24 @@ export const SAFETY_CAR_STATUS: Record<number, string> = {
   2: "Virtual",
   3: "Formation Lap",
 };
+
+export const ERS_DEPLOY_MODE: Record<number, string> = {
+  0: "None",
+  1: "Medium",
+  2: "Hotlap",
+  3: "Overtake",
+};
+
+export const PIT_STATUS: Record<number, string> = {
+  0: "None",
+  1: "Pitting",
+  2: "In Pit Area",
+};
+
+export const DRIVER_STATUS: Record<number, string> = {
+  0: "In Garage",
+  1: "Flying Lap",
+  2: "In Lap",
+  3: "Out Lap",
+  4: "On Track",
+};

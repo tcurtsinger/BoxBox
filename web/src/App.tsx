@@ -1,18 +1,33 @@
+import { useState } from "react";
 import { useSnapshot } from "./api/useSnapshot";
 import type { ConnState } from "./api/useSnapshot";
 import { SessionHeader } from "./components/SessionHeader";
 import { TimingTower } from "./components/TimingTower";
+import { IncidentFeed } from "./components/IncidentFeed";
+import { DriverDetail } from "./components/DriverDetail";
 
 export function App() {
   const { snapshot, conn } = useSnapshot();
+  const [selected, setSelected] = useState<number | null>(null);
   const hasDrivers = !!snapshot && snapshot.drivers.length > 0;
+  // Resolve against the live snapshot so the open panel keeps updating.
+  const selectedDriver =
+    selected === null ? undefined : snapshot?.drivers.find((d) => d.index === selected);
 
   return (
     <div className="app">
       <SessionHeader snapshot={snapshot} conn={conn} />
-      <main className="tower-wrap">
-        {hasDrivers ? <TimingTower snapshot={snapshot} /> : <EmptyState conn={conn} />}
-      </main>
+      <div className="content">
+        <main className="tower-wrap">
+          {hasDrivers ? (
+            <TimingTower snapshot={snapshot} selected={selected} onSelect={setSelected} />
+          ) : (
+            <EmptyState conn={conn} />
+          )}
+        </main>
+        <IncidentFeed incidents={snapshot?.incidents ?? []} drivers={snapshot?.drivers ?? []} />
+      </div>
+      {selectedDriver && <DriverDetail driver={selectedDriver} onClose={() => setSelected(null)} />}
     </div>
   );
 }

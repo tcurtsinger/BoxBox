@@ -3,7 +3,13 @@ import { TowerRow } from "./TowerRow";
 
 const STALE_MS = 3000;
 
-export function TimingTower({ snapshot }: { snapshot: SessionSnapshot }) {
+interface Props {
+  snapshot: SessionSnapshot;
+  selected: number | null;
+  onSelect: (index: number) => void;
+}
+
+export function TimingTower({ snapshot, selected, onSelect }: Props) {
   const stale = Date.now() - snapshot.lastUpdate > STALE_MS;
 
   return (
@@ -29,7 +35,7 @@ export function TimingTower({ snapshot }: { snapshot: SessionSnapshot }) {
 
       <div className="tower-body">
         {snapshot.drivers.map((d) => (
-          <TowerRow key={d.index} d={d} />
+          <TowerRow key={d.index} d={d} selected={d.index === selected} onSelect={onSelect} />
         ))}
       </div>
     </div>

@@ -25,3 +25,10 @@ export function clock(seconds: number): string {
   const s = Math.floor(seconds);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
+
+// Gear: -1 reverse, 0 neutral, 1..8 forward.
+export function gearLabel(gear: number): string {
+  if (gear === 0) return "N";
+  if (gear < 0) return "R";
+  return String(gear);
+}

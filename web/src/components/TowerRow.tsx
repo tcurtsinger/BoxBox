@@ -4,7 +4,13 @@ import { tyre } from "../presentation/tyres";
 import { flag } from "../presentation/flags";
 import { lapTime, gap, fuelLaps } from "../presentation/format";
 
-export function TowerRow({ d }: { d: DriverState }) {
+interface Props {
+  d: DriverState;
+  selected: boolean;
+  onSelect: (index: number) => void;
+}
+
+export function TowerRow({ d, selected, onSelect }: Props) {
   const t = tyre(d.tyreVisual);
   const f = flag(d.fiaFlags);
   const pitting = d.pitStatus > 0;
@@ -12,9 +18,10 @@ export function TowerRow({ d }: { d: DriverState }) {
   const batteryClass = battery > 50 ? "batt-high" : battery > 20 ? "batt-mid" : "batt-low";
   const fuelShort = d.fuelRemainingLaps < 0;
   const isLeader = d.position === 1;
+  const cls = `tower-row${d.currentLapInvalid ? " row-invalid" : ""}${selected ? " row-selected" : ""}`;
 
   return (
-    <div className={`tower-row${d.currentLapInvalid ? " row-invalid" : ""}`}>
+    <div className={cls} onClick={() => onSelect(d.index)}>
       <span className="col-pos" style={{ borderLeftColor: teamColor(d.teamId) }}>
         {d.position || "-"}
       </span>
