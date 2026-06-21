@@ -7,6 +7,7 @@ import {
   parseCarTelemetry,
   parseCarStatus,
   parseCarDamage,
+  parseCarTelemetry2,
   parseEvent,
   parseFinalClassification,
 } from "./packets.ts";
@@ -44,6 +45,8 @@ export function parsePacket(buf: Buffer): ParsedPacket | null {
       return { id: 8, header, data: parseFinalClassification(rd, header) };
     case PacketId.CarDamage:
       return { id: 10, header, data: parseCarDamage(rd, header) };
+    case PacketId.CarTelemetry2:
+      return { id: 16, header, data: parseCarTelemetry2(rd, header) };
     default:
       return { id: header.packetId, header, data: null };
   }

@@ -9,6 +9,7 @@ import type {
   CarTelemetryData,
   CarStatusData,
   CarDamageData,
+  CarTelemetry2Data,
   EventData,
   FinalClassificationData,
 } from "./parser/index.ts";
@@ -47,7 +48,11 @@ export interface DriverState {
   batteryPct: number;
   ersDeployMode: number;
   fiaFlags: number;
-  drsAllowed: boolean;
+  drsAllowed: boolean; // 2025 only; DRS was removed under the 2026 regs
+  // 2026 active-aero / overtake (CarTelemetry2; replaces DRS)
+  overtakeActive: boolean;
+  overtakeAvailable: boolean;
+  activeAeroMode: number; // 0 = corner, 1 = straight
   // telemetry (CarTelemetry)
   speed: number;
   gear: number;
@@ -137,6 +142,9 @@ function emptyDriver(index: number): DriverState {
     ersDeployMode: 0,
     fiaFlags: 0,
     drsAllowed: false,
+    overtakeActive: false,
+    overtakeAvailable: false,
+    activeAeroMode: 0,
     speed: 0,
     gear: 0,
     drs: false,
@@ -207,6 +215,9 @@ export class SessionState {
         break;
       case 10:
         this.#ingestDamage(pkt.data as CarDamageData);
+        break;
+      case 16:
+        this.#ingestTelemetry2(pkt.data as CarTelemetry2Data);
         break;
       default:
         break;
@@ -292,6 +303,15 @@ export class SessionState {
       d.rpm = c.engineRPM;
       d.tyreSurfaceTemp = c.tyresSurfaceTemperature;
       d.tyreInnerTemp = c.tyresInnerTemperature;
+    }
+  }
+
+  #ingestTelemetry2(t: CarTelemetry2Data): void {
+    for (const c of t.cars) {
+      const d = this.#driver(c.index);
+      d.overtakeActive = c.overtakeActive;
+      d.overtakeAvailable = c.overtakeAvailable;
+      d.activeAeroMode = c.activeAeroMode;
     }
   }
 

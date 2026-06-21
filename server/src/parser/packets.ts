@@ -14,6 +14,8 @@ import type {
   CarStatusEntry,
   CarDamageData,
   CarDamageEntry,
+  CarTelemetry2Data,
+  CarTelemetry2Entry,
   EventData,
   FinalClassificationData,
   FinalClassificationEntry,
@@ -466,4 +468,37 @@ export function parseFinalClassification(
   }
 
   return { numCars, classification };
+}
+
+// --- Car Telemetry 2 (id 16) --------------------------------------------------
+// 2026-pack packet (269 bytes, 10-byte per-car stride). Carries the active-aero
+// and overtake (electrical boost) state that replaced DRS under the 2026 regs.
+export function parseCarTelemetry2(rd: BufferReader, header: PacketHeader): CarTelemetry2Data {
+  const maxCars = maxCarsForFormat(header.packetFormat);
+  const cars: CarTelemetry2Entry[] = [];
+
+  for (let i = 0; i < maxCars; i++) {
+    const activeAeroMode = rd.u8();
+    const activeAeroAvailable = rd.u8();
+    const activeAeroActivationDistance = rd.u16();
+    const overtakeAvailable = rd.u8();
+    const overtakeActive = rd.u8();
+    const overtakeActivationDistance = rd.u16();
+    const is2026 = rd.u8();
+    const drivingWrongWay = rd.u8();
+
+    cars.push({
+      index: i,
+      activeAeroMode,
+      activeAeroAvailable: activeAeroAvailable === 1,
+      activeAeroActivationDistance,
+      overtakeAvailable: overtakeAvailable === 1,
+      overtakeActive: overtakeActive === 1,
+      overtakeActivationDistance,
+      is2026: is2026 === 1,
+      drivingWrongWay: drivingWrongWay === 1,
+    });
+  }
+
+  return { cars };
 }

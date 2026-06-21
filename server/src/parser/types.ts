@@ -128,6 +128,24 @@ export interface CarTelemetryData {
   suggestedGear: number;
 }
 
+// CarTelemetry2 (id 16) is a 2026-pack packet. It carries the active-aero and
+// overtake (electrical boost) state that replaced DRS under the 2026 regs.
+export interface CarTelemetry2Entry {
+  index: number;
+  activeAeroMode: number; // 0 = corner, 1 = straight
+  activeAeroAvailable: boolean;
+  activeAeroActivationDistance: number; // metres, 0 = not available
+  overtakeAvailable: boolean;
+  overtakeActive: boolean;
+  overtakeActivationDistance: number; // metres, 0 = not available
+  is2026: boolean; // m_2026Regulations: vehicle runs the 2026 ruleset
+  drivingWrongWay: boolean;
+}
+
+export interface CarTelemetry2Data {
+  cars: CarTelemetry2Entry[];
+}
+
 export interface CarStatusEntry {
   index: number;
   fuelMix: number;
@@ -230,4 +248,5 @@ export type ParsedPacket =
   | { id: 7; header: PacketHeader; data: CarStatusData }
   | { id: 8; header: PacketHeader; data: FinalClassificationData }
   | { id: 10; header: PacketHeader; data: CarDamageData }
+  | { id: 16; header: PacketHeader; data: CarTelemetry2Data }
   | { id: number; header: PacketHeader; data: null };

@@ -8,6 +8,7 @@ import type {
   CarTelemetryData,
   CarStatusData,
   CarDamageData,
+  CarTelemetry2Data,
   EventData,
   FinalClassificationData,
 } from "../src/parser/index.ts";
@@ -332,6 +333,34 @@ test("CarDamage: 46-byte stride, wear and faults", () => {
   assert.equal(d.cars[0]?.engineDamage, 3);
   assert.equal(d.cars[0]?.drsFault, false);
   assert.equal(d.cars[0]?.ersFault, true);
+});
+
+test("CarTelemetry2: 10-byte stride, active-aero and overtake (2026)", () => {
+  const w = new W(269);
+  writeHeader(w, 16);
+  const base = w.pos;
+  w.u8(1) // activeAeroMode = straight
+    .u8(1) // activeAeroAvailable
+    .u16(0) // activeAeroActivationDistance
+    .u8(1) // overtakeAvailable
+    .u8(1) // overtakeActive
+    .u16(120) // overtakeActivationDistance
+    .u8(1) // m_2026Regulations
+    .u8(0); // drivingWrongWay
+  assert.equal(w.pos - base, 10, "car telemetry 2 stride must be 10");
+  w.skip(23 * 10);
+  assert.equal(w.pos, 269, "CarTelemetry2 packet must be 269 bytes (2026)");
+
+  const pkt = parsePacket(w.buf);
+  assert.ok(pkt && pkt.id === 16);
+  const t = pkt.data as CarTelemetry2Data;
+  assert.equal(t.cars.length, 24);
+  assert.equal(t.cars[0]?.activeAeroMode, 1);
+  assert.equal(t.cars[0]?.activeAeroAvailable, true);
+  assert.equal(t.cars[0]?.overtakeActive, true);
+  assert.equal(t.cars[0]?.overtakeAvailable, true);
+  assert.equal(t.cars[0]?.overtakeActivationDistance, 120);
+  assert.equal(t.cars[0]?.is2026, true);
 });
 
 test("Event PENA decodes penalty detail", () => {
