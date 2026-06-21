@@ -42,6 +42,7 @@ function readJson(req: IncomingMessage): Promise<any> {
 //   POST /api/incidents/approve - approve with a free-text outcome (authoritative)
 //   POST /api/incidents/dismiss - dismiss (no action)
 //   POST /api/incidents/reopen  - send a decided incident back to pending (undo)
+//   POST /api/drivers/name      - set/clear a manual display-name override for a car
 // Steward writes mutate SessionState; the next SSE broadcast pushes the change
 // to every connected client, so there is still one source of truth.
 export function startHttpServer(
@@ -65,6 +66,14 @@ export function startHttpServer(
 
     if (url === "/api/incidents/manual") {
       return sendJson(res, 201, state.logManualIncident(body ?? {}, atMs));
+    }
+
+    if (url === "/api/drivers/name") {
+      if (!body || typeof body.index !== "number") {
+        return sendJson(res, 400, { error: "index required" });
+      }
+      const result = state.setDriverName(body.index, typeof body.name === "string" ? body.name : "", atMs);
+      return result ? sendJson(res, 200, result) : sendJson(res, 400, { error: "invalid index" });
     }
 
     if (!body || typeof body.id !== "string") {

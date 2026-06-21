@@ -23,6 +23,7 @@ export interface DriverState {
   nationality: number;
   aiControlled: boolean;
   telemetryPublic: boolean;
+  nameOverride: string | null; // manual fallback when the feed name is missing or redacted to "Player"
   // timing (LapData)
   position: number;
   gridPosition: number;
@@ -132,6 +133,7 @@ function emptyDriver(index: number): DriverState {
     nationality: 0,
     aiControlled: false,
     telemetryPublic: false,
+    nameOverride: null,
     position: 0,
     gridPosition: 0,
     lastLapMS: 0,
@@ -190,6 +192,9 @@ export class SessionState {
   packetCount = 0;
   lastUpdate = 0;
   #nextIncidentId = 1;
+  // car index -> manual display name. Deliberately NOT cleared on session reset:
+  // the same lobby keeps its mapping across quali -> race.
+  #nameOverrides = new Map<number, string>();
 
   ingest(pkt: ParsedPacket, atMs: number): void {
     const h = pkt.header;
@@ -433,9 +438,26 @@ export class SessionState {
     return incident;
   }
 
+  /**
+   * Set or clear a manual display-name override for a car (the fallback for when
+   * the feed name is missing or redacted to "Player"). A blank name clears it.
+   * Overrides persist across session resets. Returns null for an invalid index.
+   */
+  setDriverName(index: number, name: string, atMs: number): { index: number; nameOverride: string | null } | null {
+    if (!Number.isInteger(index) || index < 0 || index >= 100) return null;
+    const trimmed = typeof name === "string" ? name.trim() : "";
+    if (trimmed) this.#nameOverrides.set(index, trimmed);
+    else this.#nameOverrides.delete(index);
+    const d = this.drivers.get(index);
+    if (d) d.nameOverride = trimmed || null;
+    this.lastUpdate = atMs;
+    return { index, nameOverride: trimmed || null };
+  }
+
   /** Active drivers (known participants), sorted by race position. */
   activeDrivers(): DriverState[] {
     const list = [...this.drivers.values()].filter((d) => d.name !== "");
+    for (const d of list) d.nameOverride = this.#nameOverrides.get(d.index) ?? null;
     list.sort((a, b) => {
       const pa = a.position === 0 ? 999 : a.position;
       const pb = b.position === 0 ? 999 : b.position;

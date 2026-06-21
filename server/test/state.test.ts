@@ -143,3 +143,41 @@ test("dismiss and reopen move an incident in and out of the queue", () => {
   assert.equal(reopened?.ruling, null);
   assert.equal(s.dismissIncident("missing", 9000), null);
 });
+
+test("manual name override is trimmed, clearable, and survives a session reset", () => {
+  const s = new SessionState();
+  // A lobby where the feed redacted names to "Player".
+  feed(s, 4, {
+    numActiveCars: 2,
+    participants: [
+      { index: 0, name: "Player", teamId: 0, raceNumber: 4, nationality: 1, aiControlled: false, telemetryPublic: true },
+      { index: 1, name: "Player", teamId: 2, raceNumber: 1, nationality: 1, aiControlled: false, telemetryPublic: true },
+    ],
+  }, "5005");
+
+  // Override car 0; whitespace is trimmed, car 1 stays unset.
+  assert.deepEqual(s.setDriverName(0, "  Twisty  ", 1000), { index: 0, nameOverride: "Twisty" });
+  let snap = s.snapshot();
+  assert.equal(snap.drivers.find((d) => d.index === 0)?.nameOverride, "Twisty");
+  assert.equal(snap.drivers.find((d) => d.index === 0)?.name, "Player"); // raw feed name untouched
+  assert.equal(snap.drivers.find((d) => d.index === 1)?.nameOverride, null);
+
+  // A blank name clears the override.
+  s.setDriverName(0, "   ", 1001);
+  assert.equal(s.snapshot().drivers.find((d) => d.index === 0)?.nameOverride, null);
+
+  // Re-set, then change session UID: overrides persist (same lobby, new session).
+  s.setDriverName(0, "Twisty", 1002);
+  feed(s, 4, {
+    numActiveCars: 1,
+    participants: [{ index: 0, name: "Player", teamId: 0, raceNumber: 4, nationality: 1, aiControlled: false, telemetryPublic: true }],
+  }, "6006");
+  snap = s.snapshot();
+  assert.equal(snap.sessionUID, "6006");
+  assert.equal(snap.incidents.length, 0); // session reset happened
+  assert.equal(snap.drivers.find((d) => d.index === 0)?.nameOverride, "Twisty");
+
+  // Invalid indices are rejected.
+  assert.equal(s.setDriverName(-1, "x", 1003), null);
+  assert.equal(s.setDriverName(1.5, "x", 1003), null);
+});
