@@ -83,6 +83,7 @@ test("captures collisions/penalties as incidents, tallies all events", () => {
   assert.equal(snap.incidents[0]?.detail.severity, 2);
   assert.equal(snap.incidents[1]?.label, "Penalty");
   assert.equal(snap.incidents[1]?.lapNum, 10);
+  assert.deepEqual(snap.incidents[1]?.carIndices, [1]); // 255 sentinel filtered out
   assert.equal(snap.eventTally.BUTN, 1);
   assert.equal(snap.eventTally.SPTP, 1);
   assert.equal(snap.eventTally.COLL, 1);

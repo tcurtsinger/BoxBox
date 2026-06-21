@@ -311,9 +311,15 @@ export class SessionState {
     const label = INCIDENT_LABELS[e.code];
     if (!label) return;
 
-    const carIndices = [e.vehicleIdx, e.otherVehicleIdx].filter(
-      (v): v is number => typeof v === "number",
-    );
+    // 255 is the F1 "no vehicle" sentinel; drop it and dedupe so an incident
+    // only ever lists real cars.
+    const carIndices = [
+      ...new Set(
+        [e.vehicleIdx, e.otherVehicleIdx].filter(
+          (v): v is number => typeof v === "number" && v !== 255,
+        ),
+      ),
+    ];
     const detail: Record<string, number> = {};
     for (const [k, v] of Object.entries(e)) {
       if (k !== "code" && typeof v === "number") detail[k] = v;
