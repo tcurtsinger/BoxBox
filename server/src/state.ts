@@ -68,13 +68,27 @@ export interface DriverState {
   gearboxDamage: number;
 }
 
+export type IncidentStatus = "pending" | "approved" | "dismissed";
+
+// A steward's decision. `outcome` is free text (manual entry, no fixed
+// vocabulary), set when the steward approves an incident.
+export interface Ruling {
+  outcome: string;
+  decidedAtMs: number;
+}
+
 export interface Incident {
+  id: string;
+  source: "auto" | "manual";
   sessionTime: number;
   lapNum: number | null;
   code: string;
   label: string;
   carIndices: number[];
   detail: Record<string, number>;
+  status: IncidentStatus;
+  note: string; // steward note, or the description for a manual incident
+  ruling: Ruling | null;
 }
 
 export interface SessionSnapshot {
@@ -175,6 +189,7 @@ export class SessionState {
   finalClassification: FinalClassificationData | null = null;
   packetCount = 0;
   lastUpdate = 0;
+  #nextIncidentId = 1;
 
   ingest(pkt: ParsedPacket, atMs: number): void {
     const h = pkt.header;
@@ -232,6 +247,7 @@ export class SessionState {
     this.eventTally.clear();
     this.finalClassification = null;
     this.numActiveCars = 0;
+    this.#nextIncidentId = 1;
   }
 
   #driver(index: number): DriverState {
@@ -346,13 +362,75 @@ export class SessionState {
     }
 
     this.incidents.push({
+      id: String(this.#nextIncidentId++),
+      source: "auto",
       sessionTime,
       lapNum: typeof e.lapNum === "number" ? e.lapNum : null,
       code: e.code,
       label,
       carIndices,
       detail,
+      status: "pending",
+      note: "",
+      ruling: null,
     });
+  }
+
+  /** Steward logs an incident by hand. Returns the created incident. */
+  logManualIncident(
+    input: { carIndices?: number[]; label?: string; note?: string },
+    atMs: number,
+  ): Incident {
+    const carIndices = Array.isArray(input.carIndices)
+      ? input.carIndices.filter((v): v is number => typeof v === "number")
+      : [];
+    const leaderLap = Math.max(0, ...[...this.drivers.values()].map((d) => d.currentLapNum));
+    const incident: Incident = {
+      id: String(this.#nextIncidentId++),
+      source: "manual",
+      sessionTime: this.sessionTime,
+      lapNum: leaderLap > 0 ? leaderLap : null,
+      code: "MANUAL",
+      label: input.label?.trim() || "Manual incident",
+      carIndices,
+      detail: {},
+      status: "pending",
+      note: input.note?.trim() ?? "",
+      ruling: null,
+    };
+    this.incidents.push(incident);
+    this.lastUpdate = atMs;
+    return incident;
+  }
+
+  /** Steward approves an incident with a free-text outcome (authoritative). */
+  approveIncident(id: string, input: { outcome?: string }, atMs: number): Incident | null {
+    const incident = this.incidents.find((i) => i.id === id);
+    if (!incident) return null;
+    incident.ruling = { outcome: input.outcome?.trim() ?? "", decidedAtMs: atMs };
+    incident.status = "approved";
+    this.lastUpdate = atMs;
+    return incident;
+  }
+
+  /** Steward dismisses an incident (no action taken). */
+  dismissIncident(id: string, atMs: number): Incident | null {
+    const incident = this.incidents.find((i) => i.id === id);
+    if (!incident) return null;
+    incident.status = "dismissed";
+    incident.ruling = null;
+    this.lastUpdate = atMs;
+    return incident;
+  }
+
+  /** Reopen a decided incident back to the pending queue (undo). */
+  reopenIncident(id: string, atMs: number): Incident | null {
+    const incident = this.incidents.find((i) => i.id === id);
+    if (!incident) return null;
+    incident.status = "pending";
+    incident.ruling = null;
+    this.lastUpdate = atMs;
+    return incident;
   }
 
   /** Active drivers (known participants), sorted by race position. */

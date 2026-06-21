@@ -104,3 +104,42 @@ test("resets cleanly when the session UID changes", () => {
   assert.equal(snap.drivers.length, 1);
   assert.equal(snap.drivers[0]?.name, "HAMILTON");
 });
+
+test("logs a manual incident with a stable id and pending status", () => {
+  const s = new SessionState();
+  feed(s, 4, {
+    numActiveCars: 2,
+    participants: [
+      { index: 0, name: "NORRIS", teamId: 0, raceNumber: 4, nationality: 1, aiControlled: false, telemetryPublic: true },
+      { index: 1, name: "VERSTAPPEN", teamId: 2, raceNumber: 1, nationality: 1, aiControlled: false, telemetryPublic: true },
+    ],
+  });
+  const inc = s.logManualIncident({ carIndices: [0, 1], label: "Unsafe rejoin", note: "Turn 3" }, 5000);
+  assert.equal(inc.source, "manual");
+  assert.equal(inc.status, "pending");
+  assert.equal(inc.label, "Unsafe rejoin");
+  assert.deepEqual(inc.carIndices, [0, 1]);
+  assert.ok(inc.id);
+  assert.equal(s.snapshot().incidents[0]?.note, "Turn 3");
+});
+
+test("approving an incident records the free-text outcome and resolves it", () => {
+  const s = new SessionState();
+  feed(s, 3, { code: "COLL", vehicleIdx: 0, otherVehicleIdx: 1, severity: 2 });
+  const id = s.snapshot().incidents[0]!.id;
+  const approved = s.approveIncident(id, { outcome: "5s time penalty, car 0 at fault" }, 6000);
+  assert.equal(approved?.status, "approved");
+  assert.equal(approved?.ruling?.outcome, "5s time penalty, car 0 at fault");
+  assert.equal(s.approveIncident("nope", { outcome: "x" }, 6000), null);
+});
+
+test("dismiss and reopen move an incident in and out of the queue", () => {
+  const s = new SessionState();
+  feed(s, 3, { code: "COLL", vehicleIdx: 0, otherVehicleIdx: 1, severity: 1 });
+  const id = s.snapshot().incidents[0]!.id;
+  assert.equal(s.dismissIncident(id, 7000)?.status, "dismissed");
+  const reopened = s.reopenIncident(id, 8000);
+  assert.equal(reopened?.status, "pending");
+  assert.equal(reopened?.ruling, null);
+  assert.equal(s.dismissIncident("missing", 9000), null);
+});
