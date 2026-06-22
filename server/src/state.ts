@@ -481,6 +481,15 @@ export class SessionState {
     return incident;
   }
 
+  /** Set or clear a steward note on any incident. */
+  setIncidentNote(id: string, input: { note?: string }, atMs: number): Incident | null {
+    const incident = this.incidents.find((i) => i.id === id);
+    if (!incident) return null;
+    incident.note = typeof input.note === "string" ? input.note.trim() : "";
+    this.lastUpdate = atMs;
+    return incident;
+  }
+
   /** Reopen a decided incident back to the pending queue (undo). */
   reopenIncident(id: string, atMs: number): Incident | null {
     const incident = this.incidents.find((i) => i.id === id);

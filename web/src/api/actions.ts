@@ -27,6 +27,10 @@ export function dismissIncident(id: string): Promise<void> {
   return post("/api/incidents/dismiss", { id });
 }
 
+export function setIncidentNote(id: string, note: string): Promise<void> {
+  return post("/api/incidents/note", { id, note });
+}
+
 export function reopenIncident(id: string): Promise<void> {
   return post("/api/incidents/reopen", { id });
 }

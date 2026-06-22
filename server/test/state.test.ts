@@ -212,6 +212,20 @@ test("dismiss and reopen move an incident in and out of the queue", () => {
   assert.equal(s.dismissIncident("missing", 9000), null);
 });
 
+test("sets and clears a note on any incident", () => {
+  const s = new SessionState();
+  feed(s, 3, { code: "COLL", vehicleIdx: 0, otherVehicleIdx: 1, severity: 1 });
+  const id = s.snapshot().incidents[0]!.id;
+
+  const noted = s.setIncidentNote(id, { note: "  Reviewed onboard replay  " }, 7000);
+  assert.equal(noted?.note, "Reviewed onboard replay");
+  assert.equal(s.snapshot().incidents[0]?.note, "Reviewed onboard replay");
+
+  const cleared = s.setIncidentNote(id, { note: "" }, 8000);
+  assert.equal(cleared?.note, "");
+  assert.equal(s.setIncidentNote("missing", { note: "x" }, 9000), null);
+});
+
 test("manual name override is trimmed, clearable, and survives a session reset", () => {
   const s = new SessionState();
   // A lobby where the feed redacted names to "Player".

@@ -41,6 +41,7 @@ function readJson(req: IncomingMessage): Promise<any> {
 //   POST /api/incidents/manual  - log a manual incident
 //   POST /api/incidents/approve - approve with a free-text outcome (authoritative)
 //   POST /api/incidents/dismiss - dismiss (no action)
+//   POST /api/incidents/note    - set/clear the steward note on any incident
 //   POST /api/incidents/reopen  - send a decided incident back to pending (undo)
 //   POST /api/drivers/name      - set/clear a manual display-name override for a car
 // Steward writes mutate SessionState; the next SSE broadcast pushes the change
@@ -83,6 +84,7 @@ export function startHttpServer(
     let inc: Incident | null = null;
     if (url === "/api/incidents/approve") inc = state.approveIncident(body.id, body, atMs);
     else if (url === "/api/incidents/dismiss") inc = state.dismissIncident(body.id, atMs);
+    else if (url === "/api/incidents/note") inc = state.setIncidentNote(body.id, body, atMs);
     else if (url === "/api/incidents/reopen") inc = state.reopenIncident(body.id, atMs);
     else return sendJson(res, 404, { error: "not found" });
 
