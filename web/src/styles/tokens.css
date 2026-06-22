@@ -1,33 +1,49 @@
+/* BoxBox design system — dark port of the race-control prototype.
+   One source of truth: palette, type, radii, spacing. app.css consumes
+   these and adds zero hardcoded colours. */
 :root {
-  --bg: #0a0d12;
-  --bg-elev: #121821;
-  --bg-row: #10151d;
-  --bg-row-alt: #0c1117;
-  --border: #1f2733;
-  --border-soft: #161d27;
+  /* Surfaces: app base is near-black; cards step up; insets step down. */
+  --bg: #0a0e13;
+  --bg-card: #141a22;
+  --bg-inset: #0f141b;
+  --bg-stat: #1a212c;
+  --bg-hover: #1b232f;
+  --bg-sel: #1d2839;
+  --bg-battle: #161d27;
 
-  --text: #e8eef5;
-  --text-dim: #93a0b1;
-  --text-faint: #5c6776;
+  --border: #28313d;
+  --border-soft: #1d242e;
 
-  --accent: #e10600;
-  --green: #34c759;
-  --amber: #ffb020;
-  --red: #ff453a;
-  --blue: #0a84ff;
+  --text: #e7ebf1;
+  --text-dim: #909bab;
+  --text-faint: #5d6776;
+
+  /* Accents mirror the prototype's language (green = live/gained,
+     purple = fastest, red = lost/danger). */
+  --green: #2ecf68;
+  --green-dim: #8fe3ab;
+  --red: #ff5b52;
+  --amber: #ffc24d;
   --yellow: #ffd60a;
-  --boost: #8b7bff;
+  --blue: #4d9bff;
+  --purple: #a78bfa;
+  --boost: #a78bfa;
 
-  --tyre-soft: #e8392f;
-  --tyre-medium: #f6d126;
-  --tyre-hard: #ededed;
-  --tyre-inter: #43b02a;
-  --tyre-wet: #1e9be0;
+  --tyre-soft: #ef4b42;
+  --tyre-medium: #f4cf3f;
+  --tyre-hard: #e9edf2;
+  --tyre-inter: #46c14f;
+  --tyre-wet: #36a3e8;
 
-  --mono: ui-monospace, "Cascadia Mono", "Consolas", monospace;
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
-  --row-h: 34px;
+  --radius-card: 12px;
+  --radius: 8px;
+  --radius-sm: 6px;
+
+  --row-h: 52px;
+  --gap: 14px;
 }
 
 * {
@@ -47,4 +63,13 @@ body {
   font-family: var(--sans);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Numerics align in columns everywhere they appear. */
+.mono,
+[class*="-value"],
+[class*="-temp"],
+[class*="-pct"] {
+  font-variant-numeric: tabular-nums;
 }

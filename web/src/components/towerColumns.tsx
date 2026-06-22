@@ -212,13 +212,17 @@ function StatusCell({ driver }: { driver: DriverState }) {
   const out = isOut(driver);
   const f = flag(driver.fiaFlags);
   const status = statusText(driver, pitting, out);
+  const hasStatus = status.label !== "-";
   const fuelShort = driver.fuelRemainingLaps < 0;
+  // Only show the "-" placeholder when there is genuinely nothing to report.
+  const empty = !f && !hasStatus && !fuelShort;
 
   return (
     <>
       {f && <span className="flag-dot" style={{ background: f.color }} title={`${f.label} flag`} />}
-      <span className={status.cls}>{status.label}</span>
+      {hasStatus && <span className={status.cls}>{status.label}</span>}
       {fuelShort && <span className="fuel-short">Fuel {fuelLaps(driver.fuelRemainingLaps)}</span>}
+      {empty && <span>-</span>}
     </>
   );
 }

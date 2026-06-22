@@ -8,18 +8,23 @@ export function incidentCars(inc: Incident, nameOf: (index: number) => string): 
   return inc.carIndices.map(nameOf).join(", ");
 }
 
+// The label already names the event (the server humanises penalty/safety-car
+// sub-types). The detail line adds only what the label can't carry, and never
+// dumps raw numeric fields.
 export function incidentDetail(inc: Incident): string {
   const d = inc.detail;
-  if (inc.code === "PENA" && typeof d.time === "number" && d.time > 0) return `+${d.time}s penalty`;
-  if (inc.code === "COLL" && typeof d.severity === "number") {
-    return `Severity: ${collisionSeverity(d.severity)}`;
+  switch (inc.code) {
+    case "PENA":
+      return typeof d.time === "number" && d.time > 0 ? `+${d.time}s penalty` : "";
+    case "COLL":
+      return typeof d.severity === "number" ? `Severity: ${collisionSeverity(d.severity)}` : "";
+    default:
+      return "";
   }
-  return Object.entries(d).map(([k, v]) => `${k} ${v}`).join(" · ");
 }
 
 function collisionSeverity(severity: number): string {
-  if (severity === 0) return "low";
-  if (severity === 1) return "medium";
-  if (severity === 2) return "high";
-  return String(severity);
+  if (severity <= 0) return "minor";
+  if (severity === 1) return "moderate";
+  return "high";
 }
