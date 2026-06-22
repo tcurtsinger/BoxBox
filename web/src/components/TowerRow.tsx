@@ -20,13 +20,14 @@ export function TowerRow({ d, selected, onSelect }: Props) {
   const boosting = d.overtakeActive; // 2026 overtake mode discharges the battery
   const fuelShort = d.fuelRemainingLaps < 0;
   const isLeader = d.position === 1;
+  const penalties = penaltyText(d);
   const cls =
     `tower-row${d.currentLapInvalid ? " row-invalid" : ""}` +
     `${pitting ? " row-pit" : ""}${selected ? " row-selected" : ""}`;
 
   return (
     <div className={cls} onClick={() => onSelect(d.index)}>
-      <span className="col-pos" style={{ borderLeftColor: teamColor(d.teamId) }}>
+      <span className="col-pos" style={{ borderLeftColor: teamColor(d.teamId, d.liveryColours) }}>
         {d.position || "-"}
       </span>
 
@@ -61,6 +62,11 @@ export function TowerRow({ d, selected, onSelect }: Props) {
         {fuelLaps(d.fuelRemainingLaps)}
       </span>
 
+      <span className="col-warn">
+        {d.cornerCuttingWarnings > 0 ? `${d.cornerCuttingWarnings}/3` : "-"}
+      </span>
+      <span className={`col-penalty${penalties === "-" ? "" : " has-penalty"}`}>{penalties}</span>
+
       <span className="col-int">
         {pitting ? <span className="pit-text">PIT</span> : isLeader ? "-" : gap(d.deltaToCarAheadMS)}
       </span>
@@ -69,4 +75,13 @@ export function TowerRow({ d, selected, onSelect }: Props) {
       <span className="col-best">{lapTime(d.bestLapMS)}</span>
     </div>
   );
+}
+
+function penaltyText(d: DriverState): string {
+  const parts = [
+    d.penaltiesSec > 0 ? `+${d.penaltiesSec}s` : "",
+    d.numUnservedDriveThrough > 0 ? `${d.numUnservedDriveThrough}DT` : "",
+    d.numUnservedStopGo > 0 ? `${d.numUnservedStopGo}SG` : "",
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join("/") : "-";
 }

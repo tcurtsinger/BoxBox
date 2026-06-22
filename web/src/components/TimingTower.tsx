@@ -26,6 +26,8 @@ export function TimingTower({ snapshot, selected, onSelect }: Props) {
         <span className="col-tyre">Tyre</span>
         <span className="col-batt">Battery</span>
         <span className="col-fuel">Fuel</span>
+        <span className="col-warn">Warn</span>
+        <span className="col-penalty">Pen</span>
         <span className="col-int">Interval</span>
         <span className="col-gap">Gap</span>
         <span className="col-last">Last</span>

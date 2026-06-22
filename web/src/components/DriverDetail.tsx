@@ -27,6 +27,12 @@ interface Props {
 export function DriverDetail({ driver, regs2026, onClose, embedded = false }: Props) {
   const t = tyre(driver.tyreVisual);
   const overtake = driver.overtakeActive ? "Active" : driver.overtakeAvailable ? "Ready" : "-";
+  const penaltyParts = [
+    driver.penaltiesSec > 0 ? `+${driver.penaltiesSec}s` : "",
+    driver.numUnservedDriveThrough > 0 ? `${driver.numUnservedDriveThrough} DT` : "",
+    driver.numUnservedStopGo > 0 ? `${driver.numUnservedStopGo} SG` : "",
+  ].filter(Boolean);
+  const penaltyText = penaltyParts.length > 0 ? penaltyParts.join(" / ") : "none";
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -37,7 +43,7 @@ export function DriverDetail({ driver, regs2026, onClose, embedded = false }: Pr
 
   const panel = (
       <aside className={`detail${embedded ? " detail-embedded" : ""}`} onClick={(e) => e.stopPropagation()}>
-        <div className="detail-head" style={{ borderTopColor: teamColor(driver.teamId) }}>
+        <div className="detail-head" style={{ borderTopColor: teamColor(driver.teamId, driver.liveryColours) }}>
           <div className="detail-id">
             <span className="detail-pos">P{driver.position || "-"}</span>
             <span className="detail-no">#{driver.raceNumber}</span>
@@ -108,7 +114,15 @@ export function DriverDetail({ driver, regs2026, onClose, embedded = false }: Pr
           </div>
         </Section>
 
-        <Section title="Damage">
+        <Section title="Power unit wear">
+          <Damage label="ICE" v={driver.powerUnitWear.ice} />
+          <Damage label="ES" v={driver.powerUnitWear.energyStore} />
+          <Damage label="CE" v={driver.powerUnitWear.controlElectronics} />
+          <Damage label="MGU-K" v={driver.powerUnitWear.mguK} />
+          <Damage label="TC" v={driver.powerUnitWear.turboCharger} />
+        </Section>
+
+        <Section title="Incident damage">
           <Damage label="Front wing" v={driver.frontWingDamage} />
           <Damage label="Rear wing" v={driver.rearWingDamage} />
           <Damage label="Engine" v={driver.engineDamage} />
@@ -120,7 +134,7 @@ export function DriverDetail({ driver, regs2026, onClose, embedded = false }: Pr
             <Stat label="Last" value={lapTime(driver.lastLapMS)} />
             <Stat label="Best" value={lapTime(driver.bestLapMS)} />
             <Stat label="Pit stops" value={String(driver.numPitStops)} />
-            <Stat label="Penalties" value={driver.penaltiesSec > 0 ? `+${driver.penaltiesSec}s` : "none"} />
+            <Stat label="Penalties" value={penaltyText} />
             <Stat label="Warnings" value={String(driver.totalWarnings)} />
             <Stat label="Track limits" value={String(driver.cornerCuttingWarnings)} />
           </div>

@@ -3,6 +3,7 @@ import type { DriverState, Incident } from "../types";
 import { approveIncident, dismissIncident, reopenIncident } from "../api/actions";
 import { nameByIndex } from "../presentation/driver";
 import { clock } from "../presentation/format";
+import { incidentCars, incidentDetail } from "../presentation/incidents";
 
 interface Props {
   incidents: Incident[];
@@ -42,7 +43,7 @@ export function ReviewQueue({ incidents, drivers }: Props) {
                     {inc.lapNum !== null ? `L${inc.lapNum}` : clock(inc.sessionTime)}
                   </span>
                   <span className="decided-label">{inc.label}</span>
-                  <span className="decided-cars">{inc.carIndices.map(nameOf).join(", ")}</span>
+                  <span className="decided-cars">{incidentCars(inc, nameOf)}</span>
                   <span className={`decided-status st-${inc.status}`}>
                     {inc.status === "approved" ? "Approved" : "Dismissed"}
                   </span>
@@ -65,6 +66,7 @@ export function ReviewQueue({ incidents, drivers }: Props) {
 function ReviewItem({ inc, nameOf }: { inc: Incident; nameOf: (i: number) => string }) {
   const [outcome, setOutcome] = useState("");
   const [busy, setBusy] = useState(false);
+  const detail = incidentDetail(inc);
 
   const approve = async () => {
     setBusy(true);
@@ -83,8 +85,6 @@ function ReviewItem({ inc, nameOf }: { inc: Incident; nameOf: (i: number) => str
     }
   };
 
-  const detailBits = Object.entries(inc.detail).map(([k, v]) => `${k} ${v}`);
-
   return (
     <div className="review-item">
       <div className="review-item-head">
@@ -93,17 +93,15 @@ function ReviewItem({ inc, nameOf }: { inc: Incident; nameOf: (i: number) => str
         </span>
         <span className="review-item-label">{inc.label}</span>
         {inc.source === "manual" && <span className="review-src">flagged</span>}
-        <span className="review-item-cars">{inc.carIndices.map(nameOf).join(", ") || "no car"}</span>
+        <span className="review-item-cars">{incidentCars(inc, nameOf) || "no car"}</span>
       </div>
-      {(inc.note || detailBits.length > 0) && (
-        <div className="review-item-detail">{inc.note || detailBits.join(" · ")}</div>
-      )}
+      {(inc.note || detail) && <div className="review-item-detail">{inc.note || detail}</div>}
       <div className="review-item-actions">
         <input
           className="flag-input"
           value={outcome}
           onChange={(e) => setOutcome(e.target.value)}
-          placeholder="Outcome (e.g. 5s penalty, car at fault) — optional"
+          placeholder="Outcome (e.g. 5s penalty, car at fault) - optional"
           onKeyDown={(e) => {
             if (e.key === "Enter") void approve();
           }}

@@ -112,7 +112,7 @@
 .tower-head,
 .tower-row {
   display: grid;
-  grid-template-columns: 34px minmax(170px, 1.6fr) 72px 116px 60px 84px 90px 88px 88px;
+  grid-template-columns: 34px minmax(150px, 1.5fr) 58px 96px 54px 54px 72px 74px 82px 82px 82px;
   align-items: center;
   gap: 10px;
   padding: 0 10px;
@@ -260,6 +260,15 @@
 .col-fuel {
   text-align: right;
   color: var(--text-dim);
+}
+.col-warn,
+.col-penalty {
+  text-align: right;
+  color: var(--text-dim);
+}
+.col-penalty.has-penalty {
+  color: var(--red);
+  font-weight: 700;
 }
 .fuel-short {
   color: var(--red);

@@ -56,7 +56,7 @@ export function RosterModal({ drivers, onClose }: Props) {
             const placeholder = !feed || isPlaceholderName(feed);
             return (
               <div className={`roster-row${needsName(d) ? " roster-missing" : ""}`} key={d.index}>
-                <span className="roster-dot" style={{ background: teamColor(d.teamId) }} />
+                <span className="roster-dot" style={{ background: teamColor(d.teamId, d.liveryColours) }} />
                 <span className="roster-no">#{d.raceNumber || d.index}</span>
                 <input
                   className="flag-input roster-input"
