@@ -4,6 +4,7 @@ import { approveIncident, dismissIncident, reopenIncident } from "../api/actions
 import { nameByIndex } from "../presentation/driver";
 import { clock } from "../presentation/format";
 import { incidentCars, incidentDetail } from "../presentation/incidents";
+import { IncidentNote } from "./IncidentNote";
 
 interface Props {
   incidents: Incident[];
@@ -36,26 +37,31 @@ export function ReviewQueue({ incidents, drivers }: Props) {
             <div className="review-section-head decided-head">
               Decided <span className="review-count">{decided.length}</span>
             </div>
-            {decided.map((inc) => (
-              <div key={inc.id} className={`decided st-${inc.status}`}>
-                <div className="decided-line">
-                  <span className="incident-when">
-                    {inc.lapNum !== null ? `L${inc.lapNum}` : clock(inc.sessionTime)}
-                  </span>
-                  <span className="decided-label">{inc.label}</span>
-                  <span className="decided-cars">{incidentCars(inc, nameOf)}</span>
-                  <span className={`decided-status st-${inc.status}`}>
-                    {inc.status === "approved" ? "Approved" : "Dismissed"}
-                  </span>
-                  <button className="btn-link" onClick={() => void reopenIncident(inc.id).catch(() => {})}>
-                    Reopen
-                  </button>
+            {decided.map((inc) => {
+              const detail = incidentDetail(inc);
+              return (
+                <div key={inc.id} className={`decided st-${inc.status}`}>
+                  <div className="decided-line">
+                    <span className="incident-when">
+                      {inc.lapNum !== null ? `L${inc.lapNum}` : clock(inc.sessionTime)}
+                    </span>
+                    <span className="decided-label">{inc.label}</span>
+                    <span className="decided-cars">{incidentCars(inc, nameOf)}</span>
+                    <span className={`decided-status st-${inc.status}`}>
+                      {inc.status === "approved" ? "Approved" : "Dismissed"}
+                    </span>
+                    <button className="btn-link" onClick={() => void reopenIncident(inc.id).catch(() => {})}>
+                      Reopen
+                    </button>
+                  </div>
+                  {detail && <div className="decided-detail">{detail}</div>}
+                  {inc.status === "approved" && inc.ruling?.outcome && (
+                    <div className="decided-outcome">{inc.ruling.outcome}</div>
+                  )}
+                  <IncidentNote incident={inc} />
                 </div>
-                {inc.status === "approved" && inc.ruling?.outcome && (
-                  <div className="decided-outcome">{inc.ruling.outcome}</div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </>
         )}
       </div>
@@ -95,7 +101,8 @@ function ReviewItem({ inc, nameOf }: { inc: Incident; nameOf: (i: number) => str
         {inc.source === "manual" && <span className="review-src">flagged</span>}
         <span className="review-item-cars">{incidentCars(inc, nameOf) || "no car"}</span>
       </div>
-      {(inc.note || detail) && <div className="review-item-detail">{inc.note || detail}</div>}
+      {detail && <div className="review-item-detail">{detail}</div>}
+      <IncidentNote incident={inc} />
       <div className="review-item-actions">
         <input
           className="flag-input"
