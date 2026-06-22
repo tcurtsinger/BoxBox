@@ -76,7 +76,7 @@ export interface DriverState {
   powerUnitWear: PowerUnitWear;
 }
 
-export type IncidentStatus = "pending" | "approved" | "dismissed";
+export type IncidentStatus = "logged" | "flagged" | "approved" | "dismissed";
 
 // A steward's decision. `outcome` is free text (manual entry, no fixed
 // vocabulary), set when the steward approves an incident.
@@ -404,7 +404,7 @@ export class SessionState {
       label,
       carIndices,
       detail,
-      status: "pending",
+      status: "logged",
       note: "",
       ruling: null,
     });
@@ -452,7 +452,7 @@ export class SessionState {
       label: input.label?.trim() || "Manual incident",
       carIndices,
       detail: {},
-      status: "pending",
+      status: "flagged",
       note: input.note?.trim() ?? "",
       ruling: null,
     };
@@ -467,6 +467,16 @@ export class SessionState {
     if (!incident) return null;
     incident.ruling = { outcome: input.outcome?.trim() ?? "", decidedAtMs: atMs };
     incident.status = "approved";
+    this.lastUpdate = atMs;
+    return incident;
+  }
+
+  /** Steward promotes a logged feed item into the review queue. */
+  flagForReview(id: string, atMs: number): Incident | null {
+    const incident = this.incidents.find((i) => i.id === id);
+    if (!incident) return null;
+    incident.status = "flagged";
+    incident.ruling = null;
     this.lastUpdate = atMs;
     return incident;
   }
@@ -490,11 +500,11 @@ export class SessionState {
     return incident;
   }
 
-  /** Reopen a decided incident back to the pending queue (undo). */
+  /** Reopen a decided incident back to the review queue (undo). */
   reopenIncident(id: string, atMs: number): Incident | null {
     const incident = this.incidents.find((i) => i.id === id);
     if (!incident) return null;
-    incident.status = "pending";
+    incident.status = "flagged";
     incident.ruling = null;
     this.lastUpdate = atMs;
     return incident;

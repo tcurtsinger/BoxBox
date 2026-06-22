@@ -9,25 +9,25 @@ interface Props {
   drivers: DriverState[];
 }
 
-// Post-race workspace: work through the captured queue. Each pending incident
-// gets a free-text outcome then Approve, or Dismiss. Decided ones can be reopened.
+// Post-race workspace: work through the flagged queue. Each item gets a
+// free-text outcome then Approve, or Dismiss. Decided ones can be reopened.
 export function ReviewQueue({ incidents, drivers }: Props) {
   const nameOf = (i: number) => nameByIndex(drivers, i);
-  const pending = incidents.filter((i) => i.status === "pending");
-  const decided = incidents.filter((i) => i.status !== "pending").reverse();
+  const queued = incidents.filter((i) => i.status === "flagged");
+  const decided = incidents.filter((i) => i.status === "approved" || i.status === "dismissed").reverse();
 
   return (
     <div className="review">
       <div className="review-inner">
         <div className="review-section-head">
-          Pending review <span className="review-count">{pending.length}</span>
+          Pending review <span className="review-count">{queued.length}</span>
         </div>
-        {pending.length === 0 ? (
+        {queued.length === 0 ? (
           <div className="review-empty">
-            Nothing to review. Auto-captured and flagged incidents land here.
+            Nothing to review. Flag feed events or create a manual flag to queue work here.
           </div>
         ) : (
-          pending.map((inc) => <ReviewItem key={inc.id} inc={inc} nameOf={nameOf} />)
+          queued.map((inc) => <ReviewItem key={inc.id} inc={inc} nameOf={nameOf} />)
         )}
 
         {decided.length > 0 && (

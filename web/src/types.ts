@@ -93,7 +93,7 @@ export interface DriverState {
   powerUnitWear: PowerUnitWear;
 }
 
-export type IncidentStatus = "pending" | "approved" | "dismissed";
+export type IncidentStatus = "logged" | "flagged" | "approved" | "dismissed";
 
 export interface Ruling {
   outcome: string; // free text, set when the steward approves

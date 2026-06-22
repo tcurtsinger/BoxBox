@@ -67,3 +67,19 @@ test("POST /api/incidents/note sets an incident note", async (t) => {
   const missingIncident = await post(port, "/api/incidents/note", { id: "missing", note: "x" });
   assert.equal(missingIncident.status, 404);
 });
+
+test("POST /api/incidents/flag promotes a logged incident", async (t) => {
+  const state = new SessionState();
+  feed(state, 3, { code: "COLL", vehicleIdx: 0, otherVehicleIdx: 1, severity: 1 });
+  const id = state.snapshot().incidents[0]!.id;
+
+  const port = await freePort();
+  const http = startHttpServer(state, { port, broadcastMs: 10_000 });
+  t.after(() => http.close());
+
+  const res = await post(port, "/api/incidents/flag", { id });
+  assert.equal(res.status, 200);
+  const body = await res.json() as { status: string };
+  assert.equal(body.status, "flagged");
+  assert.equal(state.snapshot().incidents[0]?.status, "flagged");
+});

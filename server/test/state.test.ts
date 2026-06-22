@@ -128,6 +128,7 @@ test("captures collisions/penalties as incidents, tallies all events", () => {
   const snap = s.snapshot();
   assert.equal(snap.incidents.length, 2);
   assert.equal(snap.incidents[0]?.label, "Collision");
+  assert.equal(snap.incidents[0]?.status, "logged");
   assert.deepEqual(snap.incidents[0]?.carIndices, [0, 1]);
   assert.equal(snap.incidents[0]?.detail.severity, 2);
   assert.equal(snap.incidents[1]?.label, "Corner cutting overtake (single)"); // labelled by infringement
@@ -173,7 +174,7 @@ test("resets cleanly when the session UID changes", () => {
   assert.equal(snap.drivers[0]?.name, "HAMILTON");
 });
 
-test("logs a manual incident with a stable id and pending status", () => {
+test("logs a manual incident with a stable id and flagged status", () => {
   const s = new SessionState();
   feed(s, 4, {
     numActiveCars: 2,
@@ -184,11 +185,23 @@ test("logs a manual incident with a stable id and pending status", () => {
   });
   const inc = s.logManualIncident({ carIndices: [0, 1], label: "Unsafe rejoin", note: "Turn 3" }, 5000);
   assert.equal(inc.source, "manual");
-  assert.equal(inc.status, "pending");
+  assert.equal(inc.status, "flagged");
   assert.equal(inc.label, "Unsafe rejoin");
   assert.deepEqual(inc.carIndices, [0, 1]);
   assert.ok(inc.id);
   assert.equal(s.snapshot().incidents[0]?.note, "Turn 3");
+});
+
+test("flags a logged incident for review", () => {
+  const s = new SessionState();
+  feed(s, 3, { code: "COLL", vehicleIdx: 0, otherVehicleIdx: 1, severity: 2 });
+  const id = s.snapshot().incidents[0]!.id;
+  assert.equal(s.snapshot().incidents[0]?.status, "logged");
+
+  const flagged = s.flagForReview(id, 5000);
+  assert.equal(flagged?.status, "flagged");
+  assert.equal(flagged?.ruling, null);
+  assert.equal(s.flagForReview("missing", 5000), null);
 });
 
 test("approving an incident records the free-text outcome and resolves it", () => {
@@ -207,7 +220,7 @@ test("dismiss and reopen move an incident in and out of the queue", () => {
   const id = s.snapshot().incidents[0]!.id;
   assert.equal(s.dismissIncident(id, 7000)?.status, "dismissed");
   const reopened = s.reopenIncident(id, 8000);
-  assert.equal(reopened?.status, "pending");
+  assert.equal(reopened?.status, "flagged");
   assert.equal(reopened?.ruling, null);
   assert.equal(s.dismissIncident("missing", 9000), null);
 });

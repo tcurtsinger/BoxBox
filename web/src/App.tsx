@@ -22,7 +22,7 @@ export function App() {
   const drivers = snapshot?.drivers ?? [];
   const incidents = snapshot?.incidents ?? [];
   const regs2026 = (snapshot?.format ?? 2026) >= 2026;
-  const pendingCount = incidents.filter((i) => i.status === "pending").length;
+  const pendingCount = incidents.filter((i) => i.status === "flagged").length;
   const selectedDriver =
     selected === null ? undefined : drivers.find((d) => d.index === selected);
 

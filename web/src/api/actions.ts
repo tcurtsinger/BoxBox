@@ -19,6 +19,10 @@ export function flagIncident(input: {
   return post("/api/incidents/manual", input);
 }
 
+export function flagForReview(id: string): Promise<void> {
+  return post("/api/incidents/flag", { id });
+}
+
 export function approveIncident(id: string, outcome: string): Promise<void> {
   return post("/api/incidents/approve", { id, outcome });
 }
