@@ -72,7 +72,7 @@ test("merges participants + lap + status into driver state", () => {
 test("captures collisions/penalties as incidents, tallies all events", () => {
   const s = new SessionState();
   feed(s, 3, { code: "COLL", vehicleIdx: 0, otherVehicleIdx: 1, severity: 2 });
-  feed(s, 3, { code: "PENA", penaltyType: 5, infringementType: 12, vehicleIdx: 1, otherVehicleIdx: 255, time: 5, lapNum: 10, placesGained: 0 });
+  feed(s, 3, { code: "PENA", penaltyType: 4, infringementType: 8, vehicleIdx: 1, otherVehicleIdx: 255, time: 5, lapNum: 10, placesGained: 0 });
   feed(s, 3, { code: "BUTN" }); // noise - tallied, not an incident
   feed(s, 3, { code: "SPTP", vehicleIdx: 0, speed: 340 }); // noise
 
@@ -81,12 +81,31 @@ test("captures collisions/penalties as incidents, tallies all events", () => {
   assert.equal(snap.incidents[0]?.label, "Collision");
   assert.deepEqual(snap.incidents[0]?.carIndices, [0, 1]);
   assert.equal(snap.incidents[0]?.detail.severity, 2);
-  assert.equal(snap.incidents[1]?.label, "Penalty");
+  assert.equal(snap.incidents[1]?.label, "Corner cutting overtake (single)"); // labelled by infringement
   assert.equal(snap.incidents[1]?.lapNum, 10);
   assert.deepEqual(snap.incidents[1]?.carIndices, [1]); // 255 sentinel filtered out
+  assert.equal(snap.incidents[1]?.detail.time, 5);
   assert.equal(snap.eventTally.BUTN, 1);
   assert.equal(snap.eventTally.SPTP, 1);
   assert.equal(snap.eventTally.COLL, 1);
+});
+
+test("filters formation-lap safety car, warnings, and the 255 time sentinel", () => {
+  const s = new SessionState();
+  feed(s, 3, { code: "SCAR", safetyCarType: 3, safetyCarEventType: 0 }); // formation lap - dropped
+  feed(s, 3, { code: "SCAR", safetyCarType: 1, safetyCarEventType: 0 }); // real SC deployed - logged
+  feed(s, 3, { code: "SCAR", safetyCarType: 2, safetyCarEventType: 1 }); // VSC returning - dropped
+  feed(s, 3, { code: "PENA", penaltyType: 5, infringementType: 7, vehicleIdx: 0, otherVehicleIdx: 255, time: 255, lapNum: 3, placesGained: 0 }); // warning - dropped
+  feed(s, 3, { code: "PENA", penaltyType: 0, infringementType: 9, vehicleIdx: 2, otherVehicleIdx: 255, time: 255, lapNum: 5, placesGained: 0 }); // drive-through, no time
+
+  const snap = s.snapshot();
+  assert.equal(snap.incidents.length, 2);
+  assert.equal(snap.incidents[0]?.label, "Safety Car");
+  assert.equal(snap.incidents[1]?.label, "Corner cutting overtake (multiple)"); // infringementType 9
+  assert.equal(snap.incidents[1]?.detail.time, undefined); // 255 dropped, no bogus "+255s"
+  assert.deepEqual(snap.incidents[1]?.carIndices, [2]);
+  assert.equal(snap.eventTally.SCAR, 3); // every SCAR still tallied
+  assert.equal(snap.eventTally.PENA, 2);
 });
 
 test("resets cleanly when the session UID changes", () => {

@@ -13,6 +13,7 @@ import type {
   EventData,
   FinalClassificationData,
 } from "./parser/index.ts";
+import { PENALTY_TYPE, INFRINGEMENT_TYPE } from "./parser/constants.ts";
 
 export interface DriverState {
   index: number;
@@ -112,17 +113,20 @@ export interface SessionSnapshot {
 
 // Event codes promoted into the incident log (the rest are tallied only).
 // BUTN / SPTP / OVTK are deliberately excluded as high-volume noise.
+// SCAR and PENA are handled specially in #incidentLabel (sub-type filtering).
 const INCIDENT_LABELS: Record<string, string> = {
   COLL: "Collision",
-  PENA: "Penalty",
   RTMT: "Retirement",
-  SCAR: "Safety Car",
   RDFL: "Red Flag",
   DRSD: "DRS Disabled",
   FTLP: "Fastest Lap",
   RCWN: "Race Winner",
   CHQF: "Chequered Flag",
 };
+
+// penaltyType values that are real sporting penalties worth logging. Warnings,
+// reminders, lap invalidations, etc. stay out of the feed (tallied only).
+const REAL_PENALTY_TYPES = new Set([0, 1, 2, 4, 6, 17]);
 
 function emptyDriver(index: number): DriverState {
   return {
@@ -349,11 +353,12 @@ export class SessionState {
 
   #ingestEvent(e: EventData, sessionTime: number): void {
     this.eventTally.set(e.code, (this.eventTally.get(e.code) ?? 0) + 1);
-    const label = INCIDENT_LABELS[e.code];
-    if (!label) return;
+    const label = this.#incidentLabel(e);
+    if (label === null) return; // not incident-worthy (filtered sub-type)
 
-    // 255 is the F1 "no vehicle" sentinel; drop it and dedupe so an incident
-    // only ever lists real cars.
+    // 255 is the F1 "no value" sentinel (no vehicle, n/a penalty time, etc.);
+    // drop it from car lists (deduped) and from detail so it never surfaces
+    // (e.g. a penalty with no time must not render as "+255s").
     const carIndices = [
       ...new Set(
         [e.vehicleIdx, e.otherVehicleIdx].filter(
@@ -363,7 +368,7 @@ export class SessionState {
     ];
     const detail: Record<string, number> = {};
     for (const [k, v] of Object.entries(e)) {
-      if (k !== "code" && typeof v === "number") detail[k] = v;
+      if (k !== "code" && typeof v === "number" && v !== 255) detail[k] = v;
     }
 
     this.incidents.push({
@@ -379,6 +384,30 @@ export class SessionState {
       note: "",
       ruling: null,
     });
+  }
+
+  // The incident-log label for an event, or null to keep it out of the log.
+  // SCAR and PENA get sub-type filtering; everything else uses INCIDENT_LABELS.
+  #incidentLabel(e: EventData): string | null {
+    if (e.code === "SCAR") {
+      // Real safety-car deployments only. The formation lap (type 3) fires SCAR
+      // at race start, and the return/resume phases are not incidents.
+      if (e.safetyCarEventType !== 0) return null; // 0 = Deployed
+      if (e.safetyCarType === 1) return "Safety Car";
+      if (e.safetyCarType === 2) return "Virtual Safety Car";
+      return null; // 0 = none, 3 = formation lap
+    }
+    if (e.code === "PENA") {
+      // Keep real sporting penalties; warnings / lap invalidations / reminders
+      // stay out of the feed. Label by what happened (the infringement).
+      if (typeof e.penaltyType !== "number" || !REAL_PENALTY_TYPES.has(e.penaltyType)) {
+        return null;
+      }
+      const inf =
+        typeof e.infringementType === "number" ? INFRINGEMENT_TYPE[e.infringementType] : undefined;
+      return inf ?? PENALTY_TYPE[e.penaltyType] ?? "Penalty";
+    }
+    return INCIDENT_LABELS[e.code] ?? null;
   }
 
   /** Steward logs an incident by hand. Returns the created incident. */
