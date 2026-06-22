@@ -22,27 +22,31 @@ export function SessionHeader({ snapshot, conn }: Props) {
   const isRace = totalLaps > 0;
   const leaderLap = snapshot?.drivers[0]?.currentLapNum ?? 0;
   const showSc = !!s && s.safetyCarStatus > 0;
+  const trackStatus = showSc ? `SC: ${sc}` : "Track clear";
 
   return (
     <header className="session-header">
       <div className="brand">
         <span className="brand-mark">BoxBox</span>
-        <span className="brand-sub">FIA Console</span>
+        <span className="brand-sub">Race Control</span>
       </div>
 
       <div className="session-meta">
         <Meta label="Session" value={sessionLabel} />
         {isRace ? (
-          <Meta label="Lap" value={`${leaderLap}/${totalLaps}`} />
+          <Meta label="Lap" value={`${leaderLap} / ${totalLaps}`} />
         ) : (
           <Meta label="Time" value={clock(s?.sessionTimeLeft ?? 0)} />
         )}
         <Meta label="Cars" value={String(snapshot?.numActiveCars ?? 0)} />
-        <Meta label="Track" value={s ? `${s.trackTemperature}°C` : "-"} />
-        <Meta label="Air" value={s ? `${s.airTemperature}°C` : "-"} />
-        {showSc && <span className="sc-flag">SC: {sc}</span>}
+        <Meta label="Track temp" value={s ? `${s.trackTemperature}°C` : "-"} />
+        <Meta label="Air temp" value={s ? `${s.airTemperature}°C` : "-"} />
       </div>
 
+      <div className={`track-status${showSc ? " track-status-alert" : ""}`}>
+        <span className="conn-dot" />
+        {trackStatus}
+      </div>
       <div className={`conn conn-${conn}`}>
         <span className="conn-dot" />
         {CONN_LABEL[conn]}

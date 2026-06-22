@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { DriverState } from "../types";
 import { teamColor } from "../presentation/teams";
 import { tyre } from "../presentation/tyres";
@@ -20,23 +21,47 @@ export function TowerRow({ d, selected, onSelect }: Props) {
   const boosting = d.overtakeActive; // 2026 overtake mode discharges the battery
   const fuelShort = d.fuelRemainingLaps < 0;
   const isLeader = d.position === 1;
-  const penalties = penaltyText(d);
+  const isOut = [4, 5, 7].includes(d.resultStatus);
+  const status = statusText(d, pitting, isOut);
+  const delta = positionDelta(d);
   const cls =
     `tower-row${d.currentLapInvalid ? " row-invalid" : ""}` +
-    `${pitting ? " row-pit" : ""}${selected ? " row-selected" : ""}`;
+    `${pitting ? " row-pit" : ""}${selected ? " row-selected" : ""}${isOut ? " row-out" : ""}`;
 
   return (
     <div className={cls} onClick={() => onSelect(d.index)}>
       <span className="col-pos" style={{ borderLeftColor: teamColor(d.teamId, d.liveryColours) }}>
-        {d.position || "-"}
+        {isOut ? "OUT" : d.position || "-"}
       </span>
 
-      <span className="col-driver">
-        {f && <span className="flag-dot" style={{ background: f.color }} title={`${f.label} flag`} />}
+      <span className={`col-delta ${delta.cls}`}>{delta.label}</span>
+
+      <span className="col-driver" style={{ "--team": teamColor(d.teamId, d.liveryColours) } as CSSProperties}>
+        <span className="team-stripe" />
         <span className="driver-name">{driverName(d)}</span>
-        {d.penaltiesSec > 0 && <span className="pen-text">+{d.penaltiesSec}s</span>}
       </span>
 
+      <span className="col-status">
+        {f && <span className="flag-dot" style={{ background: f.color }} title={`${f.label} flag`} />}
+        <span className={status.cls}>{status.label}</span>
+        {fuelShort && <span className="fuel-short">Fuel {fuelLaps(d.fuelRemainingLaps)}</span>}
+      </span>
+
+      <span className="col-int">
+        {pitting ? <span className="pit-text">PIT</span> : isLeader || isOut ? "-" : gap(d.deltaToCarAheadMS)}
+      </span>
+      <span className="col-gap">{isLeader ? "LEADER" : isOut ? "-" : gap(d.deltaToLeaderMS)}</span>
+      <span className="col-last">{lapTime(d.lastLapMS)}</span>
+      <span className="col-best">{lapTime(d.bestLapMS)}</span>
+      <span className={`col-ers${boosting ? " boosting" : ""}`} title={boosting ? "Deploying overtake" : undefined}>
+        <span className="batt-bar">
+          <span
+            className={`batt-fill ${boosting ? "batt-boost" : batteryClass}`}
+            style={{ width: `${battery}%` }}
+          />
+        </span>
+        <span className="batt-pct">{battery}%</span>
+      </span>
       <span className="col-tyre">
         <span
           className="tyre-chip"
@@ -47,34 +72,30 @@ export function TowerRow({ d, selected, onSelect }: Props) {
         </span>
         <span className="tyre-age">{d.tyreAgeLaps}</span>
       </span>
-
-      <span className={`col-batt${boosting ? " boosting" : ""}`} title={boosting ? "Deploying overtake" : undefined}>
-        <span className="batt-bar">
-          <span
-            className={`batt-fill ${boosting ? "batt-boost" : batteryClass}`}
-            style={{ width: `${battery}%` }}
-          />
-        </span>
-        <span className="batt-pct">{battery}%</span>
-      </span>
-
-      <span className={`col-fuel${fuelShort ? " fuel-short" : ""}`}>
-        {fuelLaps(d.fuelRemainingLaps)}
-      </span>
-
-      <span className="col-warn">
-        {d.cornerCuttingWarnings > 0 ? `${d.cornerCuttingWarnings}/3` : "-"}
-      </span>
-      <span className={`col-penalty${penalties === "-" ? "" : " has-penalty"}`}>{penalties}</span>
-
-      <span className="col-int">
-        {pitting ? <span className="pit-text">PIT</span> : isLeader ? "-" : gap(d.deltaToCarAheadMS)}
-      </span>
-      <span className="col-gap">{isLeader ? "LEADER" : gap(d.deltaToLeaderMS)}</span>
-      <span className="col-last">{lapTime(d.lastLapMS)}</span>
-      <span className="col-best">{lapTime(d.bestLapMS)}</span>
+      <span className="col-pits">{d.numPitStops}</span>
     </div>
   );
+}
+
+function positionDelta(d: DriverState): { label: string; cls: string } {
+  if (!d.position || !d.gridPosition) return { label: "-", cls: "" };
+  const delta = d.gridPosition - d.position;
+  if (delta > 0) return { label: `▲ ${delta}`, cls: "delta-up" };
+  if (delta < 0) return { label: `▼ ${Math.abs(delta)}`, cls: "delta-down" };
+  return { label: "-", cls: "" };
+}
+
+function statusText(
+  d: DriverState,
+  pitting: boolean,
+  isOut: boolean,
+): { label: string; cls: string } {
+  if (isOut) return { label: d.resultStatus === 7 ? "RET" : "OUT", cls: "status-out" };
+  if (pitting) return { label: "PIT", cls: "status-pit" };
+  const penalties = penaltyText(d);
+  if (penalties !== "") return { label: penalties, cls: "status-penalty" };
+  if (d.cornerCuttingWarnings > 0) return { label: `Warn ${d.cornerCuttingWarnings}/3`, cls: "status-warn" };
+  return { label: "-", cls: "" };
 }
 
 function penaltyText(d: DriverState): string {
@@ -83,5 +104,5 @@ function penaltyText(d: DriverState): string {
     d.numUnservedDriveThrough > 0 ? `${d.numUnservedDriveThrough}DT` : "",
     d.numUnservedStopGo > 0 ? `${d.numUnservedStopGo}SG` : "",
   ].filter(Boolean);
-  return parts.length > 0 ? parts.join("/") : "-";
+  return parts.join("/");
 }

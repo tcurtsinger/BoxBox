@@ -25,8 +25,9 @@ export function App() {
   const incidents = snapshot?.incidents ?? [];
   const regs2026 = (snapshot?.format ?? 2026) >= 2026;
   const reviewCount = incidents.filter((i) => i.status === "flagged").length;
+  const selectedIndex = selected ?? drivers[0]?.index ?? null;
   const selectedDriver =
-    selected === null ? undefined : drivers.find((d) => d.index === selected);
+    selectedIndex === null ? undefined : (drivers.find((d) => d.index === selectedIndex) ?? drivers[0]);
   const selectDriver = (index: number) => {
     setSelected(index);
     setActiveTab("driver");
@@ -43,7 +44,7 @@ export function App() {
       <div className="content console-layout">
         <main className="tower-wrap">
           {snapshot && snapshot.drivers.length > 0 ? (
-            <TimingTower snapshot={snapshot} selected={selected} onSelect={selectDriver} />
+            <TimingTower snapshot={snapshot} selected={selectedIndex} onSelect={selectDriver} />
           ) : (
             <EmptyState conn={conn} />
           )}
@@ -52,7 +53,7 @@ export function App() {
         <aside className="inspector">
           <div className="inspector-tabs">
             <Tab label="Driver" active={activeTab === "driver"} onClick={() => setActiveTab("driver")} />
-            <Tab label="Events" active={activeTab === "events"} onClick={() => setActiveTab("events")} count={incidents.length} />
+            <Tab label="Incidents" active={activeTab === "events"} onClick={() => setActiveTab("events")} count={incidents.length} />
             <Tab label="Review" active={activeTab === "review"} onClick={() => setActiveTab("review")} count={reviewCount} />
           </div>
           <div className="inspector-body">
@@ -61,7 +62,6 @@ export function App() {
                 <DriverDetail
                   driver={selectedDriver}
                   regs2026={regs2026}
-                  onClose={() => setSelected(null)}
                   embedded
                 />
               ) : (

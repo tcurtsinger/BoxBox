@@ -19,11 +19,14 @@ export function IncidentFeed({ incidents, drivers, onFlag }: Props) {
   return (
     <aside className="incident-feed">
       <div className="feed-head">
-        <span>
-          Incidents <span className="feed-count">{incidents.length}</span>
-        </span>
+        <div>
+          <div>
+            Incidents <span className="feed-count">{incidents.length}</span>
+          </div>
+          <div className="feed-subtitle">Newest first · auto-captured and flagged</div>
+        </div>
         <button className="btn-flag" onClick={onFlag}>
-          + Flag
+          Flag incident
         </button>
       </div>
       <div className="feed-body">
