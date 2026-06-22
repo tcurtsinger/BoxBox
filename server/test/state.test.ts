@@ -37,14 +37,32 @@ test("merges participants + lap + status into driver state", () => {
   feed(s, 4, {
     numActiveCars: 2,
     participants: [
-      { index: 0, name: "VERSTAPPEN", teamId: 9, raceNumber: 1, nationality: 1, aiControlled: true, telemetryPublic: true },
-      { index: 1, name: "LECLERC", teamId: 2, raceNumber: 16, nationality: 2, aiControlled: true, telemetryPublic: true },
+      {
+        index: 0,
+        name: "VERSTAPPEN",
+        teamId: 478,
+        raceNumber: 1,
+        nationality: 1,
+        aiControlled: true,
+        telemetryPublic: true,
+        liveryColours: [{ r: 0, g: 114, b: 198 }],
+      },
+      {
+        index: 1,
+        name: "LECLERC",
+        teamId: 477,
+        raceNumber: 16,
+        nationality: 2,
+        aiControlled: true,
+        telemetryPublic: true,
+        liveryColours: [{ r: 232, g: 0, b: 0 }],
+      },
     ],
   });
   feed(s, 2, {
     cars: [
-      { index: 0, carPosition: 1, gridPosition: 1, lastLapTimeMS: 81168, currentLapNum: 3, sector: 0, deltaToRaceLeaderMS: 0, deltaToCarInFrontMS: 0, pitStatus: 0, numPitStops: 0, penalties: 0, totalWarnings: 0, cornerCuttingWarnings: 0, currentLapInvalid: false, driverStatus: 4, resultStatus: 2 },
-      { index: 1, carPosition: 2, gridPosition: 2, lastLapTimeMS: 83735, currentLapNum: 3, sector: 0, deltaToRaceLeaderMS: 2567, deltaToCarInFrontMS: 2567, pitStatus: 0, numPitStops: 0, penalties: 0, totalWarnings: 0, cornerCuttingWarnings: 0, currentLapInvalid: false, driverStatus: 4, resultStatus: 2 },
+      { index: 0, carPosition: 1, gridPosition: 1, lastLapTimeMS: 81168, currentLapNum: 3, sector: 0, deltaToRaceLeaderMS: 0, deltaToCarInFrontMS: 0, pitStatus: 0, numPitStops: 0, penalties: 0, numUnservedDriveThrough: 1, numUnservedStopGo: 0, totalWarnings: 0, cornerCuttingWarnings: 0, currentLapInvalid: false, driverStatus: 4, resultStatus: 2 },
+      { index: 1, carPosition: 2, gridPosition: 2, lastLapTimeMS: 83735, currentLapNum: 3, sector: 0, deltaToRaceLeaderMS: 2567, deltaToCarInFrontMS: 2567, pitStatus: 0, numPitStops: 0, penalties: 0, numUnservedDriveThrough: 0, numUnservedStopGo: 1, totalWarnings: 0, cornerCuttingWarnings: 0, currentLapInvalid: false, driverStatus: 4, resultStatus: 2 },
     ],
     timeTrialPBCarIdx: 255,
     timeTrialRivalCarIdx: 255,
@@ -55,18 +73,49 @@ test("merges participants + lap + status into driver state", () => {
       { index: 1, actualTyreCompound: 16, visualTyreCompound: 16, tyresAgeLaps: 6, fuelRemainingLaps: 3.2, batteryPct: 72, ersDeployMode: 1, vehicleFIAFlags: 0, drsAllowed: false },
     ],
   });
+  feed(s, 10, {
+    cars: [
+      {
+        index: 0,
+        tyresWear: [10, 11, 12, 13],
+        frontLeftWingDamage: 3,
+        frontRightWingDamage: 9,
+        rearWingDamage: 4,
+        engineDamage: 5,
+        gearBoxDamage: 6,
+        powerUnitWear: {
+          ice: 21,
+          energyStore: 22,
+          controlElectronics: 23,
+          mguK: 24,
+          turboCharger: 25,
+        },
+      },
+    ],
+  });
 
   const snap = s.snapshot();
   assert.equal(snap.numActiveCars, 2);
   assert.equal(snap.drivers.length, 2);
   const leader = snap.drivers[0];
   assert.equal(leader?.name, "VERSTAPPEN");
+  assert.deepEqual(leader?.liveryColours[0], { r: 0, g: 114, b: 198 });
   assert.equal(leader?.position, 1);
   assert.equal(leader?.lastLapMS, 81168);
   assert.equal(leader?.bestLapMS, 81168);
+  assert.equal(leader?.numUnservedDriveThrough, 1);
   assert.equal(leader?.tyreAgeLaps, 5);
   assert.equal(leader?.batteryPct, 88);
+  assert.equal(leader?.frontWingDamage, 9);
+  assert.deepEqual(leader?.powerUnitWear, {
+    ice: 21,
+    energyStore: 22,
+    controlElectronics: 23,
+    mguK: 24,
+    turboCharger: 25,
+  });
   assert.equal(snap.drivers[1]?.deltaToLeaderMS, 2567);
+  assert.equal(snap.drivers[1]?.numUnservedStopGo, 1);
 });
 
 test("captures collisions/penalties as incidents, tallies all events", () => {

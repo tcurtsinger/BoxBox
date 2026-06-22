@@ -325,12 +325,12 @@ export function parseCarDamage(rd: BufferReader, header: PacketHeader): CarDamag
     const ersFault = rd.u8();
     const gearBoxDamage = rd.u8();
     const engineDamage = rd.u8();
-    rd.u8(); // engineMGUHWear
-    rd.u8(); // engineESWear
-    rd.u8(); // engineCEWear
-    rd.u8(); // engineICEWear
-    rd.u8(); // engineMGUKWear
-    rd.u8(); // engineTCWear
+    rd.u8(); // engineMGUHWear (legacy slot; not shown in the 2026 MFD)
+    const engineESWear = rd.u8();
+    const engineCEWear = rd.u8();
+    const engineICEWear = rd.u8();
+    const engineMGUKWear = rd.u8();
+    const engineTCWear = rd.u8();
     rd.u8(); // engineBlown
     rd.u8(); // engineSeized
 
@@ -347,6 +347,13 @@ export function parseCarDamage(rd: BufferReader, header: PacketHeader): CarDamag
       sidepodDamage,
       gearBoxDamage,
       engineDamage,
+      powerUnitWear: {
+        ice: engineICEWear,
+        energyStore: engineESWear,
+        controlElectronics: engineCEWear,
+        mguK: engineMGUKWear,
+        turboCharger: engineTCWear,
+      },
       drsFault: drsFault === 1,
       ersFault: ersFault === 1,
     });

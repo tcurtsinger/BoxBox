@@ -21,6 +21,20 @@ export interface SessionData {
   safetyCarStatus: number;
 }
 
+export interface LiveryColour {
+  r: number;
+  g: number;
+  b: number;
+}
+
+export interface PowerUnitWear {
+  ice: number;
+  energyStore: number;
+  controlElectronics: number;
+  mguK: number;
+  turboCharger: number;
+}
+
 export interface DriverState {
   index: number;
   // identity
@@ -30,6 +44,7 @@ export interface DriverState {
   nationality: number;
   aiControlled: boolean;
   telemetryPublic: boolean;
+  liveryColours: LiveryColour[];
   nameOverride: string | null; // manual fallback when the feed name is missing or redacted to "Player"
   // timing
   position: number;
@@ -43,6 +58,8 @@ export interface DriverState {
   pitStatus: number;
   numPitStops: number;
   penaltiesSec: number;
+  numUnservedDriveThrough: number;
+  numUnservedStopGo: number;
   totalWarnings: number;
   cornerCuttingWarnings: number;
   currentLapInvalid: boolean;
@@ -73,6 +90,7 @@ export interface DriverState {
   rearWingDamage: number;
   engineDamage: number;
   gearboxDamage: number;
+  powerUnitWear: PowerUnitWear;
 }
 
 export type IncidentStatus = "pending" | "approved" | "dismissed";

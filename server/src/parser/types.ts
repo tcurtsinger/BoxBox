@@ -42,6 +42,14 @@ export interface LiveryColour {
   b: number;
 }
 
+export interface PowerUnitWear {
+  ice: number;
+  energyStore: number;
+  controlElectronics: number;
+  mguK: number;
+  turboCharger: number;
+}
+
 export interface ParticipantEntry {
   index: number;
   aiControlled: boolean;
@@ -182,6 +190,7 @@ export interface CarDamageEntry {
   sidepodDamage: number;
   gearBoxDamage: number;
   engineDamage: number;
+  powerUnitWear: PowerUnitWear;
   drsFault: boolean;
   ersFault: boolean;
 }

@@ -12,6 +12,8 @@ import type {
   CarTelemetry2Data,
   EventData,
   FinalClassificationData,
+  LiveryColour,
+  PowerUnitWear,
 } from "./parser/index.ts";
 import { PENALTY_TYPE, INFRINGEMENT_TYPE } from "./parser/constants.ts";
 
@@ -24,6 +26,7 @@ export interface DriverState {
   nationality: number;
   aiControlled: boolean;
   telemetryPublic: boolean;
+  liveryColours: LiveryColour[];
   nameOverride: string | null; // manual fallback when the feed name is missing or redacted to "Player"
   // timing (LapData)
   position: number;
@@ -37,6 +40,8 @@ export interface DriverState {
   pitStatus: number;
   numPitStops: number;
   penaltiesSec: number;
+  numUnservedDriveThrough: number;
+  numUnservedStopGo: number;
   totalWarnings: number;
   cornerCuttingWarnings: number;
   currentLapInvalid: boolean;
@@ -68,6 +73,7 @@ export interface DriverState {
   rearWingDamage: number;
   engineDamage: number;
   gearboxDamage: number;
+  powerUnitWear: PowerUnitWear;
 }
 
 export type IncidentStatus = "pending" | "approved" | "dismissed";
@@ -128,6 +134,16 @@ const INCIDENT_LABELS: Record<string, string> = {
 // reminders, lap invalidations, etc. stay out of the feed (tallied only).
 const REAL_PENALTY_TYPES = new Set([0, 1, 2, 4, 6, 17]);
 
+function emptyPowerUnitWear(): PowerUnitWear {
+  return {
+    ice: 0,
+    energyStore: 0,
+    controlElectronics: 0,
+    mguK: 0,
+    turboCharger: 0,
+  };
+}
+
 function emptyDriver(index: number): DriverState {
   return {
     index,
@@ -137,6 +153,7 @@ function emptyDriver(index: number): DriverState {
     nationality: 0,
     aiControlled: false,
     telemetryPublic: false,
+    liveryColours: [],
     nameOverride: null,
     position: 0,
     gridPosition: 0,
@@ -149,6 +166,8 @@ function emptyDriver(index: number): DriverState {
     pitStatus: 0,
     numPitStops: 0,
     penaltiesSec: 0,
+    numUnservedDriveThrough: 0,
+    numUnservedStopGo: 0,
     totalWarnings: 0,
     cornerCuttingWarnings: 0,
     currentLapInvalid: false,
@@ -176,6 +195,7 @@ function emptyDriver(index: number): DriverState {
     rearWingDamage: 0,
     engineDamage: 0,
     gearboxDamage: 0,
+    powerUnitWear: emptyPowerUnitWear(),
   };
 }
 
@@ -278,6 +298,7 @@ export class SessionState {
       d.nationality = e.nationality;
       d.aiControlled = e.aiControlled;
       d.telemetryPublic = e.telemetryPublic;
+      d.liveryColours = e.liveryColours ?? [];
     }
   }
 
@@ -297,6 +318,8 @@ export class SessionState {
       d.pitStatus = c.pitStatus;
       d.numPitStops = c.numPitStops;
       d.penaltiesSec = c.penalties;
+      d.numUnservedDriveThrough = c.numUnservedDriveThrough ?? 0;
+      d.numUnservedStopGo = c.numUnservedStopGo ?? 0;
       d.totalWarnings = c.totalWarnings;
       d.cornerCuttingWarnings = c.cornerCuttingWarnings;
       d.currentLapInvalid = c.currentLapInvalid;
@@ -348,6 +371,7 @@ export class SessionState {
       d.rearWingDamage = c.rearWingDamage;
       d.engineDamage = c.engineDamage;
       d.gearboxDamage = c.gearBoxDamage;
+      d.powerUnitWear = c.powerUnitWear ?? emptyPowerUnitWear();
     }
   }
 

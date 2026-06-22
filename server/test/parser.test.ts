@@ -200,8 +200,8 @@ test("LapData: 57-byte stride, position and folded sector times", () => {
     .u8(5) // penalties (seconds)
     .u8(0) // totalWarnings
     .u8(0) // cornerCuttingWarnings
-    .u8(0) // numUnservedDriveThrough
-    .u8(0) // numUnservedStopGo
+    .u8(1) // numUnservedDriveThrough
+    .u8(2) // numUnservedStopGo
     .u8(2) // gridPosition
     .u8(4) // driverStatus (On Track)
     .u8(2) // resultStatus (Active)
@@ -225,6 +225,8 @@ test("LapData: 57-byte stride, position and folded sector times", () => {
   assert.equal(lap.cars[0]?.carPosition, 1);
   assert.equal(lap.cars[0]?.currentLapNum, 3);
   assert.equal(lap.cars[0]?.penalties, 5);
+  assert.equal(lap.cars[0]?.numUnservedDriveThrough, 1);
+  assert.equal(lap.cars[0]?.numUnservedStopGo, 2);
   assert.equal(lap.cars[0]?.gridPosition, 2);
   assert.equal(lap.cars[0]?.resultStatus, 2);
   assert.equal(lap.cars[0]?.lastLapTimeMS, 90123);
@@ -318,7 +320,7 @@ test("CarDamage: 46-byte stride, wear and faults", () => {
     .u8(5).u8(0).u8(0).u8(0).u8(0).u8(0) // FL/FR wing, rear wing, floor, diffuser, sidepod
     .u8(0).u8(1) // drsFault, ersFault
     .u8(0).u8(3) // gearBox, engineDamage
-    .u8(0).u8(0).u8(0).u8(0).u8(0).u8(0) // engine wear MGUH/ES/CE/ICE/MGUK/TC
+    .u8(99).u8(11).u8(12).u8(13).u8(14).u8(15) // engine wear MGUH/ES/CE/ICE/MGUK/TC
     .u8(0).u8(0); // engineBlown, engineSeized
   assert.equal(w.pos - base, 46, "car damage stride must be 46");
   w.skip(23 * 46);
@@ -331,6 +333,13 @@ test("CarDamage: 46-byte stride, wear and faults", () => {
   assert.equal(d.cars[0]?.tyresWear[0], 10.5);
   assert.equal(d.cars[0]?.frontLeftWingDamage, 5);
   assert.equal(d.cars[0]?.engineDamage, 3);
+  assert.deepEqual(d.cars[0]?.powerUnitWear, {
+    ice: 13,
+    energyStore: 11,
+    controlElectronics: 12,
+    mguK: 14,
+    turboCharger: 15,
+  });
   assert.equal(d.cars[0]?.drsFault, false);
   assert.equal(d.cars[0]?.ersFault, true);
 });
