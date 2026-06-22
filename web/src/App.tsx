@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import type { ColumnOrderState, ColumnSizingState, VisibilityState } from "@tanstack/react-table";
 import { useSnapshot } from "./api/useSnapshot";
 import type { ConnState } from "./api/useSnapshot";
-import { MenuBar } from "./components/MenuBar";
+import { MenuBar, type ViewColumnItem } from "./components/MenuBar";
 import { SessionHeader } from "./components/SessionHeader";
 import { AboutModal } from "./components/AboutModal";
 import { TimingTower } from "./components/TimingTower";
@@ -10,6 +11,11 @@ import { DriverDetail } from "./components/DriverDetail";
 import { ReviewQueue } from "./components/ReviewQueue";
 import { FlagForm } from "./components/FlagForm";
 import { RosterModal } from "./components/RosterModal";
+import {
+  defaultTowerColumnOrder,
+  isLockedTowerColumn,
+  towerColumnLabel,
+} from "./components/towerColumns";
 
 type InspectorTab = "driver" | "events" | "review";
 
@@ -20,6 +26,9 @@ export function App() {
   const [flagOpen, setFlagOpen] = useState(false);
   const [rosterOpen, setRosterOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(defaultTowerColumnOrder);
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
 
   const drivers = snapshot?.drivers ?? [];
   const incidents = snapshot?.incidents ?? [];
@@ -28,6 +37,26 @@ export function App() {
   const selectedIndex = selected ?? drivers[0]?.index ?? null;
   const selectedDriver =
     selectedIndex === null ? undefined : (drivers.find((d) => d.index === selectedIndex) ?? drivers[0]);
+  const columnItems = useMemo<ViewColumnItem[]>(
+    () =>
+      columnOrder.map((id, index) => ({
+        id,
+        label: towerColumnLabel(id),
+        checked: columnVisibility[id] !== false,
+        locked: isLockedTowerColumn(id),
+        canMoveEarlier: index > 0,
+        canMoveLater: index < columnOrder.length - 1,
+        onToggle: () => toggleColumn(id, setColumnVisibility),
+        onMoveEarlier: () => setColumnOrder((current) => moveColumn(current, id, -1)),
+        onMoveLater: () => setColumnOrder((current) => moveColumn(current, id, 1)),
+      })),
+    [columnOrder, columnVisibility],
+  );
+  const resetColumns = () => {
+    setColumnVisibility({});
+    setColumnOrder(defaultTowerColumnOrder);
+    setColumnSizing({});
+  };
   const selectDriver = (index: number) => {
     setSelected(index);
     setActiveTab("driver");
@@ -36,7 +65,9 @@ export function App() {
   return (
     <div className="app">
       <MenuBar
+        columnItems={columnItems}
         onOpenNames={() => setRosterOpen(true)}
+        onResetColumns={resetColumns}
         onAbout={() => setAboutOpen(true)}
       />
       <SessionHeader snapshot={snapshot} conn={conn} />
@@ -44,7 +75,17 @@ export function App() {
       <div className="content console-layout">
         <main className="tower-wrap">
           {snapshot && snapshot.drivers.length > 0 ? (
-            <TimingTower snapshot={snapshot} selected={selectedIndex} onSelect={selectDriver} />
+            <TimingTower
+              snapshot={snapshot}
+              selected={selectedIndex}
+              columnVisibility={columnVisibility}
+              columnOrder={columnOrder}
+              columnSizing={columnSizing}
+              onColumnVisibilityChange={setColumnVisibility}
+              onColumnOrderChange={setColumnOrder}
+              onColumnSizingChange={setColumnSizing}
+              onSelect={selectDriver}
+            />
           ) : (
             <EmptyState conn={conn} />
           )}
@@ -81,6 +122,33 @@ export function App() {
       {aboutOpen && <AboutModal conn={conn} onClose={() => setAboutOpen(false)} />}
     </div>
   );
+}
+
+function toggleColumn(
+  id: string,
+  setColumnVisibility: React.Dispatch<React.SetStateAction<VisibilityState>>,
+) {
+  if (isLockedTowerColumn(id)) return;
+
+  setColumnVisibility((current) => {
+    const next = { ...current };
+    if (next[id] === false) {
+      delete next[id];
+    } else {
+      next[id] = false;
+    }
+    return next;
+  });
+}
+
+function moveColumn(order: ColumnOrderState, id: string, direction: -1 | 1): ColumnOrderState {
+  const from = order.indexOf(id);
+  const to = from + direction;
+  if (from < 0 || to < 0 || to >= order.length) return order;
+
+  const next = [...order];
+  [next[from], next[to]] = [next[to], next[from]];
+  return next;
 }
 
 function Tab({
