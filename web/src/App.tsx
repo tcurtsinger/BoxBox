@@ -11,10 +11,12 @@ import { ReviewQueue } from "./components/ReviewQueue";
 import { FlagForm } from "./components/FlagForm";
 import { RosterModal } from "./components/RosterModal";
 
+type InspectorTab = "driver" | "events" | "review";
+
 export function App() {
   const { snapshot, conn } = useSnapshot();
   const [selected, setSelected] = useState<number | null>(null);
-  const [view, setView] = useState<"live" | "review">("live");
+  const [activeTab, setActiveTab] = useState<InspectorTab>("driver");
   const [flagOpen, setFlagOpen] = useState(false);
   const [rosterOpen, setRosterOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -22,43 +24,81 @@ export function App() {
   const drivers = snapshot?.drivers ?? [];
   const incidents = snapshot?.incidents ?? [];
   const regs2026 = (snapshot?.format ?? 2026) >= 2026;
-  const pendingCount = incidents.filter((i) => i.status === "flagged").length;
+  const reviewCount = incidents.filter((i) => i.status === "flagged").length;
   const selectedDriver =
     selected === null ? undefined : drivers.find((d) => d.index === selected);
+  const selectDriver = (index: number) => {
+    setSelected(index);
+    setActiveTab("driver");
+  };
 
   return (
     <div className="app">
       <MenuBar
-        view={view}
-        onSetView={setView}
         onOpenNames={() => setRosterOpen(true)}
         onAbout={() => setAboutOpen(true)}
-        pendingCount={pendingCount}
       />
       <SessionHeader snapshot={snapshot} conn={conn} />
 
-      {view === "live" ? (
-        <div className="content">
-          <main className="tower-wrap">
-            {snapshot && snapshot.drivers.length > 0 ? (
-              <TimingTower snapshot={snapshot} selected={selected} onSelect={setSelected} />
-            ) : (
-              <EmptyState conn={conn} />
-            )}
-          </main>
-          <IncidentFeed incidents={incidents} drivers={drivers} onFlag={() => setFlagOpen(true)} />
-        </div>
-      ) : (
-        <ReviewQueue incidents={incidents} drivers={drivers} />
-      )}
+      <div className="content console-layout">
+        <main className="tower-wrap">
+          {snapshot && snapshot.drivers.length > 0 ? (
+            <TimingTower snapshot={snapshot} selected={selected} onSelect={selectDriver} />
+          ) : (
+            <EmptyState conn={conn} />
+          )}
+        </main>
 
-      {selectedDriver && (
-        <DriverDetail driver={selectedDriver} regs2026={regs2026} onClose={() => setSelected(null)} />
-      )}
+        <aside className="inspector">
+          <div className="inspector-tabs">
+            <Tab label="Driver" active={activeTab === "driver"} onClick={() => setActiveTab("driver")} />
+            <Tab label="Events" active={activeTab === "events"} onClick={() => setActiveTab("events")} count={incidents.length} />
+            <Tab label="Review" active={activeTab === "review"} onClick={() => setActiveTab("review")} count={reviewCount} />
+          </div>
+          <div className="inspector-body">
+            {activeTab === "driver" && (
+              selectedDriver ? (
+                <DriverDetail
+                  driver={selectedDriver}
+                  regs2026={regs2026}
+                  onClose={() => setSelected(null)}
+                  embedded
+                />
+              ) : (
+                <div className="panel-empty">Select a timing row to inspect a driver.</div>
+              )
+            )}
+            {activeTab === "events" && (
+              <IncidentFeed incidents={incidents} drivers={drivers} onFlag={() => setFlagOpen(true)} />
+            )}
+            {activeTab === "review" && <ReviewQueue incidents={incidents} drivers={drivers} />}
+          </div>
+        </aside>
+      </div>
+
       {flagOpen && <FlagForm drivers={drivers} onClose={() => setFlagOpen(false)} />}
       {rosterOpen && <RosterModal drivers={drivers} onClose={() => setRosterOpen(false)} />}
       {aboutOpen && <AboutModal conn={conn} onClose={() => setAboutOpen(false)} />}
     </div>
+  );
+}
+
+function Tab({
+  label,
+  active,
+  count,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  count?: number;
+  onClick: () => void;
+}) {
+  return (
+    <button className={`inspector-tab${active ? " active" : ""}`} onClick={onClick}>
+      {label}
+      {typeof count === "number" && count > 0 && <span className="inspector-tab-count">{count}</span>}
+    </button>
   );
 }
 

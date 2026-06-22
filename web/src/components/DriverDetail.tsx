@@ -20,10 +20,11 @@ const CORNERS = [
 interface Props {
   driver: DriverState;
   regs2026: boolean;
-  onClose: () => void;
+  onClose?: () => void;
+  embedded?: boolean;
 }
 
-export function DriverDetail({ driver, regs2026, onClose }: Props) {
+export function DriverDetail({ driver, regs2026, onClose, embedded = false }: Props) {
   const t = tyre(driver.tyreVisual);
   const overtake = driver.overtakeActive ? "Active" : driver.overtakeAvailable ? "Ready" : "-";
 
@@ -34,9 +35,8 @@ export function DriverDetail({ driver, regs2026, onClose }: Props) {
     setEditing(false);
   };
 
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <aside className="detail" onClick={(e) => e.stopPropagation()}>
+  const panel = (
+      <aside className={`detail${embedded ? " detail-embedded" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="detail-head" style={{ borderTopColor: teamColor(driver.teamId) }}>
           <div className="detail-id">
             <span className="detail-pos">P{driver.position || "-"}</span>
@@ -70,9 +70,11 @@ export function DriverDetail({ driver, regs2026, onClose }: Props) {
               </button>
             )}
           </div>
-          <button className="detail-close" onClick={onClose} aria-label="Close">
-            &times;
-          </button>
+          {onClose && (
+            <button className="detail-close" onClick={onClose} aria-label="Close">
+              &times;
+            </button>
+          )}
         </div>
 
         <div className="detail-grid">
@@ -124,6 +126,13 @@ export function DriverDetail({ driver, regs2026, onClose }: Props) {
           </div>
         </Section>
       </aside>
+  );
+
+  if (embedded) return panel;
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      {panel}
     </div>
   );
 }
