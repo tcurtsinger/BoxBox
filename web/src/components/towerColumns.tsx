@@ -12,6 +12,8 @@ export type TowerColumnId =
   | "delta"
   | "driver"
   | "status"
+  | "warnings"
+  | "penalties"
   | "interval"
   | "gap"
   | "last"
@@ -25,6 +27,8 @@ const labels: Record<TowerColumnId, string> = {
   delta: "+/-",
   driver: "Driver",
   status: "Status",
+  warnings: "Warn",
+  penalties: "Pen",
   interval: "Int",
   gap: "Gap",
   last: "Last",
@@ -39,6 +43,8 @@ const classNames: Record<TowerColumnId, string> = {
   delta: "col-delta",
   driver: "col-driver",
   status: "col-status",
+  warnings: "col-warn",
+  penalties: "col-pen",
   interval: "col-int",
   gap: "col-gap",
   last: "col-last",
@@ -92,6 +98,29 @@ export const towerColumns: ColumnDef<DriverState>[] = [
     minSize: 150,
     maxSize: 280,
     cell: ({ row }) => <StatusCell driver={row.original} />,
+  },
+  {
+    id: "warnings",
+    header: labels.warnings,
+    size: 74,
+    minSize: 54,
+    maxSize: 110,
+    cell: ({ row }) => {
+      const n = row.original.cornerCuttingWarnings;
+      if (n <= 0) return "-";
+      return <span className={n >= 3 ? "status-penalty" : "status-warn"}>{n}/3</span>;
+    },
+  },
+  {
+    id: "penalties",
+    header: labels.penalties,
+    size: 96,
+    minSize: 70,
+    maxSize: 150,
+    cell: ({ row }) => {
+      const p = penaltyText(row.original);
+      return p ? <span className="status-penalty">{p}</span> : "-";
+    },
   },
   {
     id: "interval",

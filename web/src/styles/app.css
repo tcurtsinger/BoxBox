@@ -360,7 +360,9 @@
 }
 .tower-head-cell.col-pos,
 .tower-head-cell.col-delta,
-.tower-head-cell.col-pits {
+.tower-head-cell.col-pits,
+.tower-head-cell.col-warn,
+.tower-head-cell.col-pen {
   justify-content: center;
 }
 .tower-head-cell.col-int,
@@ -631,6 +633,15 @@
 }
 .col-pits {
   text-align: center;
+  color: var(--text-dim);
+}
+.col-warn,
+.col-pen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--sans);
+  font-size: 12px;
   color: var(--text-dim);
 }
 

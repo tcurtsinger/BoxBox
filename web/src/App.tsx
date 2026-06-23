@@ -19,6 +19,10 @@ import {
 
 type InspectorTab = "driver" | "events" | "review";
 
+// Warnings and penalties are opt-in tower columns (enable via the View menu);
+// hidden by default so the default layout matches the prototype.
+const DEFAULT_HIDDEN_COLUMNS: VisibilityState = { warnings: false, penalties: false };
+
 export function App() {
   const { snapshot, conn } = useSnapshot();
   const [selected, setSelected] = useState<number | null>(null);
@@ -26,7 +30,7 @@ export function App() {
   const [flagOpen, setFlagOpen] = useState(false);
   const [rosterOpen, setRosterOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(DEFAULT_HIDDEN_COLUMNS);
   const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(defaultTowerColumnOrder);
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
 
@@ -53,7 +57,7 @@ export function App() {
     [columnOrder, columnVisibility],
   );
   const resetColumns = () => {
-    setColumnVisibility({});
+    setColumnVisibility(DEFAULT_HIDDEN_COLUMNS);
     setColumnOrder(defaultTowerColumnOrder);
     setColumnSizing({});
   };
