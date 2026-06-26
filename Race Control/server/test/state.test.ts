@@ -239,6 +239,44 @@ test("sets and clears a note on any incident", () => {
   assert.equal(s.setIncidentNote("missing", { note: "x" }, 9000), null);
 });
 
+test("qualifying sorts by best lap (no-time last), race sorts by position", () => {
+  const part = {
+    numActiveCars: 3,
+    participants: [
+      { index: 0, name: "NORRIS", teamId: 484, raceNumber: 4, nationality: 1, aiControlled: true, telemetryPublic: true },
+      { index: 1, name: "PIASTRI", teamId: 484, raceNumber: 81, nationality: 1, aiControlled: true, telemetryPublic: true },
+      { index: 2, name: "RUSSELL", teamId: 476, raceNumber: 63, nationality: 1, aiControlled: true, telemetryPublic: true },
+    ],
+  };
+  // carPosition is deliberately inverted vs best lap so the sort key is unambiguous:
+  // RUSSELL leads on position but has set no lap; PIASTRI is fastest.
+  const laps = {
+    cars: [
+      { index: 0, carPosition: 3, gridPosition: 3, lastLapTimeMS: 90000, currentLapNum: 2, sector: 0, deltaToRaceLeaderMS: 0, deltaToCarInFrontMS: 0, pitStatus: 0, numPitStops: 0, penalties: 0, numUnservedDriveThrough: 0, numUnservedStopGo: 0, totalWarnings: 0, cornerCuttingWarnings: 0, currentLapInvalid: false, driverStatus: 1, resultStatus: 2 },
+      { index: 1, carPosition: 2, gridPosition: 2, lastLapTimeMS: 89500, currentLapNum: 2, sector: 0, deltaToRaceLeaderMS: 0, deltaToCarInFrontMS: 0, pitStatus: 0, numPitStops: 0, penalties: 0, numUnservedDriveThrough: 0, numUnservedStopGo: 0, totalWarnings: 0, cornerCuttingWarnings: 0, currentLapInvalid: false, driverStatus: 1, resultStatus: 2 },
+      { index: 2, carPosition: 1, gridPosition: 1, lastLapTimeMS: 0, currentLapNum: 1, sector: 0, deltaToRaceLeaderMS: 0, deltaToCarInFrontMS: 0, pitStatus: 0, numPitStops: 0, penalties: 0, numUnservedDriveThrough: 0, numUnservedStopGo: 0, totalWarnings: 0, cornerCuttingWarnings: 0, currentLapInvalid: false, driverStatus: 0, resultStatus: 2 },
+    ],
+    timeTrialPBCarIdx: 255,
+    timeTrialRivalCarIdx: 255,
+  };
+
+  const quali = new SessionState();
+  feed(quali, 1, { sessionType: 5, totalLaps: 0, isSpectating: true, spectatorCarIndex: 255, safetyCarStatus: 0 }, "7001");
+  feed(quali, 4, part, "7001");
+  feed(quali, 2, laps, "7001");
+  const qSnap = quali.snapshot();
+  assert.equal(qSnap.sessionCategory, "qualifying");
+  assert.deepEqual(qSnap.drivers.map((d) => d.name), ["PIASTRI", "NORRIS", "RUSSELL"]);
+
+  const race = new SessionState();
+  feed(race, 1, { sessionType: 15, totalLaps: 50, isSpectating: true, spectatorCarIndex: 255, safetyCarStatus: 0 }, "7002");
+  feed(race, 4, part, "7002");
+  feed(race, 2, laps, "7002");
+  const rSnap = race.snapshot();
+  assert.equal(rSnap.sessionCategory, "race");
+  assert.deepEqual(rSnap.drivers.map((d) => d.name), ["RUSSELL", "PIASTRI", "NORRIS"]);
+});
+
 test("manual name override is trimmed, clearable, and survives a session reset", () => {
   const s = new SessionState();
   // A lobby where the feed redacted names to "Player".

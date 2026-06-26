@@ -2,6 +2,7 @@ import type { SessionSnapshot } from "../types";
 import type { ConnState } from "../api/useSnapshot";
 import { SESSION_TYPE, SAFETY_CAR_STATUS } from "../presentation/labels";
 import { clock } from "../presentation/format";
+import { knockoutLineIndex } from "../presentation/qualifying";
 
 interface Props {
   snapshot: SessionSnapshot | null;
@@ -24,6 +25,12 @@ export function SessionHeader({ snapshot, conn }: Props) {
   const showSc = !!s && s.safetyCarStatus > 0;
   const trackStatus = showSc ? `SC: ${sc}` : "Track clear";
 
+  // Qualifying knockout: how many cars are currently below the cut line.
+  const isQualifying = snapshot?.sessionCategory === "qualifying";
+  const runnerCount = snapshot?.drivers.length ?? 0;
+  const dropFrom = isQualifying ? knockoutLineIndex(s?.sessionType, runnerCount) : null;
+  const dropCount = dropFrom !== null ? runnerCount - dropFrom : 0;
+
   return (
     <header className="session-header">
       <div className="brand">
@@ -43,10 +50,17 @@ export function SessionHeader({ snapshot, conn }: Props) {
         <Meta label="Air temp" value={s ? `${s.airTemperature}°C` : "-"} />
       </div>
 
-      <div className={`track-status${showSc ? " track-status-alert" : ""}`}>
-        <span className="conn-dot" />
-        {trackStatus}
-      </div>
+      {dropFrom !== null ? (
+        <div className="track-status track-status-alert">
+          <span className="conn-dot" />
+          {dropCount} in drop zone
+        </div>
+      ) : (
+        <div className={`track-status${showSc ? " track-status-alert" : ""}`}>
+          <span className="conn-dot" />
+          {trackStatus}
+        </div>
+      )}
       <div className={`conn conn-${conn}`}>
         <span className="conn-dot" />
         {CONN_LABEL[conn]}

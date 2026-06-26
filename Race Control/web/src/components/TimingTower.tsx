@@ -15,7 +15,9 @@ import {
   towerCellStyle,
   towerColumnClass,
   towerColumns,
+  type TowerMeta,
 } from "./towerColumns";
+import { knockoutLineIndex } from "../presentation/qualifying";
 
 const STALE_MS = 3000;
 
@@ -45,6 +47,23 @@ export function TimingTower({
   const towerRef = useRef<HTMLDivElement>(null);
   const stale = Date.now() - snapshot.lastUpdate > STALE_MS;
   const rows = useMemo(() => orderDrivers(snapshot.drivers), [snapshot.drivers]);
+
+  const isQualifying = snapshot.sessionCategory === "qualifying";
+  // Session-best lap, for the qualifying "To P1" gap column.
+  const poleMS = useMemo(() => {
+    let best = 0;
+    for (const d of rows) if (d.bestLapMS > 0 && (best === 0 || d.bestLapMS < best)) best = d.bestLapMS;
+    return best;
+  }, [rows]);
+  // 0-based index of the first car in the knockout drop-zone (null = none).
+  const dropFrom = isQualifying ? knockoutLineIndex(snapshot.session?.sessionType, rows.length) : null;
+  const separatorAt = (index: number): string =>
+    isQualifying
+      ? dropFrom !== null && index === dropFrom
+        ? `Knockout line · top ${dropFrom} advance`
+        : ""
+      : battleLabel(rows, index);
+
   const table = useReactTable({
     data: rows,
     columns: towerColumns,
@@ -59,6 +78,7 @@ export function TimingTower({
       columnOrder,
       columnSizing,
     },
+    meta: { poleMS } satisfies TowerMeta,
     onColumnVisibilityChange,
     onColumnOrderChange,
     onColumnSizingChange,
@@ -67,7 +87,7 @@ export function TimingTower({
   const rowVirtualizer = useVirtualizer({
     count: tableRows.length,
     getScrollElement: () => towerRef.current,
-    estimateSize: (index) => (battleLabel(rows, index) ? 78 : 50),
+    estimateSize: (index) => (separatorAt(index) ? 78 : 50),
     overscan: 6,
   });
   const gridTemplate = table
@@ -127,8 +147,13 @@ export function TimingTower({
               ref={rowVirtualizer.measureElement}
               style={{ transform: `translateY(${virtualRow.start}px)` }}
             >
-              {battleLabel(rows, virtualRow.index) && <div className="battle-row">{battleLabel(rows, virtualRow.index)}</div>}
-              <div className={rowClass(driver, driver.index === selected)} onClick={() => onSelect(driver.index)}>
+              {separatorAt(virtualRow.index) && (
+                <div className={`battle-row${isQualifying ? " knockout-row" : ""}`}>{separatorAt(virtualRow.index)}</div>
+              )}
+              <div
+                className={rowClass(driver, driver.index === selected, dropFrom !== null && virtualRow.index >= dropFrom)}
+                onClick={() => onSelect(driver.index)}
+              >
                 {row.getVisibleCells().map((cell) => (
                   <span
                     className={towerCellClass(cell.column.id, driver)}
@@ -161,12 +186,13 @@ function battleLabel(drivers: SessionSnapshot["drivers"], index: number): string
   return "";
 }
 
-function rowClass(driver: DriverState, selected: boolean): string {
+function rowClass(driver: DriverState, selected: boolean, dropZone: boolean): string {
   const pitting = driver.pitStatus > 0;
   const out = isOut(driver);
   return (
     `tower-row${driver.currentLapInvalid ? " row-invalid" : ""}` +
-    `${pitting ? " row-pit" : ""}${selected ? " row-selected" : ""}${out ? " row-out" : ""}`
+    `${pitting ? " row-pit" : ""}${selected ? " row-selected" : ""}${out ? " row-out" : ""}` +
+    `${dropZone ? " row-dropzone" : ""}`
   );
 }
 

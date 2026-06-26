@@ -76,6 +76,21 @@ export interface DriverState {
   powerUnitWear: PowerUnitWear;
 }
 
+// Broad session kind, derived from Session.sessionType. The console uses it to
+// switch the timing tower between race ordering (by position) and qualifying
+// ordering (by best lap), and to decide when to draw the knockout drop-zone.
+// Sprint shootouts are knockout-style qualifying, so they fold into "qualifying".
+export type SessionCategory = "race" | "qualifying" | "practice" | "timeTrial" | "unknown";
+
+export function sessionCategoryOf(sessionType: number | undefined): SessionCategory {
+  if (typeof sessionType !== "number") return "unknown";
+  if (sessionType >= 1 && sessionType <= 4) return "practice";
+  if (sessionType >= 5 && sessionType <= 14) return "qualifying"; // Q1-Q3, short/OSQ, sprint shootouts
+  if (sessionType >= 15 && sessionType <= 17) return "race";
+  if (sessionType === 18) return "timeTrial";
+  return "unknown";
+}
+
 export type IncidentStatus = "logged" | "flagged" | "approved" | "dismissed";
 
 // A steward's decision. `outcome` is free text (manual entry, no fixed
@@ -105,6 +120,7 @@ export interface SessionSnapshot {
   sessionUID: string;
   sessionTime: number;
   session: SessionData | null;
+  sessionCategory: SessionCategory;
   isSpectating: boolean;
   spectatorCarIndex: number;
   playerCarIndex: number;
@@ -526,15 +542,29 @@ export class SessionState {
     return { index, nameOverride: trimmed || null };
   }
 
-  /** Active drivers (known participants), sorted by race position. */
+  /**
+   * Active drivers (known participants), sorted for the current session: by best
+   * lap in qualifying (fastest first, cars with no time last), by position
+   * otherwise. Position is the tie-break in qualifying so two cars with no lap
+   * keep a stable order.
+   */
   activeDrivers(): DriverState[] {
     const list = [...this.drivers.values()].filter((d) => d.name !== "");
     for (const d of list) d.nameOverride = this.#nameOverrides.get(d.index) ?? null;
-    list.sort((a, b) => {
-      const pa = a.position === 0 ? 999 : a.position;
-      const pb = b.position === 0 ? 999 : b.position;
-      return pa - pb;
-    });
+    const byPosition = (a: DriverState, b: DriverState) =>
+      (a.position === 0 ? 999 : a.position) - (b.position === 0 ? 999 : b.position);
+
+    if (sessionCategoryOf(this.session?.sessionType) === "qualifying") {
+      list.sort((a, b) => {
+        // A best lap of 0 means no time set yet: sort those to the bottom.
+        const ba = a.bestLapMS === 0 ? Infinity : a.bestLapMS;
+        const bb = b.bestLapMS === 0 ? Infinity : b.bestLapMS;
+        if (ba !== bb) return ba - bb;
+        return byPosition(a, b);
+      });
+    } else {
+      list.sort(byPosition);
+    }
     return list;
   }
 
@@ -545,6 +575,7 @@ export class SessionState {
       sessionUID: this.sessionUID,
       sessionTime: this.sessionTime,
       session: this.session,
+      sessionCategory: sessionCategoryOf(this.session?.sessionType),
       isSpectating: this.isSpectating,
       spectatorCarIndex: this.spectatorCarIndex,
       playerCarIndex: this.playerCarIndex,

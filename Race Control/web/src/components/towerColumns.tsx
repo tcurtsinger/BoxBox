@@ -1,11 +1,18 @@
 import type { CSSProperties, ReactNode } from "react";
-import type { ColumnDef } from "@tanstack/react-table";
+import type { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import type { DriverState } from "../types";
 import { teamColor } from "../presentation/teams";
 import { tyre } from "../presentation/tyres";
 import { flag } from "../presentation/flags";
 import { driverName } from "../presentation/driver";
 import { lapTime, gap, fuelLaps } from "../presentation/format";
+import { poleGap, lapStatus } from "../presentation/qualifying";
+
+// Per-table context. The qualifying "To P1" column needs the field-best lap,
+// which a single cell cannot see; the tower computes it once and passes it here.
+export interface TowerMeta {
+  poleMS: number;
+}
 
 export type TowerColumnId =
   | "position"
@@ -18,6 +25,8 @@ export type TowerColumnId =
   | "gap"
   | "last"
   | "best"
+  | "poleGap"
+  | "lapStatus"
   | "ers"
   | "tyre"
   | "pits";
@@ -33,6 +42,8 @@ const labels: Record<TowerColumnId, string> = {
   gap: "Gap",
   last: "Last",
   best: "Best",
+  poleGap: "To P1",
+  lapStatus: "Lap",
   ers: "ERS",
   tyre: "Tyre",
   pits: "Pits",
@@ -49,6 +60,8 @@ const classNames: Record<TowerColumnId, string> = {
   gap: "col-gap",
   last: "col-last",
   best: "col-best",
+  poleGap: "col-polegap",
+  lapStatus: "col-lapstatus",
   ers: "col-ers",
   tyre: "col-tyre",
   pits: "col-pits",
@@ -165,6 +178,31 @@ export const towerColumns: ColumnDef<DriverState>[] = [
     cell: ({ row }) => lapTime(row.original.bestLapMS),
   },
   {
+    id: "poleGap",
+    header: labels.poleGap,
+    size: 96,
+    minSize: 78,
+    maxSize: 130,
+    cell: ({ row, table }) => {
+      const best = row.original.bestLapMS;
+      if (!best) return <span className="no-time">NO TIME</span>;
+      const poleMS = (table.options.meta as TowerMeta | undefined)?.poleMS ?? 0;
+      const g = poleGap(best, poleMS);
+      return g ? g : <span className="pole-ref">—</span>;
+    },
+  },
+  {
+    id: "lapStatus",
+    header: labels.lapStatus,
+    size: 96,
+    minSize: 74,
+    maxSize: 130,
+    cell: ({ row }) => {
+      const s = lapStatus(row.original);
+      return <span className={s.cls}>{s.label}</span>;
+    },
+  },
+  {
     id: "ers",
     header: labels.ers,
     size: 126,
@@ -204,7 +242,36 @@ export const towerColumns: ColumnDef<DriverState>[] = [
   },
 ];
 
-export const defaultTowerColumnOrder = towerColumns.map((column) => column.id as TowerColumnId);
+// The tower flips its column set with the session. Each mode lists every column
+// (so the View menu can toggle any of them) but orders the relevant ones first
+// and hides the rest. Locked columns (Pos, Driver) are always visible.
+export type TowerMode = "race" | "qualifying";
+
+const raceColumnOrder: TowerColumnId[] = [
+  "position", "delta", "driver", "status", "warnings", "penalties",
+  "interval", "gap", "last", "best", "ers", "tyre", "pits", "poleGap", "lapStatus",
+];
+const raceHiddenColumns: VisibilityState = {
+  warnings: false, penalties: false, poleGap: false, lapStatus: false,
+};
+
+const qualifyingColumnOrder: TowerColumnId[] = [
+  "position", "driver", "best", "poleGap", "last", "lapStatus", "tyre",
+  "warnings", "penalties", "delta", "status", "interval", "gap", "ers", "pits",
+];
+const qualifyingHiddenColumns: VisibilityState = {
+  delta: false, status: false, interval: false, gap: false, ers: false, pits: false,
+  warnings: false, penalties: false,
+};
+
+export function towerDefaults(mode: TowerMode): { order: TowerColumnId[]; visibility: VisibilityState } {
+  return mode === "qualifying"
+    ? { order: qualifyingColumnOrder, visibility: qualifyingHiddenColumns }
+    : { order: raceColumnOrder, visibility: raceHiddenColumns };
+}
+
+// Default (race) order, kept for callers that want a stable initial layout.
+export const defaultTowerColumnOrder = raceColumnOrder;
 
 export function towerColumnLabel(id: string): string {
   return labels[id as TowerColumnId] ?? id;

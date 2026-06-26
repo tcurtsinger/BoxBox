@@ -93,6 +93,10 @@ export interface DriverState {
   powerUnitWear: PowerUnitWear;
 }
 
+// Broad session kind derived server-side from Session.sessionType. Drives the
+// tower's race-vs-qualifying ordering and the knockout drop-zone.
+export type SessionCategory = "race" | "qualifying" | "practice" | "timeTrial" | "unknown";
+
 export type IncidentStatus = "logged" | "flagged" | "approved" | "dismissed";
 
 export interface Ruling {
@@ -126,6 +130,7 @@ export interface SessionSnapshot {
   sessionUID: string;
   sessionTime: number;
   session: SessionData | null;
+  sessionCategory: SessionCategory;
   isSpectating: boolean;
   spectatorCarIndex: number;
   playerCarIndex: number;

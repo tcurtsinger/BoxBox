@@ -1553,3 +1553,66 @@
   color: var(--amber);
   font-size: 12px;
 }
+
+/* ---- Qualifying mode ---------------------------------------------------- */
+
+/* The knockout line: a separator before the first car in the drop zone. */
+.battle-row.knockout-row {
+  background: rgba(255, 91, 82, 0.12);
+  color: var(--red);
+  letter-spacing: 0.4px;
+}
+.battle-row.knockout-row::after {
+  background: rgba(255, 91, 82, 0.35);
+}
+
+/* Cars currently below the cut: a restrained red band so race control can read
+   the drop zone at a glance without it shouting over the timing data. */
+.row-dropzone {
+  background: rgba(255, 91, 82, 0.06);
+  box-shadow: inset 3px 0 0 rgba(255, 91, 82, 0.55);
+}
+.row-dropzone:hover {
+  background: rgba(255, 91, 82, 0.1);
+}
+/* Selection still wins over the drop-zone tint. */
+.row-dropzone.row-selected,
+.row-dropzone.row-selected:hover {
+  background: var(--bg-sel);
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+
+/* "To P1" gap to the session-best lap. */
+.col-polegap {
+  text-align: right;
+  color: var(--text);
+}
+.col-polegap .pole-ref {
+  color: var(--text-faint);
+}
+.col-polegap .no-time {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+/* Lap-status cell (hot lap / out lap / pit / garage). */
+.col-lapstatus {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+.lap-flying {
+  color: var(--green);
+}
+.lap-out,
+.lap-in {
+  color: var(--amber);
+}
+.lap-pit {
+  color: var(--blue);
+}
+.lap-garage {
+  color: var(--text-faint);
+  font-weight: 600;
+}

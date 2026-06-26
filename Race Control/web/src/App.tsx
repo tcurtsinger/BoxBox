@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ColumnOrderState, ColumnSizingState, VisibilityState } from "@tanstack/react-table";
 import { useSnapshot } from "./api/useSnapshot";
 import type { ConnState } from "./api/useSnapshot";
@@ -12,16 +12,15 @@ import { ReviewQueue } from "./components/ReviewQueue";
 import { FlagForm } from "./components/FlagForm";
 import { RosterModal } from "./components/RosterModal";
 import {
-  defaultTowerColumnOrder,
   isLockedTowerColumn,
   towerColumnLabel,
+  towerDefaults,
+  type TowerMode,
 } from "./components/towerColumns";
 
 type InspectorTab = "driver" | "events" | "review";
 
-// Warnings and penalties are opt-in tower columns (enable via the View menu);
-// hidden by default so the default layout matches the prototype.
-const DEFAULT_HIDDEN_COLUMNS: VisibilityState = { warnings: false, penalties: false };
+const raceDefaults = towerDefaults("race");
 
 export function App() {
   const { snapshot, conn } = useSnapshot();
@@ -30,9 +29,23 @@ export function App() {
   const [flagOpen, setFlagOpen] = useState(false);
   const [rosterOpen, setRosterOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(DEFAULT_HIDDEN_COLUMNS);
-  const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(defaultTowerColumnOrder);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(raceDefaults.visibility);
+  const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(raceDefaults.order);
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
+
+  // The tower flips between race and qualifying layouts. Reset columns to the
+  // mode's defaults only when the mode actually changes, so a steward's in-mode
+  // tweaks (hidden/moved/resized columns) are not wiped on every snapshot.
+  const mode: TowerMode = snapshot?.sessionCategory === "qualifying" ? "qualifying" : "race";
+  const prevMode = useRef<TowerMode>(mode);
+  useEffect(() => {
+    if (prevMode.current === mode) return;
+    prevMode.current = mode;
+    const next = towerDefaults(mode);
+    setColumnVisibility(next.visibility);
+    setColumnOrder(next.order);
+    setColumnSizing({});
+  }, [mode]);
 
   const drivers = snapshot?.drivers ?? [];
   const incidents = snapshot?.incidents ?? [];
@@ -57,8 +70,9 @@ export function App() {
     [columnOrder, columnVisibility],
   );
   const resetColumns = () => {
-    setColumnVisibility(DEFAULT_HIDDEN_COLUMNS);
-    setColumnOrder(defaultTowerColumnOrder);
+    const next = towerDefaults(mode);
+    setColumnVisibility(next.visibility);
+    setColumnOrder(next.order);
     setColumnSizing({});
   };
   const selectDriver = (index: number) => {
