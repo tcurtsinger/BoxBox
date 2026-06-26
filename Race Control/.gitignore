@@ -1,6 +1,3 @@
-# Root-level ignores for the BoxBox monorepo.
-# Each product (Race Control/, Tuner/) also carries its own .gitignore.
-
 # Dependencies
 node_modules/
 
@@ -9,9 +6,10 @@ dist/
 build/
 *.tsbuildinfo
 
-# Logs and probe scratch
+# Logs
 *.log
-*.jsonl
+npm-debug.log*
+yarn-error.log*
 
 # Environment / secrets
 .env
@@ -25,3 +23,10 @@ Desktop.ini
 
 # Editor scratch
 *.swp
+
+# Probe scratch / throwaway test files
+probe/_*
+
+# Local session captures / generated reports (Phase 5+)
+/sessions/
+/reports/

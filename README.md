@@ -1,50 +1,18 @@
 # BoxBox
 
-Live race-control and telemetry dashboard for **F1 26** (2026 season pack) sim-racing leagues.
+F1 telemetry tools for sim-racing leagues, built on one shared, format-aware UDP
+packet layer (F1 25 / F1 26, telemetry format 2026 with 2025 fallback).
 
-BoxBox turns one spectator's in-game UDP telemetry feed into an FIA / race-control console: a whole-grid timing tower, glanceable per-driver telemetry, a human-in-the-loop stewarding workflow for incidents and penalties, and a post-session report. It is built for league **observers** (race control and shoutcasters), not the driver.
+Two products live here:
 
-> **Status:** early development. Phase 0 (feed validation) is in place; the live app is being built next.
+| Path | Product | Audience | What it is |
+|---|---|---|---|
+| [`Race Control/`](Race%20Control/) | **Race Control** | League observers (race control, stewards, shoutcasters) | A whole-grid race-control console: live timing tower, glanceable per-driver telemetry, a human-in-the-loop stewarding queue, and post-session reporting. Reads one spectator's UDP feed for the entire grid. |
+| [`Tuner/`](Tuner/) | **Tuner** | The driver | A Time-Trial setup advisor: reads live telemetry, diagnoses handling balance per corner, and recommends setup-slider changes that refine as more laps are run. |
 
-## How it works
+The two are kept separate until each is ready, and will share the packet-parsing
+layer when they merge. Race Control is the mature side (Phases 0–3 complete,
+live-session validated); Tuner is early (design + feed probe only).
 
-The F1 game broadcasts binary UDP telemetry from each player's client. One designated observer **spectates** the lobby (with every driver's in-game telemetry set to **Public**) and runs BoxBox, which reads the local UDP feed, parses it, and drives the console in real time.
-
-- **Single local feed** — no per-driver networking; just the spectator's own UDP output.
-- **Whole-grid backbone** — timing tower + live incident feed for every car.
-- **Active stewarding** — auto-captured incidents enter a review queue; the steward's rulings are authoritative.
-- **Summary persistence** — per-session HTML + JSON reports.
-
-## Repository layout
-
-| Path | What |
-|---|---|
-| `probe/` | Phase 0 UDP probe — a zero-dependency diagnostic that confirms what the spectator feed delivers |
-| `docs/` | EA's F1 25 / F1 26 UDP telemetry output spec (reference) |
-
-## Phase 0 — validate the feed
-
-Before the app is built, confirm what the spectator feed actually delivers:
-
-```sh
-node probe/f1-udp-probe.mjs
-```
-
-See [`probe/README.md`](probe/README.md) for in-game settings and what to look for.
-
-## Roadmap
-
-- **Phase 0** — UDP probe to validate the spectator feed *(probe ready)*
-- **Phase 1** — UDP ingest + TypeScript packet parser (format 2026, 2025 fallback)
-- **Phase 2** — Race console: timing tower, glanceable telemetry, driver detail, live incident feed
-- **Phase 3** — Stewarding: review queue, rulings, manual incident logging
-- **Phase 4** — Qualifying mode
-- **Phase 5** — Post-session report (HTML + JSON + Discord summary)
-
-## Tech
-
-Node + TypeScript backend (UDP ingest, WebSocket push), React + Vite frontend, SQLite + JSON persistence. The packet layer is an adapter, keeping the door open for other racing sims later.
-
-## Notes
-
-The contents of `docs/` are Electronic Arts' UDP specification, included here for reference only.
+See each product's `README.md` for how to run it. Design notes and project state
+live in the Obsidian vault at `Projects/Personal/BoxBox`.
