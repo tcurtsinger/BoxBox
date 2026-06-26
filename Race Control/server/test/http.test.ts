@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { startHttpServer } from "../src/net/http.ts";
 import { SessionState } from "../src/state.ts";
-import type { ParsedPacket, PacketHeader } from "../src/parser/index.ts";
+import type { ParsedPacket, PacketHeader } from "../../../shared/parser/index.ts";
 
 function hdr(id: number): PacketHeader {
   return {

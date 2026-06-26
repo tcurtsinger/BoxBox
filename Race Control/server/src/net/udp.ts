@@ -1,5 +1,5 @@
 import { createSocket } from "node:dgram";
-import { parsePacket } from "../parser/index.ts";
+import { parsePacket } from "../../../../shared/parser/index.ts";
 import type { SessionState } from "../state.ts";
 
 export interface UdpHandle {

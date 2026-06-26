@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { SessionState } from "../src/state.ts";
-import type { ParsedPacket, PacketHeader } from "../src/parser/index.ts";
+import type { ParsedPacket, PacketHeader } from "../../../shared/parser/index.ts";
 
 // SessionState consumes typed ParsedPackets, so we feed objects directly here
 // (the byte-level parsing is covered in parser.test.ts).

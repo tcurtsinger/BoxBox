@@ -10,9 +10,11 @@ Two products live here:
 | [`Race Control/`](Race%20Control/) | **Race Control** | League observers (race control, stewards, shoutcasters) | A whole-grid race-control console: live timing tower, glanceable per-driver telemetry, a human-in-the-loop stewarding queue, and post-session reporting. Reads one spectator's UDP feed for the entire grid. |
 | [`Tuner/`](Tuner/) | **Tuner** | The driver | A Time-Trial setup advisor: reads live telemetry, diagnoses handling balance per corner, and recommends setup-slider changes that refine as more laps are run. |
 
-The two are kept separate until each is ready, and will share the packet-parsing
-layer when they merge. Race Control is the mature side (Phases 0–3 complete,
-live-session validated); Tuner is early (design + feed probe only).
+Both products consume one shared, format-aware UDP packet parser in
+[`shared/parser/`](shared/parser/); each keeps its own server, state model, and
+web UI. The two are kept as separate apps until each is ready and will be merged
+later. Race Control is the mature side (Phases 0–4 complete, live-session
+validated); Tuner is early (design plus a validated feed probe).
 
 See each product's `README.md` for how to run it. Design notes and project state
 live in the Obsidian vault at `Projects/Personal/BoxBox`.

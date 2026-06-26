@@ -14,8 +14,8 @@ import type {
   FinalClassificationData,
   LiveryColour,
   PowerUnitWear,
-} from "./parser/index.ts";
-import { PENALTY_TYPE, INFRINGEMENT_TYPE } from "./parser/constants.ts";
+} from "../../../shared/parser/index.ts";
+import { PENALTY_TYPE, INFRINGEMENT_TYPE } from "../../../shared/parser/constants.ts";
 
 export interface DriverState {
   index: number;

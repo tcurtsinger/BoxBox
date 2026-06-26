@@ -1,4 +1,4 @@
-// UI-side label maps mirroring server/src/parser/constants.ts. Kept on the web
+// UI-side label maps mirroring shared/parser/constants.ts. Kept on the web
 // side because they are pure presentation; the server sends numeric ids.
 
 export const SESSION_TYPE: Record<number, string> = {

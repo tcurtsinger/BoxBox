@@ -5,7 +5,7 @@ import { SessionState } from "./state.ts";
 import { attachUdp } from "./net/udp.ts";
 import { startHttpServer } from "./net/http.ts";
 import type { DriverState, Incident } from "./state.ts";
-import { SESSION_TYPE, SAFETY_CAR_STATUS } from "./parser/constants.ts";
+import { SESSION_TYPE, SAFETY_CAR_STATUS } from "../../../shared/parser/constants.ts";
 
 const PORT = Number.isFinite(Number(process.argv[2]))
   ? Number(process.argv[2])

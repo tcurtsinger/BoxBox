@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parsePacket } from "../src/parser/index.ts";
+import { parsePacket } from "../../../shared/parser/index.ts";
 import type {
   SessionData,
   ParticipantsData,
@@ -11,7 +11,7 @@ import type {
   CarTelemetry2Data,
   EventData,
   FinalClassificationData,
-} from "../src/parser/index.ts";
+} from "../../../shared/parser/index.ts";
 
 // Minimal little-endian writer mirroring BufferReader, for building fixtures.
 class W {
