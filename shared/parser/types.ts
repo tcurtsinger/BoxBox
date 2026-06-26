@@ -246,6 +246,42 @@ export interface FinalClassificationData {
   classification: FinalClassificationEntry[];
 }
 
+// Car Setups (id 5). The per-car CarSetupData is a packed 50-byte struct,
+// identical across formats; only the car count and the player-only
+// nextFrontWingValue trailer differ. Other cars are zeroed unless set to Public;
+// the player's own car is always populated, which is what the Tuner reads.
+export interface CarSetupEntry {
+  index: number;
+  frontWing: number; // 1-50 (not 1-11; confirmed by live probe)
+  rearWing: number;
+  onThrottle: number; // differential on-throttle (percentage)
+  offThrottle: number;
+  frontCamber: number;
+  rearCamber: number;
+  frontToe: number;
+  rearToe: number;
+  frontSuspension: number;
+  rearSuspension: number;
+  frontAntiRollBar: number;
+  rearAntiRollBar: number;
+  frontRideHeight: number;
+  rearRideHeight: number;
+  brakePressure: number; // percentage
+  brakeBias: number; // percentage
+  engineBraking: number; // percentage
+  rearLeftTyrePressure: number; // PSI
+  rearRightTyrePressure: number;
+  frontLeftTyrePressure: number;
+  frontRightTyrePressure: number;
+  ballast: number;
+  fuelLoad: number; // kg
+}
+
+export interface CarSetupsData {
+  cars: CarSetupEntry[];
+  nextFrontWingValue: number; // front wing after next pit stop - player only
+}
+
 // Discriminated by packet id. `data: null` = a packet we receive but do not yet
 // decode (so callers can switch exhaustively as we add more parsers).
 export type ParsedPacket =
@@ -253,6 +289,7 @@ export type ParsedPacket =
   | { id: 2; header: PacketHeader; data: LapDataData }
   | { id: 3; header: PacketHeader; data: EventData }
   | { id: 4; header: PacketHeader; data: ParticipantsData }
+  | { id: 5; header: PacketHeader; data: CarSetupsData }
   | { id: 6; header: PacketHeader; data: CarTelemetryData }
   | { id: 7; header: PacketHeader; data: CarStatusData }
   | { id: 8; header: PacketHeader; data: FinalClassificationData }

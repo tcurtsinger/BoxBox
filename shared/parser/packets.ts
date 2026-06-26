@@ -5,6 +5,8 @@ import type {
   SessionData,
   ParticipantsData,
   ParticipantEntry,
+  CarSetupsData,
+  CarSetupEntry,
   LiveryColour,
   LapDataData,
   LapEntry,
@@ -111,6 +113,72 @@ export function parseParticipants(rd: BufferReader, header: PacketHeader): Parti
   }
 
   return { numActiveCars, participants };
+}
+
+// --- Car Setups (id 5) --------------------------------------------------------
+// Per-car CarSetupData is a packed 50-byte struct, identical across formats;
+// only the car count and the player-only nextFrontWingValue trailer differ. The
+// player's own car is always populated (the Tuner's auto-detect source); other
+// cars are zeroed unless set to Public.
+export function parseCarSetups(rd: BufferReader, header: PacketHeader): CarSetupsData {
+  const maxCars = maxCarsForFormat(header.packetFormat);
+  const cars: CarSetupEntry[] = [];
+
+  for (let i = 0; i < maxCars; i++) {
+    const frontWing = rd.u8();
+    const rearWing = rd.u8();
+    const onThrottle = rd.u8();
+    const offThrottle = rd.u8();
+    const frontCamber = rd.f32();
+    const rearCamber = rd.f32();
+    const frontToe = rd.f32();
+    const rearToe = rd.f32();
+    const frontSuspension = rd.u8();
+    const rearSuspension = rd.u8();
+    const frontAntiRollBar = rd.u8();
+    const rearAntiRollBar = rd.u8();
+    const frontRideHeight = rd.u8();
+    const rearRideHeight = rd.u8();
+    const brakePressure = rd.u8();
+    const brakeBias = rd.u8();
+    const engineBraking = rd.u8();
+    const rearLeftTyrePressure = rd.f32();
+    const rearRightTyrePressure = rd.f32();
+    const frontLeftTyrePressure = rd.f32();
+    const frontRightTyrePressure = rd.f32();
+    const ballast = rd.u8();
+    const fuelLoad = rd.f32();
+
+    cars.push({
+      index: i,
+      frontWing,
+      rearWing,
+      onThrottle,
+      offThrottle,
+      frontCamber,
+      rearCamber,
+      frontToe,
+      rearToe,
+      frontSuspension,
+      rearSuspension,
+      frontAntiRollBar,
+      rearAntiRollBar,
+      frontRideHeight,
+      rearRideHeight,
+      brakePressure,
+      brakeBias,
+      engineBraking,
+      rearLeftTyrePressure,
+      rearRightTyrePressure,
+      frontLeftTyrePressure,
+      frontRightTyrePressure,
+      ballast,
+      fuelLoad,
+    });
+  }
+
+  const nextFrontWingValue = rd.f32();
+  return { cars, nextFrontWingValue };
 }
 
 // --- Lap Data (id 2) ----------------------------------------------------------

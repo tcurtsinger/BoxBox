@@ -3,6 +3,7 @@ import { parseHeader } from "./header.ts";
 import {
   parseSession,
   parseParticipants,
+  parseCarSetups,
   parseLapData,
   parseCarTelemetry,
   parseCarStatus,
@@ -37,6 +38,8 @@ export function parsePacket(buf: Buffer): ParsedPacket | null {
       return { id: 3, header, data: parseEvent(rd, header) };
     case PacketId.Participants:
       return { id: 4, header, data: parseParticipants(rd, header) };
+    case PacketId.CarSetups:
+      return { id: 5, header, data: parseCarSetups(rd, header) };
     case PacketId.CarTelemetry:
       return { id: 6, header, data: parseCarTelemetry(rd, header) };
     case PacketId.CarStatus:

@@ -93,6 +93,39 @@ test("header decodes (via a Session packet)", () => {
   assert.equal(pkt.header.playerCarIndex, 5);
 });
 
+test("CarSetups (id 5): player car setup + nextFrontWing trailer (2026)", () => {
+  const w = new W(1233); // header 29 + 24*50 + 4
+  writeHeader(w, 5); // playerCarIndex = 5
+  w.skip(5 * 50); // jump to the player's CarSetupData (index 5)
+  // 50-byte CarSetupData, exactly-representable float32 values so equality holds.
+  w.u8(25).u8(24).u8(60).u8(50) // front/rear wing, on/off throttle diff
+    .f32(-3.5).f32(-2.0).f32(0.0625).f32(0.125) // cambers, toes
+    .u8(37).u8(16).u8(15).u8(8) // suspensions, ARBs
+    .u8(25).u8(52) // ride heights
+    .u8(97).u8(57).u8(50) // brake pressure, bias, engine braking
+    .f32(21.5).f32(21.5).f32(24.0).f32(24.0) // RL, RR, FL, FR pressures
+    .u8(6).f32(10.0); // ballast, fuel
+  w.skip(1229 - w.pos).f32(32.0); // m_nextFrontWingValue trailer at 29 + 24*50
+
+  const pkt = parsePacket(w.buf);
+  if (!pkt || pkt.id !== 5) throw new Error("expected a CarSetups packet");
+  const me = pkt.data.cars[5];
+  assert.equal(me?.frontWing, 25);
+  assert.equal(me?.rearWing, 24);
+  assert.equal(me?.onThrottle, 60);
+  assert.equal(me?.frontCamber, -3.5);
+  assert.equal(me?.frontToe, 0.0625);
+  assert.equal(me?.brakeBias, 57);
+  assert.equal(me?.frontLeftTyrePressure, 24.0);
+  assert.equal(me?.rearLeftTyrePressure, 21.5);
+  assert.equal(me?.ballast, 6);
+  assert.equal(me?.fuelLoad, 10.0);
+  assert.equal(pkt.data.nextFrontWingValue, 32.0);
+  // Cars other than the player are present but zeroed.
+  assert.equal(pkt.data.cars[0]?.frontWing, 0);
+  assert.equal(pkt.data.cars.length, 24);
+});
+
 test("Session: spectating, type and conditions", () => {
   const w = new W(926);
   writeHeader(w, 1);
