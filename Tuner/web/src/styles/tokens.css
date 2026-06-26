@@ -1,0 +1,63 @@
+/* BoxBox design tokens — shared dark palette with the Race Control console so
+   the two products read as one family. One source of truth: palette, type,
+   radii, spacing. app.css consumes these and adds zero hardcoded colours. */
+:root {
+  --bg: #0a0e13;
+  --bg-card: #141a22;
+  --bg-inset: #0f141b;
+  --bg-stat: #1a212c;
+  --bg-hover: #1b232f;
+  --bg-sel: #1d2839;
+
+  --border: #28313d;
+  --border-soft: #1d242e;
+
+  --text: #e7ebf1;
+  --text-dim: #909bab;
+  --text-faint: #5d6776;
+
+  --green: #2ecf68;
+  --red: #ff5b52;
+  --amber: #ffc24d;
+  --yellow: #ffd60a;
+  --blue: #4d9bff;
+  --purple: #a78bfa;
+
+  /* Tuner confidence scale (per the design: orange low, yellow forming, green
+     dialed in). Reuses the shared accents so it matches the console. */
+  --conf-low: var(--amber);
+  --conf-forming: var(--yellow);
+  --conf-high: var(--green);
+
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --radius-card: 12px;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --gap: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+[class*="-value"] {
+  font-variant-numeric: tabular-nums;
+}
