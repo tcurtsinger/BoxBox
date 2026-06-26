@@ -131,6 +131,7 @@ export interface SessionSnapshot {
   finalClassification: FinalClassificationData | null;
   packetCount: number;
   lastUpdate: number;
+  lastPacketAt: number;
 }
 
 // Event codes promoted into the incident log (the rest are tallied only).
@@ -230,7 +231,8 @@ export class SessionState {
   eventTally = new Map<string, number>();
   finalClassification: FinalClassificationData | null = null;
   packetCount = 0;
-  lastUpdate = 0;
+  lastUpdate = 0; // last change of any kind (packet OR steward write)
+  lastPacketAt = 0; // last telemetry packet only - drives the "stale feed" banner
   #nextIncidentId = 1;
   // car index -> manual display name. Deliberately NOT cleared on session reset:
   // the same lobby keeps its mapping across quali -> race.
@@ -246,6 +248,7 @@ export class SessionState {
     this.playerCarIndex = h.playerCarIndex;
     this.packetCount += 1;
     this.lastUpdate = atMs;
+    this.lastPacketAt = atMs; // a real packet arrived (steward writes do not touch this)
 
     switch (pkt.id) {
       case 1: {
@@ -586,6 +589,7 @@ export class SessionState {
       finalClassification: this.finalClassification,
       packetCount: this.packetCount,
       lastUpdate: this.lastUpdate,
+      lastPacketAt: this.lastPacketAt,
     };
   }
 }

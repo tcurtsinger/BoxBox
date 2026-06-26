@@ -45,7 +45,9 @@ export function TimingTower({
   onSelect,
 }: Props) {
   const towerRef = useRef<HTMLDivElement>(null);
-  const stale = Date.now() - snapshot.lastUpdate > STALE_MS;
+  // Staleness must reflect the telemetry feed, not steward writes (which also
+  // bump lastUpdate), so a note/ruling can't clear a genuine "no packets" state.
+  const stale = Date.now() - snapshot.lastPacketAt > STALE_MS;
   const rows = useMemo(() => orderDrivers(snapshot.drivers), [snapshot.drivers]);
 
   const isQualifying = snapshot.sessionCategory === "qualifying";
@@ -67,6 +69,7 @@ export function TimingTower({
   const table = useReactTable({
     data: rows,
     columns: towerColumns,
+    getRowId: (driver) => String(driver.index), // stable identity by car, not row order
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: "onChange",
     defaultColumn: {
@@ -197,5 +200,6 @@ function rowClass(driver: DriverState, selected: boolean, dropZone: boolean): st
 }
 
 function isOut(driver: DriverState): boolean {
-  return [4, 5, 7].includes(driver.resultStatus);
+  // 4 DNF, 5 DSQ, 6 Not Classified, 7 Retired - all drop out of the running order.
+  return [4, 5, 6, 7].includes(driver.resultStatus);
 }

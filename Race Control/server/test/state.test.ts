@@ -174,6 +174,24 @@ test("resets cleanly when the session UID changes", () => {
   assert.equal(snap.drivers[0]?.name, "HAMILTON");
 });
 
+test("steward writes advance lastUpdate but not lastPacketAt (feed staleness)", () => {
+  const s = new SessionState();
+  feed(s, 4, {
+    numActiveCars: 1,
+    participants: [{ index: 0, name: "NORRIS", teamId: 0, raceNumber: 4, nationality: 1, aiControlled: true, telemetryPublic: true }],
+  });
+  const snap1 = s.snapshot();
+  assert.ok(snap1.lastPacketAt > 0);
+  assert.equal(snap1.lastUpdate, snap1.lastPacketAt); // a packet set both
+
+  // A later steward write must NOT touch lastPacketAt, or it would clear the
+  // "no packets" banner even though the telemetry feed has actually stopped.
+  s.logManualIncident({ label: "Unsafe rejoin" }, 9999);
+  const snap2 = s.snapshot();
+  assert.equal(snap2.lastUpdate, 9999);
+  assert.equal(snap2.lastPacketAt, snap1.lastPacketAt);
+});
+
 test("logs a manual incident with a stable id and flagged status", () => {
   const s = new SessionState();
   feed(s, 4, {

@@ -473,7 +473,7 @@ export function parseEvent(rd: BufferReader, header: PacketHeader): EventData {
       break;
     case "SGSV":
       e.vehicleIdx = rd.u8();
-      if (is2026) e.stopTime = rd.f32();
+      e.stopTime = rd.f32(); // StopGoPenaltyServed.stopTime is present in 2025 and 2026
       break;
     case "OVTK":
       e.overtakingVehicleIdx = rd.u8();

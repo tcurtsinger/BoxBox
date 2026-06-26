@@ -93,6 +93,34 @@ test("header decodes (via a Session packet)", () => {
   assert.equal(pkt.header.playerCarIndex, 5);
 });
 
+test("CarTelemetry (id 6): 2025 stride (engineTemp u16, 22 cars) keeps fields aligned", () => {
+  const w = new W(1352); // header 29 + 22*60 + 3 trailer
+  writeHeader(w, 6, 2025); // playerCarIndex = 5
+  w.skip(5 * 60); // jump to the player's CarTelemetryData (index 5)
+  // 60-byte 2025 CarTelemetryData. engineTemperature is u16 here (u8 in 2026); if
+  // the parser misread it, the tyre pressures that follow would be misaligned.
+  w.u16(280).f32(1.0).f32(0.0).f32(0.0) // speed, throttle, steer, brake
+    .u8(0).i8(7).u16(11000).u8(0).u8(60).u16(0) // clutch, gear, rpm, drs, revLights, revLightsBit
+    .u16(300).u16(300).u16(300).u16(300) // brakesTemperature[4]
+    .u8(90).u8(90).u8(90).u8(90) // tyresSurfaceTemperature[4]
+    .u8(100).u8(100).u8(100).u8(100) // tyresInnerTemperature[4]
+    .u16(110) // engineTemperature (u16 in 2025)
+    .f32(23.0).f32(23.0).f32(21.0).f32(21.0) // tyresPressure[4]
+    .u8(0).u8(0).u8(0).u8(0); // surfaceType[4]
+
+  const pkt = parsePacket(w.buf);
+  if (!pkt || pkt.id !== 6) throw new Error("expected a CarTelemetry packet");
+  assert.equal(pkt.header.packetFormat, 2025);
+  assert.equal(pkt.data.cars.length, 22); // 2025 carries 22, not 24
+  const me = pkt.data.cars[5];
+  assert.equal(me?.speed, 280);
+  assert.equal(me?.gear, 7);
+  assert.equal(me?.engineRPM, 11000);
+  assert.equal(me?.engineTemperature, 110);
+  assert.equal(me?.tyresPressure[0], 23.0); // aligned only if engineTemp read as u16
+  assert.equal(me?.tyresPressure[2], 21.0);
+});
+
 test("CarSetups (id 5): player car setup + nextFrontWing trailer (2026)", () => {
   const w = new W(1233); // header 29 + 24*50 + 4
   writeHeader(w, 5); // playerCarIndex = 5

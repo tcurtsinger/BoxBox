@@ -50,6 +50,8 @@ export class TunerState {
   lastUpdate = 0;
   #setup: CarSetupEntry | null = null;
   #nextFrontWingValue = 0;
+  #setupTrackId = -1; // track the stored setup was captured on
+  #setupPlayerIdx = -1; // player car index it was captured for
 
   ingest(pkt: ParsedPacket, atMs: number): void {
     const h = pkt.header;
@@ -73,8 +75,21 @@ export class TunerState {
       if (setupLooksReal(mine)) {
         this.#setup = mine;
         this.#nextFrontWingValue = d.nextFrontWingValue;
+        this.#setupTrackId = this.trackId;
+        this.#setupPlayerIdx = h.playerCarIndex;
       }
     }
+  }
+
+  // The stored setup counts as "received" only while it still matches the live
+  // context. Time Trial reuses a setup across lap resets (same track/player, just
+  // a new session UID), but switching track or player must not keep showing the
+  // previous car's numbers until a fresh real setup arrives.
+  #setupIsCurrent(): boolean {
+    if (!setupLooksReal(this.#setup)) return false;
+    const trackChanged = this.#setupTrackId >= 0 && this.trackId >= 0 && this.#setupTrackId !== this.trackId;
+    const playerChanged = this.#setupPlayerIdx >= 0 && this.#setupPlayerIdx !== this.playerCarIndex;
+    return !trackChanged && !playerChanged;
   }
 
   snapshot(): TunerSnapshot {
@@ -87,7 +102,7 @@ export class TunerState {
       playerCarIndex: this.playerCarIndex,
       sessionTime: this.sessionTime,
       setup: this.#setup,
-      setupReceived: setupLooksReal(this.#setup),
+      setupReceived: this.#setupIsCurrent(),
       nextFrontWingValue: this.#nextFrontWingValue,
       packetCount: this.packetCount,
       lastUpdate: this.lastUpdate,

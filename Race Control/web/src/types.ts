@@ -141,4 +141,5 @@ export interface SessionSnapshot {
   finalClassification: FinalClassificationData | null;
   packetCount: number;
   lastUpdate: number;
+  lastPacketAt: number; // last telemetry packet only (steward writes excluded)
 }

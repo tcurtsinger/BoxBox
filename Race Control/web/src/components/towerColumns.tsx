@@ -341,7 +341,8 @@ function ErsCell({ driver }: { driver: DriverState }) {
 }
 
 function isOut(driver: DriverState): boolean {
-  return [4, 5, 7].includes(driver.resultStatus);
+  // 4 DNF, 5 DSQ, 6 Not Classified, 7 Retired - all drop out of the running order.
+  return [4, 5, 6, 7].includes(driver.resultStatus);
 }
 
 function positionDelta(driver: DriverState): { label: ReactNode; cls: string } {

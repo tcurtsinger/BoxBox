@@ -95,6 +95,23 @@ test("setup survives a session-UID change (Time Trial lap reset)", () => {
   assert.equal(snap.setupReceived, true);
 });
 
+test("marks the setup stale when the track changes until a fresh one arrives", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0 });
+  feed(s, 5, gridWith(25));
+  assert.equal(s.snapshot().setupReceived, true);
+
+  // Switch to a different track: the old setup must not keep reading as received.
+  feed(s, 1, { sessionType: 18, trackId: 3 });
+  assert.equal(s.snapshot().setupReceived, false);
+
+  // A fresh setup for the new track restores it.
+  feed(s, 5, gridWith(40));
+  const snap = s.snapshot();
+  assert.equal(snap.setupReceived, true);
+  assert.equal(snap.setup?.frontWing, 40);
+});
+
 test("tracks a setup change (the loop's core observation)", () => {
   const s = new TunerState();
   feed(s, 5, gridWith(25));

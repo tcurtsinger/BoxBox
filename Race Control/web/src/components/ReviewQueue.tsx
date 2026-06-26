@@ -72,21 +72,26 @@ export function ReviewQueue({ incidents, drivers }: Props) {
 function ReviewItem({ inc, nameOf }: { inc: Incident; nameOf: (i: number) => string }) {
   const [outcome, setOutcome] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const detail = incidentDetail(inc);
 
   const approve = async () => {
     setBusy(true);
+    setError("");
     try {
       await approveIncident(inc.id, outcome.trim());
     } catch {
+      setError("Action failed - not saved.");
       setBusy(false);
     }
   };
   const dismiss = async () => {
     setBusy(true);
+    setError("");
     try {
       await dismissIncident(inc.id);
     } catch {
+      setError("Action failed - not saved.");
       setBusy(false);
     }
   };
@@ -119,6 +124,7 @@ function ReviewItem({ inc, nameOf }: { inc: Incident; nameOf: (i: number) => str
         <button className="btn-ghost" onClick={() => void dismiss()} disabled={busy}>
           Dismiss
         </button>
+        {error && <span className="incident-note-error">{error}</span>}
       </div>
     </div>
   );
