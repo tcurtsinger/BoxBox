@@ -240,10 +240,13 @@ export class TunerState {
     }
   }
 
-  // Segment a just-completed lap and fold it into the per-track corner map, but
-  // only if it was clean and spanned enough of the track to be trustworthy.
+  // Segment a just-completed lap and fold it into the per-track corner map. The
+  // corner map is geometry, which survives a cut, so it is built from any
+  // reasonably-complete lap regardless of validity (#lapInvalidated is kept for
+  // lap-time / gain measurement later, not gated on here). Confirmed on a real
+  // capture: requiring validity meant a single wide moment lost the whole lap.
   #finalizeLap(): void {
-    if (this.#lapInvalidated || this.trackId < 0 || this.#trackLength <= 0) return;
+    if (this.trackId < 0 || this.#trackLength <= 0) return;
     if (this.#lapTrace.length < MIN_LAP_SAMPLES) return;
     const span = this.#lapTrace[this.#lapTrace.length - 1].lapDistance;
     if (span < MIN_LAP_COVERAGE * this.#trackLength) return;

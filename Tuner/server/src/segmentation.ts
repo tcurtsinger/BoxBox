@@ -6,8 +6,11 @@
 // fall out of the telemetry itself, so it works on any layout including new
 // 2026-pack tracks. Keyed by lap distance so windows are comparable across laps.
 //
-// The constants below are first-cut and tuned against a synthetic lap; they need
-// confirmation against a real captured lap before the diagnosis leans on them.
+// The constants below were retuned against a real Melbourne Time-Trial capture
+// (2026-06-26): a 25 km/h prominence floor under-detected badly, so genuine
+// medium-speed corners were missed. ~10 km/h recovers the speed-distinguishable
+// corners (Melbourne resolves to ~7-10 braking zones; its other "corners" are
+// flat-out kinks with no speed signature).
 
 export interface TraceSample {
   lapDistance: number; // metres along the lap
@@ -34,9 +37,9 @@ export interface SegmentOptions {
 }
 
 const DEFAULTS = {
-  smoothRadiusM: 15,
-  minProminenceKmh: 25,
-  mergeDistM: 40,
+  smoothRadiusM: 12,
+  minProminenceKmh: 10,
+  mergeDistM: 45,
   midFraction: 0.15,
 } satisfies Required<SegmentOptions>;
 

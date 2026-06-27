@@ -12,7 +12,7 @@ function gaussLap(): TraceSample[] {
     { apex: 550, min: 90, sigma: 40 },
     { apex: 820, min: 150, sigma: 35 },
   ];
-  const wiggle = { apex: 950, depth: 12, sigma: 15 };
+  const wiggle = { apex: 950, depth: 6, sigma: 15 }; // below the ~10 km/h prominence floor
   const baseline = 320;
   const trace: TraceSample[] = [];
   for (let d = 0; d <= 1000; d += 2) {

@@ -257,11 +257,19 @@ test("segments a clean lap into corners and locates the car", () => {
   assert.equal(snap.currentCorner.phase, "mid");
 });
 
-test("does not segment an invalidated lap", () => {
+test("still maps a lap that was flagged invalid (geometry survives a cut)", () => {
   const s = new TunerState();
   feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
-  driveLap(s, 1, { invalidAt: 300 }); // a cut somewhere on the lap
+  driveLap(s, 1, { invalidAt: 300 }); // a wide moment invalidates the lap...
   step(s, 10, 2);
+  assert.equal(s.snapshot().corners.length, 3, "the corner map is built regardless of validity");
+});
+
+test("does not segment an incomplete lap (partial coverage)", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  for (let d = 0; d <= 300; d += 5) step(s, d, 1); // only a third of the lap, then move on
+  step(s, 5, 2);
   assert.equal(s.snapshot().corners.length, 0);
 });
 
