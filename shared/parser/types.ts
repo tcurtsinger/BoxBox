@@ -308,6 +308,28 @@ export interface TimeTrialData {
   rival: TimeTrialDataSet;
 }
 
+// Motion Ex (id 13). Player-car-only extended motion, 273 bytes. The leading
+// region decoded here (through m_frontWheelsAngle) is byte-identical in 2025 and
+// 2026; the 2026 additions (chassisPitch, wheelCamber) sit at the tail and are
+// not decoded. This is the Tuner's balance-diagnosis source: per-wheel slip
+// angles plus the true steered angle, so understeer/oversteer is a direct read
+// rather than a reconstruction. All wheel arrays are in RL, RR, FL, FR order.
+export interface Vec3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface MotionExData {
+  wheelSlipRatio: number[]; // RL, RR, FL, FR
+  wheelSlipAngle: number[]; // radians, RL, RR, FL, FR
+  wheelLatForce: number[]; // Newtons, RL, RR, FL, FR
+  wheelLongForce: number[]; // Newtons, RL, RR, FL, FR
+  localVelocity: Vec3; // car-local m/s (x lateral, y vertical, z longitudinal)
+  angularVelocity: Vec3; // rad/s (y component is yaw rate)
+  frontWheelsAngle: number; // radians, true steered angle (no calibration needed)
+}
+
 // Discriminated by packet id. `data: null` = a packet we receive but do not yet
 // decode (so callers can switch exhaustively as we add more parsers).
 export type ParsedPacket =
@@ -320,6 +342,7 @@ export type ParsedPacket =
   | { id: 7; header: PacketHeader; data: CarStatusData }
   | { id: 8; header: PacketHeader; data: FinalClassificationData }
   | { id: 10; header: PacketHeader; data: CarDamageData }
+  | { id: 13; header: PacketHeader; data: MotionExData }
   | { id: 14; header: PacketHeader; data: TimeTrialData }
   | { id: 16; header: PacketHeader; data: CarTelemetry2Data }
   | { id: number; header: PacketHeader; data: null };

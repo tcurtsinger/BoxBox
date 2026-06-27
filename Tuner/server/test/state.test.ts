@@ -158,3 +158,57 @@ test("equal-car-performance survives a session-UID change (TT lap reset)", () =>
   assert.equal(snap.sessionUID, "2002");
   assert.equal(snap.equalCarPerformance, 1);
 });
+
+// A MotionEx (id 13) sample. Wheel order RL, RR, FL, FR. Defaults describe an
+// understeering corner: fronts (indices 2,3) slip more than rears, under load.
+function motionEx(opts: { frontSlip?: number; rearSlip?: number; steer?: number; speed?: number; yaw?: number } = {}) {
+  const { frontSlip = 0.05, rearSlip = 0.02, steer = 0.1, speed = 50, yaw = 1.0 } = opts;
+  return {
+    wheelSlipRatio: [0, 0, 0, 0],
+    wheelSlipAngle: [rearSlip, rearSlip, frontSlip, frontSlip],
+    wheelLatForce: [0, 0, 0, 0],
+    wheelLongForce: [0, 0, 0, 0],
+    localVelocity: { x: 0, y: 0, z: speed },
+    angularVelocity: { x: 0, y: yaw, z: 0 },
+    frontWheelsAngle: steer,
+  };
+}
+
+test("computes an understeer balance from MotionEx (id 13) under cornering load", () => {
+  const s = new TunerState();
+  assert.equal(s.snapshot().balance, null); // nothing until a corner
+
+  feed(s, 13, motionEx()); // fronts slip more than rears
+  const b = s.snapshot().balance;
+  assert.ok(b);
+  assert.equal(b.cornering, true);
+  assert.ok(b.slipBalance > 0, "front-minus-rear slip should read understeer (>0)");
+  assert.ok(b.frontSlip > b.rearSlip);
+});
+
+test("a straight-line MotionEx sample does not register a balance", () => {
+  const s = new TunerState();
+  // Below the steering floor and not yawing: a straight. No corner seen yet, so
+  // the balance stays null rather than reading noise off a straight.
+  feed(s, 13, motionEx({ steer: 0.0, yaw: 0.0 }));
+  assert.equal(s.snapshot().balance, null);
+});
+
+test("an oversteer sample reads negative slip balance", () => {
+  const s = new TunerState();
+  feed(s, 13, motionEx({ frontSlip: 0.02, rearSlip: 0.05 })); // rears slip more
+  const b = s.snapshot().balance;
+  assert.ok(b);
+  assert.ok(b.slipBalance < 0, "rear-dominant slip should read oversteer (<0)");
+});
+
+test("balance survives a session-UID change (TT lap reset)", () => {
+  const s = new TunerState();
+  feed(s, 13, motionEx(), "1001");
+  assert.ok(s.snapshot().balance);
+
+  feed(s, 1, { sessionType: 18, trackId: 0 }, "2002");
+  const snap = s.snapshot();
+  assert.equal(snap.sessionUID, "2002");
+  assert.ok(snap.balance, "balance must persist across the UID change");
+});

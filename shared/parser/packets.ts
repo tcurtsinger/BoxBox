@@ -23,6 +23,7 @@ import type {
   FinalClassificationEntry,
   TimeTrialData,
   TimeTrialDataSet,
+  MotionExData,
 } from "./types.ts";
 
 // --- Session (id 1) -----------------------------------------------------------
@@ -574,6 +575,35 @@ export function parseTimeTrial(rd: BufferReader, header: PacketHeader): TimeTria
     playerSessionBest: parseTimeTrialSet(rd, wide),
     personalBest: parseTimeTrialSet(rd, wide),
     rival: parseTimeTrialSet(rd, wide),
+  };
+}
+
+// --- Motion Ex (id 13) --------------------------------------------------------
+// Player-car-only extended motion. We decode the leading region (identical in
+// 2025 and 2026) up to m_frontWheelsAngle: the slip angles and true steered
+// angle the balance diagnosis needs. Suspension arrays, wheel speed, COG height
+// and angular acceleration are skipped (not used yet); the 2026 tail additions
+// (chassisPitch, wheelCamber) are past where we stop.
+export function parseMotionEx(rd: BufferReader, _header: PacketHeader): MotionExData {
+  rd.skip(64); // suspensionPosition/Velocity/Acceleration[4] + wheelSpeed[4]
+  const wheelSlipRatio = rd.f32Array(4);
+  const wheelSlipAngle = rd.f32Array(4);
+  const wheelLatForce = rd.f32Array(4);
+  const wheelLongForce = rd.f32Array(4);
+  rd.skip(4); // heightOfCOGAboveGround
+  const localVelocity = { x: rd.f32(), y: rd.f32(), z: rd.f32() };
+  const angularVelocity = { x: rd.f32(), y: rd.f32(), z: rd.f32() };
+  rd.skip(12); // angularAcceleration[3]
+  const frontWheelsAngle = rd.f32();
+
+  return {
+    wheelSlipRatio,
+    wheelSlipAngle,
+    wheelLatForce,
+    wheelLongForce,
+    localVelocity,
+    angularVelocity,
+    frontWheelsAngle,
   };
 }
 

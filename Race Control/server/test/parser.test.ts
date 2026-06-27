@@ -12,6 +12,7 @@ import type {
   EventData,
   FinalClassificationData,
   TimeTrialData,
+  MotionExData,
 } from "../../../shared/parser/index.ts";
 
 // Minimal little-endian writer mirroring BufferReader, for building fixtures.
@@ -501,6 +502,36 @@ test("TimeTrial (id 14): 2025 stride keeps fields aligned (teamId u8)", () => {
   assert.equal(tt.playerSessionBest.equalCarPerformance, 0); // aligned only if teamId read as u8
   assert.equal(tt.playerSessionBest.valid, 1);
   assert.equal(tt.rival.carIdx, 8);
+});
+
+test("MotionEx (id 13): slip angles and steered angle land at the right offsets", () => {
+  const w = new W(273);
+  writeHeader(w, 13);
+  const base = w.pos;
+  // Skipped leading block: suspensionPosition/Velocity/Acceleration[4] + wheelSpeed[4].
+  for (let i = 0; i < 16; i++) w.f32(99); // 16 floats the parser must skip
+  w.f32(0.5).f32(0.25).f32(0.125).f32(0.0625); // wheelSlipRatio[4]
+  w.f32(0.25).f32(0.25).f32(0.5).f32(0.5); // wheelSlipAngle[4] RL,RR,FL,FR
+  w.f32(1000).f32(2000).f32(3000).f32(4000); // wheelLatForce[4]
+  w.f32(10).f32(20).f32(30).f32(40); // wheelLongForce[4]
+  w.f32(0.3); // heightOfCOGAboveGround (skipped)
+  w.f32(2).f32(0).f32(50); // localVelocity X,Y,Z
+  w.f32(0).f32(1).f32(0); // angularVelocity X,Y,Z (y = yaw rate)
+  w.f32(0).f32(0).f32(0); // angularAcceleration[3] (skipped)
+  w.f32(0.125); // frontWheelsAngle
+  assert.equal(w.pos - base, 172, "decoded leading region must span 172 bytes");
+
+  const pkt = parsePacket(w.buf);
+  if (!pkt || pkt.id !== 13) throw new Error("expected a MotionEx packet");
+  const m = pkt.data as MotionExData;
+  // Aligned only if the 64-byte skip + each array advanced correctly.
+  assert.deepEqual(m.wheelSlipAngle, [0.25, 0.25, 0.5, 0.5]);
+  assert.deepEqual(m.wheelSlipRatio, [0.5, 0.25, 0.125, 0.0625]);
+  assert.equal(m.wheelLatForce[3], 4000);
+  assert.equal(m.wheelLongForce[0], 10);
+  assert.equal(m.localVelocity.z, 50);
+  assert.equal(m.angularVelocity.y, 1);
+  assert.equal(m.frontWheelsAngle, 0.125);
 });
 
 test("Event PENA decodes penalty detail", () => {

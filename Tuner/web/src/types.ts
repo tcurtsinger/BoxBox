@@ -28,6 +28,14 @@ export interface CarSetupEntry {
   fuelLoad: number;
 }
 
+export interface BalanceSignal {
+  slipBalance: number; // radians; >0 understeer, <0 oversteer
+  frontSlip: number; // radians
+  rearSlip: number; // radians
+  understeerAngle: number; // radians, direction-normalized; >0 understeer
+  cornering: boolean;
+}
+
 export interface TunerSnapshot {
   format: number;
   gameYear: number;
@@ -42,6 +50,7 @@ export interface TunerSnapshot {
   equalCarPerformance: number | null;
   customSetup: number | null;
   lapValid: number | null;
+  balance: BalanceSignal | null;
   packetCount: number;
   lastUpdate: number;
 }

@@ -1,6 +1,7 @@
 import { useSnapshot } from "./api/useSnapshot";
 import type { ConnState } from "./api/useSnapshot";
 import { SetupPanel } from "./components/SetupPanel";
+import { BalancePanel } from "./components/BalancePanel";
 
 const SESSION_LABEL: Record<number, string> = {
   1: "Practice 1", 2: "Practice 2", 3: "Practice 3", 4: "Short Practice",
@@ -42,7 +43,10 @@ export function App() {
 
       <main className="tuner-main">
         {s?.setupReceived && s.setup ? (
-          <SetupPanel setup={s.setup} nextFrontWing={s.nextFrontWingValue} />
+          <>
+            {s.balance && <BalancePanel balance={s.balance} />}
+            <SetupPanel setup={s.setup} nextFrontWing={s.nextFrontWingValue} />
+          </>
         ) : (
           <EmptyState conn={conn} />
         )}
