@@ -473,6 +473,27 @@ test("the loop rejects a change whose balance moved the wrong way (driver noise)
   assert.equal(s.learnedGains().get("frontWing"), undefined, "a wrong-way change is rejected, not learned");
 });
 
+test("a multi-click ramp of one lever (no driving between) is coalesced and measured", () => {
+  // Real players ratchet a lever in clicks in the garage. Without coalescing each
+  // click would reset the window and the whole move would be lost.
+  const s = new TunerState();
+  confirmCorners(s);
+  driveLapWithMotion(s, 2, { frontSlip: 0.08, rearSlip: 0.02 });
+  driveLapWithMotion(s, 3, { frontSlip: 0.08, rearSlip: 0.02 }); // before-window on baseline
+
+  // Ramp front wing 20 -> 26 in three clicks with no driving between them.
+  feed(s, 5, gridWith(22));
+  feed(s, 5, gridWith(24));
+  feed(s, 5, gridWith(26));
+  driveLapWithMotion(s, 4, { frontSlip: 0.04, rearSlip: 0.02 }); // after-window, less understeer
+  driveLapWithMotion(s, 5, { frontSlip: 0.04, rearSlip: 0.02 });
+
+  const fw = s.learnedGains().get("frontWing");
+  assert.ok(fw, "the ramp was measured as one net change, not lost as separate clicks");
+  assert.equal(fw.observations, 1);
+  assert.ok(fw.magnitude && fw.magnitude > 0);
+});
+
 test("a multi-lever change is not attributed (cannot isolate the effect)", () => {
   const s = new TunerState();
   confirmCorners(s);

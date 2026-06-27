@@ -407,16 +407,32 @@ export class TunerState {
       changed: changedKeys.map((k) => ({ k, from: old[k], to: next[k] })),
     });
 
-    this.#tryCompletePending();
-
-    this.#pending = null;
     const changed = TRACKED_LEVERS.filter((k) => old[k] !== next[k]);
-    if (changed.length === 1) {
-      const lever = changed[0];
-      const channel = LEVER_CHANNEL[lever].channel;
+    const single = changed.length === 1 ? changed[0] : null;
+
+    // Coalesce a multi-click ramp of ONE lever made in the garage with no driving
+    // between the clicks (real players ratchet a lever, e.g. +1 +1 +1) into a single
+    // net change, instead of losing it as several unmeasurable ones. "No driving" =
+    // the window since the pending opened has not reached the sample floor.
+    if (this.#pending && single === this.#pending.lever) {
+      const w = this.#windowChannel(this.#pending.channel);
+      if (w.samples < MIN_WINDOW_SAMPLES) {
+        this.#pending.deltaClicks += next[single] - old[single];
+        this.#windowDiag = new Map();
+        return;
+      }
+    }
+
+    // Otherwise close out any prior measurement (the window so far is its "after"),
+    // then open a new one if exactly one tracked lever moved and the outgoing setup
+    // had a well-sampled window to read as the "before".
+    this.#tryCompletePending();
+    this.#pending = null;
+    if (single) {
+      const channel = LEVER_CHANNEL[single].channel;
       const before = this.#windowChannel(channel);
       if (before.value !== null && before.samples >= MIN_WINDOW_SAMPLES) {
-        this.#pending = { lever, deltaClicks: next[lever] - old[lever], channel, channelBefore: before.value };
+        this.#pending = { lever: single, deltaClicks: next[single] - old[single], channel, channelBefore: before.value };
       }
     }
     this.#windowDiag = new Map(); // the new setup starts a fresh window
