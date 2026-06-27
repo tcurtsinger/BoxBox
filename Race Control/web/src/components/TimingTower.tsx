@@ -1,4 +1,4 @@
-import { useMemo, useRef, type CSSProperties } from "react";
+import { useMemo, useRef, type CSSProperties, type KeyboardEvent } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -18,6 +18,7 @@ import {
   type TowerMeta,
 } from "./towerColumns";
 import { knockoutLineIndex } from "../presentation/qualifying";
+import { driverName } from "../presentation/driver";
 
 const STALE_MS = 3000;
 
@@ -81,7 +82,7 @@ export function TimingTower({
       columnOrder,
       columnSizing,
     },
-    meta: { poleMS } satisfies TowerMeta,
+    meta: { poleMS, dropFrom } satisfies TowerMeta,
     onColumnVisibilityChange,
     onColumnOrderChange,
     onColumnSizingChange,
@@ -93,6 +94,53 @@ export function TimingTower({
     estimateSize: (index) => (separatorAt(index) ? 78 : 50),
     overscan: 6,
   });
+  // Keyboard navigation: the scroll container holds focus and tracks the active
+  // row via aria-activedescendant, so arrowing/j-k works across the virtualised
+  // list without focus landing on a row that may be recycled out of the DOM.
+  const orderedIndices = useMemo(() => rows.map((d) => d.index), [rows]);
+  const selectPos = (pos: number) => {
+    const nextIndex = orderedIndices[pos];
+    if (nextIndex == null) return;
+    onSelect(nextIndex);
+    rowVirtualizer.scrollToIndex(pos, { align: "auto" });
+  };
+  const moveSelection = (delta: number) => {
+    if (orderedIndices.length === 0) return;
+    const cur = selected == null ? -1 : orderedIndices.indexOf(selected);
+    const from = cur < 0 ? (delta > 0 ? -1 : orderedIndices.length) : cur;
+    selectPos(Math.max(0, Math.min(orderedIndices.length - 1, from + delta)));
+  };
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    switch (e.key) {
+      case "ArrowDown":
+      case "j":
+        e.preventDefault();
+        moveSelection(1);
+        break;
+      case "ArrowUp":
+      case "k":
+        e.preventDefault();
+        moveSelection(-1);
+        break;
+      case "Home":
+        e.preventDefault();
+        selectPos(0);
+        break;
+      case "End":
+        e.preventDefault();
+        selectPos(orderedIndices.length - 1);
+        break;
+    }
+  };
+
+  // aria-activedescendant may only point at a row that is actually in the DOM.
+  // The virtualizer recycles off-screen rows, so when the selected car is
+  // scrolled out (e.g. by mouse wheel) we drop the attribute rather than leave
+  // it dangling at a removed node.
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  const selectedPos = selected != null ? orderedIndices.indexOf(selected) : -1;
+  const selectedRendered = selectedPos >= 0 && virtualItems.some((vi) => vi.index === selectedPos);
+
   const gridTemplate = table
     .getVisibleLeafColumns()
     .map((column) => `${column.getSize()}px`)
@@ -103,7 +151,17 @@ export function TimingTower({
   } as CSSProperties;
 
   return (
-    <div className="tower" ref={towerRef} style={tableStyle}>
+    <div
+      className="tower"
+      ref={towerRef}
+      style={tableStyle}
+      role="grid"
+      aria-label="Timing tower. Use arrow keys or J and K to move between cars."
+      aria-rowcount={tableRows.length}
+      tabIndex={0}
+      aria-activedescendant={selectedRendered ? `tower-row-${selected}` : undefined}
+      onKeyDown={onKeyDown}
+    >
       {stale && (
         <div className="stale-banner">
           No packets in 3s. Session paused or ended, or telemetry is off.
@@ -137,7 +195,7 @@ export function TimingTower({
       </div>
 
       <div className="tower-body" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
-        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+        {virtualItems.map((virtualRow) => {
           const row = tableRows[virtualRow.index];
           if (!row) return null;
           const driver = row.original;
@@ -154,6 +212,10 @@ export function TimingTower({
                 <div className={`battle-row${isQualifying ? " knockout-row" : ""}`}>{separatorAt(virtualRow.index)}</div>
               )}
               <div
+                id={`tower-row-${driver.index}`}
+                role="row"
+                aria-selected={driver.index === selected}
+                aria-label={rowLabel(driver)}
                 className={rowClass(driver, driver.index === selected, dropFrom !== null && virtualRow.index >= dropFrom)}
                 onClick={() => onSelect(driver.index)}
               >
@@ -197,6 +259,11 @@ function rowClass(driver: DriverState, selected: boolean, dropZone: boolean): st
     `${pitting ? " row-pit" : ""}${selected ? " row-selected" : ""}${out ? " row-out" : ""}` +
     `${dropZone ? " row-dropzone" : ""}`
   );
+}
+
+function rowLabel(driver: DriverState): string {
+  const pos = isOut(driver) ? "out" : `P${driver.position || "-"}`;
+  return `${pos} ${driverName(driver)}`;
 }
 
 function isOut(driver: DriverState): boolean {

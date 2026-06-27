@@ -71,7 +71,7 @@ export function DriverDetail({ driver, regs2026, onClose, embedded = false }: Pr
                   setEditing(true);
                 }}
               >
-                {driverName(driver)}
+                <span className="detail-name-text">{driverName(driver)}</span>
                 <span className="name-edit-hint">✎</span>
               </button>
             )}

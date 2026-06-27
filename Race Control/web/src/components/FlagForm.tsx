@@ -2,36 +2,43 @@ import { useState } from "react";
 import type { DriverState } from "../types";
 import { flagIncident } from "../api/actions";
 import { driverName } from "../presentation/driver";
+import { Modal } from "./Modal";
 
 interface Props {
   drivers: DriverState[];
+  // Cars pre-selected when the form opens (e.g. the row the steward had focused
+  // when they pressed "f").
+  initialCars?: number[];
   onClose: () => void;
 }
 
 // Live capture: the steward flags something to review after the race. Quick by
 // design (pick cars, optional label, a note); adjudication happens later.
-export function FlagForm({ drivers, onClose }: Props) {
-  const [selected, setSelected] = useState<number[]>([]);
+export function FlagForm({ drivers, initialCars = [], onClose }: Props) {
+  const [selected, setSelected] = useState<number[]>(initialCars);
   const [label, setLabel] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   const toggle = (index: number) =>
     setSelected((s) => (s.includes(index) ? s.filter((i) => i !== index) : [...s, index]));
 
   const submit = async () => {
     setBusy(true);
+    setError("");
     try {
       await flagIncident({ carIndices: selected, label: label.trim(), note: note.trim() });
       onClose();
     } catch {
-      setBusy(false); // keep the form open so the steward can retry
+      // Keep the form open so the steward can retry, and say so.
+      setError("Couldn't reach the server. Flag not saved.");
+      setBusy(false);
     }
   };
 
   return (
-    <div className="modal-backdrop center" onClick={onClose}>
-      <div className="flag-form" onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onClose} className="flag-form" label="Flag incident">
         <div className="flag-head">
           <span className="flag-title">Flag incident</span>
           <button className="detail-close" onClick={onClose} aria-label="Close">
@@ -72,6 +79,8 @@ export function FlagForm({ drivers, onClose }: Props) {
           rows={3}
         />
 
+        {error && <div className="flag-error" role="alert">{error}</div>}
+
         <div className="flag-actions">
           <button className="btn-ghost" onClick={onClose}>
             Cancel
@@ -80,7 +89,6 @@ export function FlagForm({ drivers, onClose }: Props) {
             {busy ? "Flagging..." : "Flag for review"}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

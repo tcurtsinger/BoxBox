@@ -16,6 +16,7 @@ interface Props {
   columnItems: ViewColumnItem[];
   onOpenNames: () => void;
   onResetColumns: () => void;
+  onShortcuts: () => void;
   onAbout: () => void;
 }
 
@@ -33,7 +34,7 @@ type MenuItem =
 
 // Desktop-style application menu bar. Top-level menus open a dropdown; once one
 // is open, hovering a sibling switches to it (the usual menu behaviour).
-export function MenuBar({ columnItems, onOpenNames, onResetColumns, onAbout }: Props) {
+export function MenuBar({ columnItems, onOpenNames, onResetColumns, onShortcuts, onAbout }: Props) {
   const [open, setOpen] = useState<string | null>(null);
 
   useEffect(() => {
@@ -56,7 +57,14 @@ export function MenuBar({ columnItems, onOpenNames, onResetColumns, onAbout }: P
         { type: "action", label: "Reset columns", onClick: onResetColumns },
       ],
     },
-    { label: "Help", items: [{ type: "action", label: "About BoxBox", onClick: onAbout }] },
+    {
+      label: "Help",
+      items: [
+        { type: "action", label: "Keyboard shortcuts", onClick: onShortcuts },
+        { type: "separator", key: "help-separator" },
+        { type: "action", label: "About BoxBox", onClick: onAbout },
+      ],
+    },
   ];
 
   const run = (item: MenuItem) => {

@@ -1,5 +1,6 @@
 import { SERVER } from "../api/server";
 import type { ConnState } from "../api/useSnapshot";
+import { Modal } from "./Modal";
 
 interface Props {
   conn: ConnState;
@@ -14,8 +15,7 @@ const CONN_LABEL: Record<ConnState, string> = {
 
 export function AboutModal({ conn, onClose }: Props) {
   return (
-    <div className="modal-backdrop center" onClick={onClose}>
-      <div className="about" onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onClose} className="about" label="About BoxBox">
         <div className="flag-head">
           <span className="flag-title">About BoxBox</span>
           <button className="detail-close" onClick={onClose} aria-label="Close">
@@ -38,7 +38,6 @@ export function AboutModal({ conn, onClose }: Props) {
             Close
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

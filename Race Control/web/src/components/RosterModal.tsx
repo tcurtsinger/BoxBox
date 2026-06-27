@@ -3,6 +3,7 @@ import type { DriverState } from "../types";
 import { setDriverName } from "../api/actions";
 import { teamColor } from "../presentation/teams";
 import { isPlaceholderName, needsName } from "../presentation/driver";
+import { Modal } from "./Modal";
 
 interface Props {
   drivers: DriverState[];
@@ -34,8 +35,7 @@ export function RosterModal({ drivers, onClose }: Props) {
   };
 
   return (
-    <div className="modal-backdrop center" onClick={onClose}>
-      <div className="roster-form" onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onClose} className="roster-form" label="Driver names">
         <div className="flag-head">
           <span className="flag-title">Driver names</span>
           <button className="detail-close" onClick={onClose} aria-label="Close">
@@ -84,7 +84,6 @@ export function RosterModal({ drivers, onClose }: Props) {
             Done
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

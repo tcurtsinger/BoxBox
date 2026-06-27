@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { DriverState, Incident } from "../types";
+import { useEffect, useRef, useState } from "react";
+import type { DriverState, Incident, IncidentStatus } from "../types";
 import { dismissIncident, flagForReview } from "../api/actions";
 import { nameByIndex } from "../presentation/driver";
 import { clock } from "../presentation/format";
@@ -32,8 +32,8 @@ export function IncidentFeed({ incidents, drivers, onFlag }: Props) {
             Incidents <span className="feed-count">{visible.length}</span>
           </div>
           <div className="feed-subtitle">
-            Newest first - {filter === "players" ? "players and race control" : "all captured events"}
-            {hidden > 0 && ` - ${hidden} AI-only hidden`}
+            Newest first · {filter === "players" ? "players and race control" : "all captured events"}
+            {hidden > 0 && ` · ${hidden} AI-only hidden`}
           </div>
           <div className="feed-filters" role="group" aria-label="Incident filter">
             <button
@@ -56,7 +56,7 @@ export function IncidentFeed({ incidents, drivers, onFlag }: Props) {
           Flag incident
         </button>
       </div>
-      <div className="feed-body">
+      <div className="feed-body" aria-live="polite">
         {visible.length === 0 ? (
           <div className="feed-empty">
             {recent.length === 0
@@ -80,16 +80,7 @@ export function IncidentFeed({ incidents, drivers, onFlag }: Props) {
                 {cars && <div className="incident-cars">{cars}</div>}
                 {detail && <div className="incident-detail">{detail}</div>}
                 <IncidentNote incident={inc} />
-                {inc.status === "logged" && (
-                  <div className="incident-actions">
-                    <button className="btn-link" onClick={() => void flagForReview(inc.id).catch(() => {})}>
-                      Flag for review
-                    </button>
-                    <button className="btn-link" onClick={() => void dismissIncident(inc.id).catch(() => {})}>
-                      Dismiss
-                    </button>
-                  </div>
-                )}
+                {inc.status === "logged" && <FeedActions id={inc.id} />}
               </div>
             );
           })
@@ -99,7 +90,79 @@ export function IncidentFeed({ incidents, drivers, onFlag }: Props) {
   );
 }
 
-function statusLabel(status: Incident["status"]): string {
+const DISMISS_GRACE_MS = 5000;
+
+// Flag-for-review / Dismiss from the live feed. Flag is non-destructive and
+// commits immediately. Dismiss is destructive, so it holds for a few seconds
+// behind an Undo before it actually commits — a misclick during a busy moment
+// is recoverable on the spot, not buried in the Decided log. Every commit
+// surfaces a failure so a dead request can never look like it saved.
+function FeedActions({ id }: { id: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [dismissing, setDismissing] = useState(false);
+  const timer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (timer.current) window.clearTimeout(timer.current);
+  }, []);
+
+  const flag = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await flagForReview(id);
+    } catch {
+      setError("Couldn't reach the server. Not saved.");
+      setBusy(false);
+    }
+  };
+
+  const startDismiss = () => {
+    setError("");
+    setDismissing(true);
+    timer.current = window.setTimeout(async () => {
+      timer.current = null;
+      try {
+        await dismissIncident(id);
+      } catch {
+        setError("Couldn't reach the server. Not saved.");
+        setDismissing(false);
+      }
+    }, DISMISS_GRACE_MS);
+  };
+
+  const undoDismiss = () => {
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = null;
+    setDismissing(false);
+  };
+
+  if (dismissing) {
+    return (
+      <div className="incident-actions incident-dismissing" role="status">
+        <span className="incident-dismissing-text">Dismissing…</span>
+        <button className="btn-link" onClick={undoDismiss}>
+          Undo
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="incident-actions">
+      <button className="btn-link" disabled={busy} onClick={() => void flag()}>
+        Flag for review
+      </button>
+      <button className="btn-link" disabled={busy} onClick={startDismiss}>
+        Dismiss
+      </button>
+      {error && <span className="incident-note-error" role="alert">{error}</span>}
+    </div>
+  );
+}
+
+function statusLabel(status: IncidentStatus): string {
   if (status === "flagged") return "review";
   return status;
 }

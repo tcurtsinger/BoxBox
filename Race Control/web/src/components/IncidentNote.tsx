@@ -26,7 +26,7 @@ export function IncidentNote({ incident }: Props) {
       await setIncidentNote(incident.id, draft.trim());
       setEditing(false);
     } catch {
-      setError("Note was not saved.");
+      setError("Couldn't reach the server. Note not saved.");
     } finally {
       setBusy(false);
     }

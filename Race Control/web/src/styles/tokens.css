@@ -16,7 +16,9 @@
 
   --text: #e7ebf1;
   --text-dim: #909bab;
-  --text-faint: #5d6776;
+  /* Quietest tier, but still readable: ~5:1 on the dark surfaces so the small
+     uppercase labels clear the 4.5:1 bar. (Was #5d6776, ~3.1:1.) */
+  --text-faint: #828b98;
 
   /* Accents mirror the prototype's language (green = live/gained,
      purple = fastest, red = lost/danger). */
@@ -28,6 +30,11 @@
   --blue: #4d9bff;
   --purple: #a78bfa;
   --boost: #a78bfa;
+
+  /* Ink for text sitting on a coloured chip (tyre/flag), picked by swatch
+     lightness so the letter stays legible. */
+  --ink-on-light: #111111;
+  --ink-on-dark: #ffffff;
 
   --tyre-soft: #ef4b42;
   --tyre-medium: #f4cf3f;
@@ -44,6 +51,13 @@
 
   --row-h: 52px;
   --gap: 14px;
+
+  /* Stacking order, low to high. Named so layers compose predictably instead of
+     trading magic numbers. (Within-card stickies like the tower header keep
+     their own local order; these are the app-level layers.) */
+  --z-menu-backdrop: 40;
+  --z-menu: 50;
+  --z-modal-backdrop: 60;
 }
 
 * {

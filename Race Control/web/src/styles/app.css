@@ -7,15 +7,13 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  background:
-    radial-gradient(120% 80% at 0% 0%, rgba(167, 139, 250, 0.05), transparent 60%),
-    var(--bg);
+  background: var(--bg);
 }
 
 /* ---- Menu bar ---- */
 .menubar {
   position: relative;
-  z-index: 50;
+  z-index: var(--z-menu);
   display: flex;
   align-items: stretch;
   height: 28px;
@@ -43,12 +41,6 @@
 .menu-btn.open {
   background: var(--bg-stat);
   color: var(--text);
-}
-.menu-btn-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--amber);
 }
 .menu-dropdown {
   position: absolute;
@@ -162,7 +154,7 @@
 .menu-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: var(--z-menu-backdrop);
 }
 
 /* ---- Session header ---- */
@@ -281,6 +273,104 @@
   background: var(--red);
 }
 
+/* ---- Incident arrival alert: a cross-tab nudge so a collision or red flag is
+   never missed while the steward is on another tab. ---- */
+.incident-alert {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 22px 10px 26px;
+  flex: none;
+  border-bottom: 1px solid rgba(255, 91, 82, 0.4);
+  background: rgba(255, 91, 82, 0.13);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  animation: alertIn 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.incident-alert-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--red);
+  animation: alertPulse 1.4s ease-in-out infinite;
+}
+.incident-alert-count {
+  flex: none;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: var(--red);
+  color: var(--ink-on-dark);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+.incident-alert-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.incident-alert-more {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.incident-alert-review {
+  flex: none;
+  padding: 5px 11px;
+  border: 1px solid rgba(255, 91, 82, 0.5);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--red);
+  cursor: pointer;
+}
+.incident-alert-review:hover {
+  background: rgba(255, 91, 82, 0.16);
+}
+.incident-alert-ack {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.incident-alert-ack:hover {
+  color: var(--text);
+}
+@keyframes alertIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes alertPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(255, 91, 82, 0.12);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(255, 91, 82, 0.3);
+  }
+}
+
 /* ---- Layout: tower + inspector, both cards on the base ---- */
 .content {
   flex: 1;
@@ -316,6 +406,13 @@
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--text-faint) var(--bg-inset);
+}
+.tower:focus {
+  outline: none;
+}
+.tower:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
 }
 .tower::-webkit-scrollbar {
   width: 11px;
@@ -465,6 +562,14 @@
   font-weight: 700;
   font-size: 15px;
 }
+/* Per-row "below the cut" cue in qualifying — a second signal beyond the row's
+   red tint, so elimination reads without relying on colour. */
+.cut-mark {
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--red);
+}
 .col-delta {
   text-align: center;
   font-size: 12px;
@@ -521,11 +626,17 @@
   color: var(--blue);
   font-weight: 700;
 }
-.flag-dot {
-  width: 8px;
-  height: 8px;
+.flag-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
   border-radius: 50%;
   flex: none;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 700;
 }
 .fuel-short {
   color: var(--red);
@@ -698,6 +809,28 @@
 .inspector-tab.active .inspector-tab-count {
   color: var(--text);
 }
+/* Unreviewed-incident cue: a live red dot on the Incidents tab until the
+   steward opens it. Backed by the cross-tab alert banner, not colour alone. */
+.inspector-tab.has-new {
+  color: var(--text);
+}
+.inspector-tab-new {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--red);
+  animation: tabPulse 1.6s ease-in-out infinite;
+}
+@keyframes tabPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
 .inspector-body {
   flex: 1;
   min-height: 0;
@@ -763,6 +896,15 @@
   font-size: 19px;
   font-weight: 700;
   letter-spacing: -0.3px;
+}
+.detail-id {
+  min-width: 0;
+}
+.detail-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .detail-close {
   padding: 0 4px;
@@ -1072,8 +1214,14 @@
 }
 .incident-actions {
   display: flex;
+  align-items: center;
   gap: 14px;
   margin-top: 9px;
+}
+.incident-dismissing-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
 }
 
 /* ---- Review queue ---- */
@@ -1153,6 +1301,31 @@
 .review-item-actions .flag-input {
   flex: 1;
 }
+/* The committed beat shown the instant a ruling saves, before the server's next
+   frame moves the item into Decided. */
+.review-committed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 11px;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  background: rgba(46, 207, 104, 0.1);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--green-dim);
+}
+.review-committed.st-dismissed {
+  background: var(--bg-inset);
+  color: var(--text-dim);
+}
+.review-committed-check {
+  font-weight: 700;
+}
+.review-hint {
+  font-size: 11.5px;
+  color: var(--amber);
+}
 .decided {
   display: flex;
   flex-direction: column;
@@ -1161,14 +1334,16 @@
   padding: 10px 12px;
   background: var(--bg-stat);
   border: 1px solid var(--border-soft);
-  border-left: 3px solid var(--text-faint);
   border-radius: var(--radius);
 }
+/* Outcome is carried by the text status chip (.decided-status); the surface
+   just gets a quiet full-border tint so a ruling reads at a glance without the
+   side-stripe tell. */
 .decided.st-approved {
-  border-left-color: var(--green);
+  border-color: rgba(46, 207, 104, 0.4);
+  background: rgba(46, 207, 104, 0.06);
 }
 .decided.st-dismissed {
-  border-left-color: var(--text-faint);
   opacity: 0.65;
 }
 .decided-line {
@@ -1308,11 +1483,32 @@
   background: var(--bg-hover);
 }
 
+/* One keyboard-focus ring for the whole interactive surface (the tower and
+   inspector tabs carry their own, tuned to their tight layouts). Mouse clicks
+   stay ring-free via :focus-visible. */
+.btn-primary:focus-visible,
+.btn-ghost:focus-visible,
+.btn-link:focus-visible,
+.btn-flag:focus-visible,
+.menu-btn:focus-visible,
+.menu-item:focus-visible,
+.menu-column-toggle:focus-visible,
+.menu-order-btn:focus-visible,
+.feed-filter:focus-visible,
+.flag-car:focus-visible,
+.detail-close:focus-visible,
+.detail-name-btn:focus-visible,
+.incident-alert-review:focus-visible,
+.incident-alert-ack:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
 /* ---- Modals (flag form, roster, about) ---- */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--z-modal-backdrop);
   display: flex;
   justify-content: flex-end;
   background: rgba(0, 0, 0, 0.6);
@@ -1323,7 +1519,8 @@
 }
 .flag-form,
 .about,
-.roster-form {
+.roster-form,
+.shortcuts {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
@@ -1409,6 +1606,12 @@
 .flag-note {
   resize: vertical;
 }
+.flag-error {
+  margin-top: 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--red);
+}
 .flag-actions {
   display: flex;
   justify-content: flex-end;
@@ -1444,11 +1647,57 @@
   color: var(--text);
 }
 
+/* Shortcuts help */
+.shortcuts {
+  width: 420px;
+  max-width: 92vw;
+  padding: 18px;
+}
+.shortcuts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+.shortcuts-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.shortcuts-row:last-child {
+  border-bottom: none;
+}
+.shortcuts-keys {
+  display: flex;
+  gap: 5px;
+  flex: none;
+  width: 96px;
+}
+.shortcuts-keys kbd {
+  min-width: 22px;
+  padding: 2px 7px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  text-align: center;
+}
+.shortcuts-action {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
 /* Names: inline edit + roster */
 .detail-name-btn {
   display: inline-flex;
   align-items: baseline;
   gap: 7px;
+  min-width: 0;
   padding: 0;
   background: none;
   border: none;
@@ -1615,4 +1864,38 @@
 .lap-garage {
   color: var(--text-faint);
   font-weight: 600;
+}
+
+/* ---- Responsive: the console targets a wide monitor, but reclaim space on a
+   laptop so the tower isn't competing with a fixed 392px inspector. ---- */
+@media (max-width: 1366px) {
+  .inspector {
+    width: 344px;
+  }
+}
+@media (max-width: 1120px) {
+  .content {
+    flex-direction: column;
+  }
+  .inspector {
+    width: auto;
+    flex: none;
+    height: 44vh;
+  }
+}
+
+/* ---- Reduced motion: the live views honour the OS preference. Every looping
+   animation falls back to a static, equally-legible state. ---- */
+@media (prefers-reduced-motion: reduce) {
+  .col-ers.boosting .batt-bar {
+    animation: none;
+    box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.6);
+  }
+  .incident-alert {
+    animation: none;
+  }
+  .incident-alert-dot,
+  .inspector-tab-new {
+    animation: none;
+  }
 }

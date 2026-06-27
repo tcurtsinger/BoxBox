@@ -12,6 +12,10 @@ import { poleGap, lapStatus } from "../presentation/qualifying";
 // which a single cell cannot see; the tower computes it once and passes it here.
 export interface TowerMeta {
   poleMS: number;
+  // 0-based row position of the first car below the qualifying cut, or null
+  // outside qualifying. Lets the position cell mark drop-zone rows with a glyph
+  // (a second cue beyond the row's red tint, for colour-blind viewing).
+  dropFrom: number | null;
 }
 
 export type TowerColumnId =
@@ -77,7 +81,21 @@ export const towerColumns: ColumnDef<DriverState>[] = [
     minSize: 54,
     maxSize: 96,
     enableHiding: false,
-    cell: ({ row }) => (isOut(row.original) ? "OUT" : row.original.position || "-"),
+    cell: ({ row, table }) => {
+      if (isOut(row.original)) return "OUT";
+      const dropFrom = (table.options.meta as TowerMeta | undefined)?.dropFrom ?? null;
+      const belowCut = dropFrom !== null && row.index >= dropFrom;
+      return (
+        <>
+          {row.original.position || "-"}
+          {belowCut && (
+            <span className="cut-mark" title="Below the cut" aria-label="below the cut">
+              ▾
+            </span>
+          )}
+        </>
+      );
+    },
   },
   {
     id: "delta",
@@ -222,7 +240,7 @@ export const towerColumns: ColumnDef<DriverState>[] = [
         <>
           <span
             className="tyre-chip"
-            style={{ background: t.color, color: t.dark ? "#111" : "#fff" }}
+            style={{ background: t.color, color: t.dark ? "var(--ink-on-light)" : "var(--ink-on-dark)" }}
             title={t.label}
           >
             {t.letter}
@@ -292,10 +310,8 @@ export function towerCellClass(id: string, driver: DriverState): string {
 }
 
 export function towerCellStyle(id: string, driver: DriverState): CSSProperties | undefined {
-  if (id === "position") {
-    return { borderLeftColor: teamColor(driver.teamId, driver.liveryColours) };
-  }
-
+  // Team colour rides on the driver cell's stripe (var(--team)). The position
+  // cell carried a vestigial borderLeftColor with no border to paint — dropped.
   if (id === "driver") {
     return { "--team": teamColor(driver.teamId, driver.liveryColours) } as CSSProperties;
   }
@@ -315,7 +331,16 @@ function StatusCell({ driver }: { driver: DriverState }) {
 
   return (
     <>
-      {f && <span className="flag-dot" style={{ background: f.color }} title={`${f.label} flag`} />}
+      {f && (
+        <span
+          className="flag-chip"
+          style={{ background: f.color, color: f.dark ? "var(--ink-on-light)" : "var(--ink-on-dark)" }}
+          title={`${f.label} flag`}
+          aria-label={`${f.label} flag`}
+        >
+          {f.letter}
+        </span>
+      )}
       {hasStatus && <span className={status.cls}>{status.label}</span>}
       {fuelShort && <span className="fuel-short">Fuel {fuelLaps(driver.fuelRemainingLaps)}</span>}
       {empty && <span>-</span>}

@@ -3,14 +3,18 @@
 // there is no flag to show.
 export interface FlagStyle {
   label: string;
+  // Single-letter cue so the flag is not communicated by colour alone.
+  letter: string;
   color: string;
+  // True when the swatch is light enough to need dark text.
+  dark: boolean;
 }
 
 const FLAGS: Record<number, FlagStyle> = {
-  1: { label: "GREEN", color: "var(--green)" },
-  2: { label: "BLUE", color: "var(--blue)" },
-  3: { label: "YELLOW", color: "var(--yellow)" },
-  4: { label: "RED", color: "var(--red)" },
+  1: { label: "GREEN", letter: "G", color: "var(--green)", dark: true },
+  2: { label: "BLUE", letter: "B", color: "var(--blue)", dark: false },
+  3: { label: "YELLOW", letter: "Y", color: "var(--yellow)", dark: true },
+  4: { label: "RED", letter: "R", color: "var(--red)", dark: false },
 };
 
 export function flag(value: number): FlagStyle | null {
