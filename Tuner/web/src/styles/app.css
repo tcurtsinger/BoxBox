@@ -499,6 +499,52 @@
   font-size: 12.5px;
   color: var(--text-dim);
 }
+
+/* Tune status above the grid: a neutral card while changes are pending, a green
+   tint when the diagnosis asks for nothing (dialed in). Mirrors the eqperf badge's
+   tint+border treatment rather than a side accent. */
+.setup-status {
+  margin: 0 2px 14px;
+  padding: 10px 14px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.setup-status strong {
+  color: var(--text);
+}
+.setup-status-dialed {
+  background: rgba(46, 207, 104, 0.08);
+  border-color: rgba(46, 207, 104, 0.35);
+}
+.setup-status-dialed strong {
+  color: var(--conf-high);
+}
+
+/* Confidence legend in the footer: the same colour scale the badges use. */
+.setup-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.setup-key {
+  font-weight: 700;
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  padding: 1px 7px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+}
+.setup-legend .setup-note {
+  color: var(--text-faint);
+}
 .setup-locked {
   font-family: var(--sans);
   font-size: 10px;

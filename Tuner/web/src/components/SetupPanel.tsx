@@ -13,12 +13,32 @@ interface Props {
 // measured and settled. Only the dominant levers carry suggestions; fine params
 // stay blank until there is data to earn one.
 export function SetupPanel({ setup, nextFrontWing, advice }: Props) {
-  const byKey = new Map<string, SetupSuggestion>(
-    (advice?.suggestions ?? []).map((s) => [s.key, s]),
-  );
+  const sugs = advice?.suggestions ?? [];
+  const byKey = new Map<string, SetupSuggestion>(sugs.map((s) => [s.key, s]));
+  const measured = sugs.filter((s) => s.confidence === "measured").length;
+  // "Dialed in" the design's sense: the diagnosis has a view and asks for nothing.
+  const dialedIn = !!advice && sugs.length === 0;
 
   return (
     <div className="setup">
+      {advice && (
+        <div className={`setup-status${dialedIn ? " setup-status-dialed" : ""}`}>
+          {dialedIn ? (
+            <span>
+              <strong>Dialed in</strong> for your target &middot; {advice.headline} &middot; no changes suggested
+            </span>
+          ) : (
+            <span>
+              <strong>
+                {sugs.length} change{sugs.length > 1 ? "s" : ""} suggested
+              </strong>{" "}
+              &middot; {advice.headline}
+              {measured > 0 && <> &middot; {measured} measured</>}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="setup-grid">
         {SETUP_GROUPS.map((g) => (
           <section className="setup-card" key={g.title}>
@@ -47,16 +67,17 @@ export function SetupPanel({ setup, nextFrontWing, advice }: Props) {
       </div>
 
       <p className="setup-foot">
-        {advice && advice.suggestions.length > 0 ? (
-          <span className="setup-headline">
-            Diagnosis: {advice.headline}. Suggestions are <span className="conf-prior-text">priors</span>{" "}
-            (orange) until measured against an applied change.
+        {sugs.length > 0 ? (
+          <span className="setup-legend">
+            Confidence:
+            <span className="setup-key conf-prior">guess</span>
+            <span className="setup-key conf-forming">forming</span>
+            <span className="setup-key conf-measured">measured</span>
+            <span className="setup-note">apply a change and drive on to measure it</span>
           </span>
         ) : (
           <span className="setup-note">
-            {advice
-              ? `Diagnosis: ${advice.headline}. No change suggested yet.`
-              : "Drive a couple of clean laps for the diagnosis to suggest changes."}
+            {advice ? "" : "Drive a couple of clean laps for the diagnosis to suggest changes."}
           </span>
         )}
         <span>
