@@ -76,11 +76,43 @@ test("an off-throttle exit is not treated as a traction problem", () => {
 });
 
 test("a balanced car (mid at the baseline bias) yields no suggestions", () => {
-  const diag = [corner(1, 3, { mid: phase(1.5, 0.6) })];
+  const diag = [corner(1, 3, { mid: phase(1.0, 0.6) })];
   const adv = suggestSetup(diag, setup());
   assert.ok(adv, "still returns a report (with a headline)");
   assert.equal(adv.suggestions.length, 0, "nothing past the deadband");
-  assert.match(adv.headline, /balanced/);
+  assert.match(adv.headline, /on your target/);
+});
+
+test("balance preference shifts the target the advice aims for", () => {
+  // A mildly understeering car (mid 2.5 deg, ~1.5 deg of true understeer over the
+  // 1.0 deg baseline). Same diagnosis, three driver preferences.
+  const diag = [corner(1, 3, { mid: phase(2.5, 0.6) }), corner(2, 3, { mid: phase(2.5, 0.6) })];
+
+  const neutral = suggestSetup(diag, setup(), 0);
+  assert.ok(neutral);
+  const fwNeutral = neutral.suggestions.find((s) => s.key === "frontWing")?.delta ?? 0;
+  assert.ok(fwNeutral > 0, "neutral driver: trim the understeer with front wing");
+
+  // A driver who likes a touch of understeer: the same push is at or near their
+  // target, so the tool backs off the front-wing add.
+  const likesPush = suggestSetup(diag, setup(), 1);
+  const fwPush = likesPush!.suggestions.find((s) => s.key === "frontWing")?.delta ?? 0;
+  assert.ok(fwPush < fwNeutral, "understeer-preferring driver gets less (or no) front wing");
+
+  // A driver who wants it loose: the same car is further from their target, so the
+  // tool pushes harder to reduce understeer.
+  const wantsLoose = suggestSetup(diag, setup(), -1);
+  const fwLoose = wantsLoose!.suggestions.find((s) => s.key === "frontWing")?.delta ?? 0;
+  assert.ok(fwLoose >= fwNeutral, "oversteer-preferring driver gets at least as much front wing");
+});
+
+test("preference can flip a neutral car into a suggestion for a loose-preferring driver", () => {
+  // A genuinely neutral car (reads the baseline). A neutral driver leaves it alone;
+  // a driver who wants oversteer is given a change to make it looser.
+  const diag = [corner(1, 3, { mid: phase(1.0, 0.6) }), corner(2, 3, { mid: phase(1.0, 0.6) })];
+  assert.equal(suggestSetup(diag, setup(), 0)!.suggestions.length, 0, "neutral driver, neutral car: nothing");
+  const loose = suggestSetup(diag, setup(), -1);
+  assert.ok(loose!.suggestions.some((s) => s.key === "frontWing" && s.delta > 0), "loose-preferring driver gets a change");
 });
 
 test("entry understeer relative to mid moves brake bias rearward", () => {

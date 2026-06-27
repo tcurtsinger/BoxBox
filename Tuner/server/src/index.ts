@@ -29,6 +29,9 @@ const SESSION_LABEL: Record<number, string> = {
 };
 
 const state = new TunerState();
+// Driver balance preference (-1 loose .. 0 neutral .. +1 stable). Settable via env
+// for now; the interactive control + per-driver profile arrive in a later step.
+if (process.env.TUNER_BALANCE_PREF) state.setBalancePreference(Number(process.env.TUNER_BALANCE_PREF));
 
 let logStream: fs.WriteStream | null = null;
 let logCount = 0;

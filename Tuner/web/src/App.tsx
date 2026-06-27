@@ -31,6 +31,7 @@ export function App() {
           <Meta label="Session" value={sessionLabel} />
           <Meta label="Track" value={s && s.trackId >= 0 ? (s.trackName ?? `#${s.trackId}`) : "-"} />
           <Meta label="Setup" value={s?.setupReceived ? "Auto-detected" : "Waiting"} />
+          <Meta label="Balance target" value={s ? targetLabel(s.balancePreference) : "-"} />
         </div>
         {s && s.equalCarPerformance !== null && (
           <EqualPerfBadge on={s.equalCarPerformance === 1} />
@@ -73,6 +74,14 @@ function EqualPerfBadge({ on }: { on: boolean }) {
       <span className="eqperf-state">{on ? "ON" : "OFF"}</span>
     </div>
   );
+}
+
+// Read-only label for the driver's balance target (set server-side for now; the
+// interactive control arrives with the driver profile).
+function targetLabel(pref: number): string {
+  if (pref <= -0.33) return "Loose";
+  if (pref >= 0.33) return "Stable";
+  return "Neutral";
 }
 
 function Meta({ label, value }: { label: string; value: string }) {

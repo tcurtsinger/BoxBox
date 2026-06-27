@@ -381,3 +381,26 @@ test("produces signed setup advice once the diagnosis is established (2d-2)", ()
   assert.ok(fw && fw.delta > 0, "strong mid understeer -> add front wing");
   assert.ok(adv.suggestions.every((x) => x.confidence === "prior"), "priors until the loop measures");
 });
+
+test("the driver balance preference flows into the advice and clamps (2d-3a)", () => {
+  const s = new TunerState();
+  assert.equal(s.snapshot().balancePreference, 0, "defaults to neutral");
+
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  feed(s, 5, gridWith(20));
+  driveLap(s, 1);
+  step(s, 5, 2);
+  driveLapWithMotion(s, 2, { frontSlip: 0.08, rearSlip: 0.02 });
+  step(s, 5, 3);
+
+  const fwAt = (pref: number): number => {
+    s.setBalancePreference(pref);
+    return s.snapshot().setupAdvice?.suggestions.find((x) => x.key === "frontWing")?.delta ?? 0;
+  };
+  const neutral = fwAt(0);
+  assert.ok(neutral > 0);
+  assert.ok(fwAt(1) < neutral, "a stable-preferring driver gets less front wing for the same car");
+
+  s.setBalancePreference(5); // out of range
+  assert.equal(s.snapshot().balancePreference, 1, "clamped to +1");
+});

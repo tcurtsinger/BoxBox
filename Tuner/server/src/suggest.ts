@@ -59,6 +59,15 @@ const DEG = Math.PI / 180;
 // neutral and retires this constant - it is the weakest assumption in the tool.
 const BASELINE_BIAS = 1.0 * DEG;
 const MID_DEADBAND = 0.5 * DEG; // ignore effective understeer smaller than this
+
+// Driver balance preference shifts the target the suggestions aim for, away from
+// neutral. Two skilled players were opposite (one wants a touch of understeer for
+// consistency, one wants it loose), so the target is personal, not universal (see
+// vault: BoxBox Tuner Balance Preferences). The dial is normalized -1..+1: +1 =
+// prefers understeer/stable, -1 = prefers oversteer/loose. At full deflection it
+// moves the target by this much.
+const PREF_RANGE = 2.0 * DEG;
+const clampPref = (p: number): number => Math.max(-1, Math.min(1, p));
 const EXIT_TARGET = 0.5 * DEG; // exit balance below this (on power) = rear at the limit
 const ENTRY_DEADBAND = 1.0 * DEG; // entry is the noisiest phase; demand a clear delta
 
@@ -166,14 +175,20 @@ function clampDelta(key: SuggestKey, raw: number, current: number): number {
  * Build the setup advice from the diagnosis and the current setup. Returns null
  * until there is enough to say anything (no confirmed corners with samples).
  */
-export function suggestSetup(diag: CornerDiagnosis[], setup: CarSetupEntry): SetupAdvice | null {
+export function suggestSetup(
+  diag: CornerDiagnosis[],
+  setup: CarSetupEntry,
+  preference = 0,
+): SetupAdvice | null {
   const roll = rollupDiagnosis(diag);
   if (roll.midSamples === 0 && roll.exitSamples === 0 && roll.entrySamples === 0) return null;
 
-  // Axis excesses (radians). mid is bias-adjusted absolute; traction and entry are
-  // phase-relative so they need no anchor.
+  // Axis excesses (radians). mid is bias-adjusted absolute, shifted by the driver's
+  // balance preference; traction and entry are phase-relative so they need no
+  // anchor and are preference-independent.
+  const target = BASELINE_BIAS + clampPref(preference) * PREF_RANGE;
   const midExcess =
-    roll.midBalance === null ? 0 : signedDeadband(roll.midBalance - BASELINE_BIAS, MID_DEADBAND);
+    roll.midBalance === null ? 0 : signedDeadband(roll.midBalance - target, MID_DEADBAND);
   const tractionExcess =
     roll.exitBalance === null ? 0 : Math.max(0, EXIT_TARGET - roll.exitBalance);
   const entryExcess =
@@ -229,11 +244,13 @@ function signedDeadband(x: number, band: number): number {
   return 0;
 }
 
+// Headline phrased relative to the driver's target, since the preference shifts it:
+// "understeer" here means "more understeer than you want", not an absolute.
 function headlineFor(roll: BalanceRollup, midExcess: number, tractionExcess: number): string {
   const parts: string[] = [];
-  if (midExcess > 0.5 * DEG) parts.push("understeer mid-corner");
-  else if (midExcess < -0.5 * DEG) parts.push("oversteer mid-corner");
-  else parts.push("balanced mid-corner");
+  if (midExcess > 0.5 * DEG) parts.push("understeer vs your target");
+  else if (midExcess < -0.5 * DEG) parts.push("looser than your target");
+  else parts.push("on your target mid-corner");
   if (tractionExcess > 0.5 * DEG) parts.push("rear loose on power");
   return parts.join(", ");
 }

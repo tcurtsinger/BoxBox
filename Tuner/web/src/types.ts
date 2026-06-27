@@ -122,6 +122,7 @@ export interface TunerSnapshot {
   currentCorner: CurrentCorner | null;
   cornerDiagnosis: CornerDiagnosis[];
   setupAdvice: SetupAdvice | null;
+  balancePreference: number; // -1 loose .. 0 neutral .. +1 stable
   packetCount: number;
   lastUpdate: number;
 }

@@ -86,6 +86,8 @@ export interface TunerSnapshot {
   // hand-authored priors). null until there is enough to advise. Every suggestion
   // is "prior" confidence until the online loop measures a real gain.
   setupAdvice: SetupAdvice | null;
+  // Driver balance preference (-1 loose .. 0 neutral .. +1 stable) the advice aims for.
+  balancePreference: number;
   packetCount: number;
   lastUpdate: number;
 }
@@ -141,6 +143,16 @@ export class TunerState {
   // Per-track, per-corner (by stable id) phase buckets for the 2d diagnosis.
   // Survives UID resets like the corner map, so it accumulates across laps/runs.
   #cornerDiag = new Map<number, Map<number, PhaseTriple>>();
+  // Driver balance preference, normalized -1..+1 (+1 prefers understeer/stable,
+  // -1 prefers oversteer/loose, 0 neutral). Shifts the target the suggestions aim
+  // for. Set programmatically for now (env/CLI); the interactive control and
+  // persistence arrive with the driver profile. See vault: Balance Preferences.
+  #balancePreference = 0;
+
+  /** Set the driver balance preference, clamped to -1..+1. */
+  setBalancePreference(p: number): void {
+    this.#balancePreference = Math.max(-1, Math.min(1, Number.isFinite(p) ? p : 0));
+  }
 
   ingest(pkt: ParsedPacket, atMs: number): void {
     const h = pkt.header;
@@ -316,7 +328,7 @@ export class TunerState {
     const setupCurrent = this.#setupIsCurrent();
     const setupAdvice =
       setupCurrent && this.#setup && cornerDiagnosis.length
-        ? suggestSetup(cornerDiagnosis, this.#setup)
+        ? suggestSetup(cornerDiagnosis, this.#setup, this.#balancePreference)
         : null;
     return {
       format: this.format,
@@ -347,6 +359,7 @@ export class TunerState {
       currentCorner: corners.length ? currentCorner(corners, this.#lapDistance) : null,
       cornerDiagnosis,
       setupAdvice,
+      balancePreference: this.#balancePreference,
       packetCount: this.packetCount,
       lastUpdate: this.lastUpdate,
     };
