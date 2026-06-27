@@ -22,13 +22,32 @@ import { segmentLap, currentCorner, mergeCornerMap } from "./segmentation.ts";
 import type { TraceSample, MappedCorner, CurrentCorner } from "./segmentation.ts";
 import { newPhaseTriple, foldSample, buildCornerDiagnosis } from "./diagnosis.ts";
 import type { PhaseTriple, CornerDiagnosis } from "./diagnosis.ts";
-import { suggestSetup } from "./suggest.ts";
-import type { SetupAdvice } from "./suggest.ts";
+import { suggestSetup, rollupDiagnosis } from "./suggest.ts";
+import type { SetupAdvice, SuggestKey } from "./suggest.ts";
+import { GainEstimator, LEVER_CHANNEL } from "./estimator.ts";
+import type { Channel, LearnedGain } from "./estimator.ts";
 
 // A lap is only segmented if it is clean and reasonably complete, so a partial
 // out-lap or a cut lap does not seed the corner map with junk.
 const MIN_LAP_SAMPLES = 50;
 const MIN_LAP_COVERAGE = 0.5; // fraction of track length the trace must span
+
+// The online estimator needs a settled balance reading on each setup state before
+// it trusts a before/after measurement. A setup's window must hold at least this
+// many in-corner samples on the measured channel (well under a lap at ~46 Hz).
+const MIN_WINDOW_SAMPLES = 30;
+
+// Setup levers (beyond the tracked ones) whose change still shifts balance, so a
+// change to any of them must reset the measurement window even though we do not
+// attribute an effect to them.
+const SETUP_KEYS: (keyof CarSetupEntry)[] = [
+  "frontWing", "rearWing", "onThrottle", "offThrottle", "frontCamber", "rearCamber",
+  "frontToe", "rearToe", "frontSuspension", "rearSuspension", "frontAntiRollBar",
+  "rearAntiRollBar", "frontRideHeight", "rearRideHeight", "brakePressure", "brakeBias",
+];
+const TRACKED_LEVERS: SuggestKey[] = [
+  "frontWing", "rearWing", "onThrottle", "offThrottle", "frontAntiRollBar", "rearAntiRollBar", "brakeBias",
+];
 
 // Balance-diagnosis tunables. The cornering gate keeps the readout off on
 // straights (where slip is ~0 and the understeer angle divides by a tiny speed);
@@ -148,10 +167,25 @@ export class TunerState {
   // for. Set programmatically for now (env/CLI); the interactive control and
   // persistence arrive with the driver profile. See vault: Balance Preferences.
   #balancePreference = 0;
+  // The online gain estimator (the closed loop). Holds the learned per-lever
+  // magnitudes; survives UID resets like the rest of the state. In-memory for now
+  // (the persisted driver profile is a later step).
+  #estimator = new GainEstimator();
+  // The current-setup measurement window: per-corner phase buckets accumulated
+  // ONLY since the last setup change, so before/after balances can be compared.
+  // Reset on any setup change or track change, NOT on a UID reset (same setup).
+  #windowDiag = new Map<number, PhaseTriple>();
+  // The open measurement awaiting an "after" reading on the new setup.
+  #pending: { lever: SuggestKey; deltaClicks: number; channel: Channel; channelBefore: number } | null = null;
 
   /** Set the driver balance preference, clamped to -1..+1. */
   setBalancePreference(p: number): void {
     this.#balancePreference = Math.max(-1, Math.min(1, Number.isFinite(p) ? p : 0));
+  }
+
+  /** The online loop's learned per-lever gains (for the UI and tests). */
+  learnedGains(): Map<SuggestKey, LearnedGain> {
+    return this.#estimator.asMap();
   }
 
   ingest(pkt: ParsedPacket, atMs: number): void {
@@ -168,6 +202,10 @@ export class TunerState {
       const s = pkt.data as SessionData;
       if (s.trackId !== this.trackId) {
         this.log?.({ kind: "session", t: h.sessionTime, trackId: s.trackId, trackLength: s.trackLength, sessionType: s.sessionType });
+        // A new track means a different corner map; the window and any open
+        // measurement no longer apply.
+        this.#windowDiag = new Map();
+        this.#pending = null;
       }
       this.sessionType = s.sessionType;
       this.trackId = s.trackId;
@@ -187,7 +225,8 @@ export class TunerState {
       const mine = d.cars[h.playerCarIndex] ?? null;
       // Keep the last real setup: a transient zeroed frame (e.g. mid-reset)
       // should not blank the panel once we have a populated one.
-      if (setupLooksReal(mine)) {
+      if (setupLooksReal(mine) && mine) {
+        if (this.#setup) this.#onSetupChange(this.#setup, mine);
         this.#setup = mine;
         this.#nextFrontWingValue = d.nextFrontWingValue;
         this.#setupTrackId = this.trackId;
@@ -253,6 +292,16 @@ export class TunerState {
           byCorner.set(corner.id, triple);
         }
         foldSample(triple[cc.phase], frontSlip - rearSlip, understeerAngle, this.#tThrottle, this.#tBrake);
+
+        // Same sample into the current-setup window, then see if it completes an
+        // open before/after measurement for the gain estimator.
+        let wTriple = this.#windowDiag.get(corner.id);
+        if (!wTriple) {
+          wTriple = newPhaseTriple();
+          this.#windowDiag.set(corner.id, wTriple);
+        }
+        foldSample(wTriple[cc.phase], frontSlip - rearSlip, understeerAngle, this.#tThrottle, this.#tBrake);
+        this.#tryCompletePending();
       }
     }
 
@@ -307,6 +356,52 @@ export class TunerState {
     this.#cornerMaps.set(this.trackId, mergeCornerMap(this.#cornerMaps.get(this.trackId), fresh));
   }
 
+  // --- Online gain estimator (the closed loop) --------------------------------
+
+  // The current-setup window's balance on one channel, plus its sample count. Uses
+  // the same rollup the suggestions use (confirmed corners only), so the measured
+  // before/after is the exact metric the advice acts on.
+  #windowChannel(channel: Channel): { value: number | null; samples: number } {
+    const corners = this.#cornerMaps.get(this.trackId) ?? [];
+    if (!corners.length) return { value: null, samples: 0 };
+    const roll = rollupDiagnosis(buildCornerDiagnosis(corners, this.#windowDiag));
+    if (channel === "mid") return { value: roll.midBalance, samples: roll.midSamples };
+    if (channel === "exit") return { value: roll.exitBalance, samples: roll.exitSamples };
+    return { value: roll.entryBalance, samples: roll.entrySamples };
+  }
+
+  // Complete an open measurement once the new setup's window is well-sampled: the
+  // estimator validates direction and folds the gain in (rejecting driver noise).
+  #tryCompletePending(): void {
+    if (!this.#pending) return;
+    const after = this.#windowChannel(this.#pending.channel);
+    if (after.value === null || after.samples < MIN_WINDOW_SAMPLES) return;
+    this.#estimator.record(this.#pending.lever, this.#pending.deltaClicks, this.#pending.channelBefore, after.value);
+    this.#pending = null;
+  }
+
+  // On a setup change: first close out any prior measurement (the window so far is
+  // its "after"), then open a new one if exactly one tracked lever moved and the
+  // outgoing setup had a well-sampled window to read as the "before". Either way
+  // the window resets, since the car has changed.
+  #onSetupChange(old: CarSetupEntry, next: CarSetupEntry): void {
+    if (!SETUP_KEYS.some((k) => old[k] !== next[k])) return; // nothing actually changed
+
+    this.#tryCompletePending();
+
+    this.#pending = null;
+    const changed = TRACKED_LEVERS.filter((k) => old[k] !== next[k]);
+    if (changed.length === 1) {
+      const lever = changed[0];
+      const channel = LEVER_CHANNEL[lever].channel;
+      const before = this.#windowChannel(channel);
+      if (before.value !== null && before.samples >= MIN_WINDOW_SAMPLES) {
+        this.#pending = { lever, deltaClicks: next[lever] - old[lever], channel, channelBefore: before.value };
+      }
+    }
+    this.#windowDiag = new Map(); // the new setup starts a fresh window
+  }
+
   // The stored setup counts as "received" only while it still matches the live
   // context. Time Trial reuses a setup across lap resets (same track/player, just
   // a new session UID), but switching track or player must not keep showing the
@@ -328,7 +423,7 @@ export class TunerState {
     const setupCurrent = this.#setupIsCurrent();
     const setupAdvice =
       setupCurrent && this.#setup && cornerDiagnosis.length
-        ? suggestSetup(cornerDiagnosis, this.#setup, this.#balancePreference)
+        ? suggestSetup(cornerDiagnosis, this.#setup, this.#balancePreference, this.#estimator.asMap())
         : null;
     return {
       format: this.format,

@@ -18,6 +18,8 @@
 //     entry is how the braking phase compares to mid.
 import type { CarSetupEntry } from "../../../shared/parser/index.ts";
 import type { CornerDiagnosis } from "./diagnosis.ts";
+import { LEVER_CHANNEL } from "./estimator.ts";
+import type { LearnedGain, Channel } from "./estimator.ts";
 
 // Levers we advise on: the few dominant ones the design says converge fast (wings,
 // ARB, diff, brake bias). Fine params (camber, toe, ride height, pressures,
@@ -83,6 +85,9 @@ interface LeverGain {
   axis: "mid" | "traction" | "entry";
   perRad: number;
 }
+// The suggestion axis a learned channel maps to (the exit channel is the traction axis).
+const CHANNEL_AXIS: Record<Channel, LeverGain["axis"]> = { mid: "mid", exit: "traction", entry: "entry" };
+
 const GAINS: LeverGain[] = [
   // Mid-corner understeer (signed: + understeer, - oversteer):
   { key: "frontWing", axis: "mid", perRad: 60 }, //   understeer -> +front wing
@@ -179,6 +184,7 @@ export function suggestSetup(
   diag: CornerDiagnosis[],
   setup: CarSetupEntry,
   preference = 0,
+  gains: Map<SuggestKey, LearnedGain> = new Map(),
 ): SetupAdvice | null {
   const roll = rollupDiagnosis(diag);
   if (roll.midSamples === 0 && roll.exitSamples === 0 && roll.entrySamples === 0) return null;
@@ -209,10 +215,18 @@ export function suggestSetup(
           : "entry instability";
 
   // Sum each lever's per-axis contributions; remember the axis whose single
-  // contribution was largest, to label the suggestion's basis.
+  // contribution was largest, to label the suggestion's basis. Where the loop has
+  // a learned magnitude for a lever, it replaces the prior magnitude on that
+  // lever's PRIMARY axis (its measured channel), keeping the deterministic sign.
   const raw = new Map<SuggestKey, { delta: number; topAxis: LeverGain["axis"]; topMag: number }>();
   for (const g of GAINS) {
-    const contrib = excess[g.axis] * g.perRad;
+    const learned = gains.get(g.key);
+    const primaryAxis = CHANNEL_AXIS[LEVER_CHANNEL[g.key].channel];
+    const perRad =
+      learned?.magnitude != null && g.axis === primaryAxis
+        ? Math.sign(g.perRad) * learned.magnitude
+        : g.perRad;
+    const contrib = excess[g.axis] * perRad;
     if (contrib === 0) continue;
     const prev = raw.get(g.key);
     if (!prev) {
@@ -230,7 +244,7 @@ export function suggestSetup(
   for (const [key, { delta, topAxis }] of raw) {
     const d = clampDelta(key, delta, setup[key]);
     if (d === 0) continue;
-    suggestions.push({ key, delta: d, confidence: "prior", basis: basis(topAxis) });
+    suggestions.push({ key, delta: d, confidence: gains.get(key)?.confidence ?? "prior", basis: basis(topAxis) });
   }
   // Order by absolute magnitude so the dominant lever reads first.
   suggestions.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));

@@ -54,6 +54,13 @@ function gridWith(frontWing: number): { cars: CarSetupEntry[]; nextFrontWingValu
   const cars = Array.from({ length: 24 }, (_, i) => (i === 5 ? playerSetup(frontWing) : zeroCar(i)));
   return { cars, nextFrontWingValue: 27 };
 }
+// A grid where two levers differ from the playerSetup default, for the
+// multi-lever-change (non-attributable) case.
+function gridWith2(over: { frontWing: number; rearWing: number }): { cars: CarSetupEntry[]; nextFrontWingValue: number } {
+  const player = { ...playerSetup(over.frontWing), rearWing: over.rearWing };
+  const cars = Array.from({ length: 24 }, (_, i) => (i === 5 ? player : zeroCar(i)));
+  return { cars, nextFrontWingValue: 27 };
+}
 
 test("captures the player's own setup from CarSetups (id 5)", () => {
   const s = new TunerState();
@@ -403,4 +410,93 @@ test("the driver balance preference flows into the advice and clamps (2d-3a)", (
 
   s.setBalancePreference(5); // out of range
   assert.equal(s.snapshot().balancePreference, 1, "clamped to +1");
+});
+
+// --- Online gain estimator / A-B-A loop (2d-3b) -------------------------------
+// Build + confirm corners, then run an A-B-A change sequence. The synthetic motion
+// has a fixed per-sample balance, so a "front wing helped" change is modelled by
+// driving the after-laps with less understeer than the before-laps.
+function confirmCorners(s: TunerState): void {
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  feed(s, 5, gridWith(20)); // setup A
+  driveLap(s, 1);
+  step(s, 5, 2); // finalize lap 1 -> corners seen once
+}
+
+test("the online loop measures an applied change and confirms it via A/B/A (2d-3b)", () => {
+  const s = new TunerState();
+  confirmCorners(s);
+
+  // Two laps of strong understeer on setup A: builds the before-window, confirms corners.
+  driveLapWithMotion(s, 2, { frontSlip: 0.08, rearSlip: 0.02 });
+  driveLapWithMotion(s, 3, { frontSlip: 0.08, rearSlip: 0.02 });
+  assert.equal(s.learnedGains().size, 0, "nothing learned before any change");
+
+  // Apply +2 front wing; the car then understeers less (the change helped).
+  feed(s, 5, gridWith(22));
+  driveLapWithMotion(s, 4, { frontSlip: 0.04, rearSlip: 0.02 });
+  driveLapWithMotion(s, 5, { frontSlip: 0.04, rearSlip: 0.02 });
+
+  const after1 = s.learnedGains().get("frontWing");
+  assert.ok(after1, "the change was measured");
+  assert.equal(after1.observations, 1);
+  assert.equal(after1.confidence, "forming", "one measurement -> forming (yellow)");
+  assert.ok(after1.magnitude && after1.magnitude > 0);
+
+  // Revert to setup A; the understeer returns: a consistent second observation.
+  feed(s, 5, gridWith(20));
+  driveLapWithMotion(s, 6, { frontSlip: 0.08, rearSlip: 0.02 });
+  driveLapWithMotion(s, 7, { frontSlip: 0.08, rearSlip: 0.02 });
+
+  const after2 = s.learnedGains().get("frontWing");
+  assert.ok(after2);
+  assert.equal(after2.observations, 2);
+  assert.equal(after2.confidence, "measured", "A/B/A confirmation -> measured (green)");
+
+  // The suggestion now carries the measured confidence (the badge greens up).
+  const sug = s.snapshot().setupAdvice?.suggestions.find((x) => x.key === "frontWing");
+  assert.ok(sug, "front wing still suggested (lifetime average understeers)");
+  assert.equal(sug.confidence, "measured");
+});
+
+test("the loop rejects a change whose balance moved the wrong way (driver noise)", () => {
+  const s = new TunerState();
+  confirmCorners(s);
+  driveLapWithMotion(s, 2, { frontSlip: 0.04, rearSlip: 0.02 });
+  driveLapWithMotion(s, 3, { frontSlip: 0.04, rearSlip: 0.02 });
+
+  // Add front wing but the understeer got WORSE (unrelated / noise): must not learn.
+  feed(s, 5, gridWith(22));
+  driveLapWithMotion(s, 4, { frontSlip: 0.09, rearSlip: 0.02 });
+  driveLapWithMotion(s, 5, { frontSlip: 0.09, rearSlip: 0.02 });
+
+  assert.equal(s.learnedGains().get("frontWing"), undefined, "a wrong-way change is rejected, not learned");
+});
+
+test("a multi-lever change is not attributed (cannot isolate the effect)", () => {
+  const s = new TunerState();
+  confirmCorners(s);
+  driveLapWithMotion(s, 2, { frontSlip: 0.08, rearSlip: 0.02 });
+  driveLapWithMotion(s, 3, { frontSlip: 0.08, rearSlip: 0.02 });
+
+  // Change front wing AND rear wing at once: ambiguous, so no measurement opens.
+  feed(s, 5, gridWith2({ frontWing: 22, rearWing: 28 }));
+  driveLapWithMotion(s, 4, { frontSlip: 0.04, rearSlip: 0.02 });
+  driveLapWithMotion(s, 5, { frontSlip: 0.04, rearSlip: 0.02 });
+
+  assert.equal(s.learnedGains().size, 0, "a two-lever change teaches nothing");
+});
+
+test("the estimator survives a session-UID change (TT lap reset)", () => {
+  const s = new TunerState();
+  confirmCorners(s);
+  driveLapWithMotion(s, 2, { frontSlip: 0.08, rearSlip: 0.02 });
+  driveLapWithMotion(s, 3, { frontSlip: 0.08, rearSlip: 0.02 });
+  feed(s, 5, gridWith(22));
+  driveLapWithMotion(s, 4, { frontSlip: 0.04, rearSlip: 0.02 });
+  driveLapWithMotion(s, 5, { frontSlip: 0.04, rearSlip: 0.02 });
+  assert.ok(s.learnedGains().get("frontWing"), "a gain was learned");
+
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 }, "2002");
+  assert.ok(s.learnedGains().get("frontWing"), "learned gains persist across the UID reset");
 });
