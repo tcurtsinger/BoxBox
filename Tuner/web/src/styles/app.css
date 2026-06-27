@@ -82,6 +82,58 @@
   color: var(--amber);
 }
 
+/* ---- Equal-performance badge ------------------------------------------- */
+.eqperf {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding: 5px 11px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+.eqperf + .conn {
+  margin-left: 18px;
+}
+.eqperf-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.eqperf-label {
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+.eqperf-state {
+  font-family: var(--mono);
+  font-weight: 700;
+}
+.eqperf-on {
+  background: rgba(46, 207, 104, 0.08);
+  border-color: rgba(46, 207, 104, 0.35);
+}
+.eqperf-on .eqperf-dot {
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(46, 207, 104, 0.18);
+}
+.eqperf-on .eqperf-state {
+  color: var(--green);
+}
+.eqperf-off {
+  background: rgba(255, 194, 77, 0.08);
+  border-color: rgba(255, 194, 77, 0.4);
+}
+.eqperf-off .eqperf-dot {
+  background: var(--amber);
+}
+.eqperf-off .eqperf-state {
+  color: var(--amber);
+}
+
 /* ---- Setup panel -------------------------------------------------------- */
 .tuner-main {
   flex: 1;

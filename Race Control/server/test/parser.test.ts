@@ -11,6 +11,7 @@ import type {
   CarTelemetry2Data,
   EventData,
   FinalClassificationData,
+  TimeTrialData,
 } from "../../../shared/parser/index.ts";
 
 // Minimal little-endian writer mirroring BufferReader, for building fixtures.
@@ -431,6 +432,75 @@ test("CarTelemetry2: 10-byte stride, active-aero and overtake (2026)", () => {
   assert.equal(t.cars[0]?.overtakeAvailable, true);
   assert.equal(t.cars[0]?.overtakeActivationDistance, 120);
   assert.equal(t.cars[0]?.is2026, true);
+});
+
+test("TimeTrial (id 14): 2026 stride, three datasets, equal-performance flag", () => {
+  const w = new W(104); // header 29 + 3 * 25
+  writeHeader(w, 14); // 2026
+  const writeSet = (
+    carIdx: number,
+    teamId: number,
+    lapMS: number,
+    equalPerf: number,
+    customSetup: number,
+    valid: number,
+  ): void => {
+    const start = w.pos;
+    w.u8(carIdx)
+      .u16(teamId) // u16 in 2026
+      .u32(lapMS)
+      .u32(30000).u32(30000).u32(lapMS - 60000) // s1, s2, s3
+      .u8(0).u8(1).u8(0) // tractionControl, gearboxAssist, antiLockBrakes
+      .u8(equalPerf).u8(customSetup).u8(valid);
+    assert.equal(w.pos - start, 25, "2026 time-trial dataset stride must be 25 bytes");
+  };
+  writeSet(5, 9, 90000, 1, 1, 1); // playerSessionBest
+  writeSet(5, 9, 89500, 1, 0, 1); // personalBest
+  writeSet(12, 3, 88000, 1, 0, 1); // rival
+  assert.equal(w.pos, 104, "TimeTrial packet must be 104 bytes (2026)");
+
+  const pkt = parsePacket(w.buf);
+  if (!pkt || pkt.id !== 14) throw new Error("expected a TimeTrial packet");
+  const tt = pkt.data as TimeTrialData;
+  assert.equal(tt.playerSessionBest.carIdx, 5);
+  assert.equal(tt.playerSessionBest.teamId, 9);
+  assert.equal(tt.playerSessionBest.lapTimeMS, 90000);
+  assert.equal(tt.playerSessionBest.equalCarPerformance, 1);
+  assert.equal(tt.playerSessionBest.customSetup, 1);
+  assert.equal(tt.playerSessionBest.valid, 1);
+  assert.equal(tt.personalBest.lapTimeMS, 89500);
+  assert.equal(tt.personalBest.customSetup, 0); // distinct from player session best
+  assert.equal(tt.rival.carIdx, 12);
+  assert.equal(tt.rival.teamId, 3);
+  assert.equal(tt.rival.lapTimeMS, 88000);
+});
+
+test("TimeTrial (id 14): 2025 stride keeps fields aligned (teamId u8)", () => {
+  const w = new W(101); // header 29 + 3 * 24
+  writeHeader(w, 14, 2025);
+  const writeSet = (carIdx: number, teamId: number, equalPerf: number): void => {
+    const start = w.pos;
+    w.u8(carIdx)
+      .u8(teamId) // u8 in 2025; if misread as u16, equalCarPerformance misaligns
+      .u32(90000).u32(30000).u32(30000).u32(30000) // lap, s1, s2, s3
+      .u8(0).u8(1).u8(0) // tractionControl, gearboxAssist, antiLockBrakes
+      .u8(equalPerf).u8(0).u8(1); // equalCarPerformance, customSetup, valid
+    assert.equal(w.pos - start, 24, "2025 time-trial dataset stride must be 24 bytes");
+  };
+  writeSet(3, 7, 0); // playerSessionBest, equalCarPerformance OFF
+  writeSet(3, 7, 0);
+  writeSet(8, 2, 0);
+  assert.equal(w.pos, 101, "TimeTrial packet must be 101 bytes (2025)");
+
+  const pkt = parsePacket(w.buf);
+  if (!pkt || pkt.id !== 14) throw new Error("expected a TimeTrial packet");
+  assert.equal(pkt.header.packetFormat, 2025);
+  const tt = pkt.data as TimeTrialData;
+  assert.equal(tt.playerSessionBest.carIdx, 3);
+  assert.equal(tt.playerSessionBest.teamId, 7);
+  assert.equal(tt.playerSessionBest.equalCarPerformance, 0); // aligned only if teamId read as u8
+  assert.equal(tt.playerSessionBest.valid, 1);
+  assert.equal(tt.rival.carIdx, 8);
 });
 
 test("Event PENA decodes penalty detail", () => {

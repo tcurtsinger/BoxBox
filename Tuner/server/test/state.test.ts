@@ -119,3 +119,42 @@ test("tracks a setup change (the loop's core observation)", () => {
   feed(s, 5, gridWith(32));
   assert.equal(s.snapshot().setup?.frontWing, 32);
 });
+
+// A TimeTrial (id 14) packet's three datasets. equalCarPerformance is read from
+// the player's session-best set; customSetup/valid come from there too.
+function ttData(equalPerf: number, customSetup: number, valid: number) {
+  const set = (carIdx: number, equal: number, custom: number, v: number) => ({
+    carIdx, teamId: 9, lapTimeMS: 90000, sector1MS: 30000, sector2MS: 30000, sector3MS: 30000,
+    tractionControl: 0, gearboxAssist: 1, antiLockBrakes: 0,
+    equalCarPerformance: equal, customSetup: custom, valid: v,
+  });
+  return {
+    playerSessionBest: set(5, equalPerf, customSetup, valid),
+    personalBest: set(5, equalPerf, 0, 1),
+    rival: set(12, equalPerf, 0, 1),
+  };
+}
+
+test("equal-car-performance is null until a TimeTrial packet, then reflects it", () => {
+  const s = new TunerState();
+  feed(s, 5, gridWith(25));
+  assert.equal(s.snapshot().equalCarPerformance, null); // not seen yet
+
+  feed(s, 14, ttData(1, 1, 1));
+  const snap = s.snapshot();
+  assert.equal(snap.equalCarPerformance, 1);
+  assert.equal(snap.customSetup, 1);
+  assert.equal(snap.lapValid, 1);
+});
+
+test("equal-car-performance survives a session-UID change (TT lap reset)", () => {
+  const s = new TunerState();
+  feed(s, 14, ttData(1, 0, 1), "1001");
+  assert.equal(s.snapshot().equalCarPerformance, 1);
+
+  // A TT lap restart spawns a new UID; the flag must persist like the setup.
+  feed(s, 1, { sessionType: 18, trackId: 0 }, "2002");
+  const snap = s.snapshot();
+  assert.equal(snap.sessionUID, "2002");
+  assert.equal(snap.equalCarPerformance, 1);
+});

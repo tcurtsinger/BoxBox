@@ -31,6 +31,9 @@ export function App() {
           <Meta label="Track" value={s && s.trackId >= 0 ? `#${s.trackId}` : "-"} />
           <Meta label="Setup" value={s?.setupReceived ? "Auto-detected" : "Waiting"} />
         </div>
+        {s && s.equalCarPerformance !== null && (
+          <EqualPerfBadge on={s.equalCarPerformance === 1} />
+        )}
         <div className={`conn conn-${conn}`}>
           <span className="conn-dot" />
           {CONN_LABEL[conn]}
@@ -44,6 +47,19 @@ export function App() {
           <EmptyState conn={conn} />
         )}
       </main>
+    </div>
+  );
+}
+
+// Confirms the assumption the Tuner's single prior-gain table rests on. ON is the
+// expected, healthy state; OFF means the grid no longer shares one physics model,
+// so the recommendations would need a per-car table the tool does not build.
+function EqualPerfBadge({ on }: { on: boolean }) {
+  return (
+    <div className={`eqperf ${on ? "eqperf-on" : "eqperf-off"}`} title="Time Trial equal-car-performance flag (from packet 14)">
+      <span className="eqperf-dot" />
+      <span className="eqperf-label">Equal Performance</span>
+      <span className="eqperf-state">{on ? "ON" : "OFF"}</span>
     </div>
   );
 }

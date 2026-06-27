@@ -39,6 +39,9 @@ export interface TunerSnapshot {
   setup: CarSetupEntry | null;
   setupReceived: boolean;
   nextFrontWingValue: number;
+  equalCarPerformance: number | null;
+  customSetup: number | null;
+  lapValid: number | null;
   packetCount: number;
   lastUpdate: number;
 }

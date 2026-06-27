@@ -11,6 +11,7 @@ import {
   parseCarTelemetry2,
   parseEvent,
   parseFinalClassification,
+  parseTimeTrial,
 } from "./packets.ts";
 import { HEADER_SIZE, PacketId } from "./constants.ts";
 import type { ParsedPacket } from "./types.ts";
@@ -48,6 +49,8 @@ export function parsePacket(buf: Buffer): ParsedPacket | null {
       return { id: 8, header, data: parseFinalClassification(rd, header) };
     case PacketId.CarDamage:
       return { id: 10, header, data: parseCarDamage(rd, header) };
+    case PacketId.TimeTrial:
+      return { id: 14, header, data: parseTimeTrial(rd, header) };
     case PacketId.CarTelemetry2:
       return { id: 16, header, data: parseCarTelemetry2(rd, header) };
     default:

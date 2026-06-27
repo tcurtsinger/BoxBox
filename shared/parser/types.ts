@@ -282,6 +282,32 @@ export interface CarSetupsData {
   nextFrontWingValue: number; // front wing after next pit stop - player only
 }
 
+// Time Trial (id 14). Three fixed datasets (the player's session best, their
+// personal best, and the rival), each a TimeTrialDataSet. teamId widened from u8
+// (2025) to u16 (2026 pack), the same as Participants. equalCarPerformance is the
+// session-global assumption the Tuner's single prior-gain table rests on;
+// customSetup/valid are per-lap context.
+export interface TimeTrialDataSet {
+  carIdx: number;
+  teamId: number;
+  lapTimeMS: number;
+  sector1MS: number;
+  sector2MS: number;
+  sector3MS: number;
+  tractionControl: number; // 0 = off, 1 = on
+  gearboxAssist: number;
+  antiLockBrakes: number; // 0 = off, 1 = on
+  equalCarPerformance: number; // 0 = Realistic, 1 = Equal
+  customSetup: number; // 0 = No, 1 = Yes
+  valid: number; // 0 = invalid, 1 = valid
+}
+
+export interface TimeTrialData {
+  playerSessionBest: TimeTrialDataSet;
+  personalBest: TimeTrialDataSet;
+  rival: TimeTrialDataSet;
+}
+
 // Discriminated by packet id. `data: null` = a packet we receive but do not yet
 // decode (so callers can switch exhaustively as we add more parsers).
 export type ParsedPacket =
@@ -294,5 +320,6 @@ export type ParsedPacket =
   | { id: 7; header: PacketHeader; data: CarStatusData }
   | { id: 8; header: PacketHeader; data: FinalClassificationData }
   | { id: 10; header: PacketHeader; data: CarDamageData }
+  | { id: 14; header: PacketHeader; data: TimeTrialData }
   | { id: 16; header: PacketHeader; data: CarTelemetry2Data }
   | { id: number; header: PacketHeader; data: null };

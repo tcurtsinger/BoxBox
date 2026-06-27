@@ -12,6 +12,7 @@ import type {
   SessionData,
   CarSetupsData,
   CarSetupEntry,
+  TimeTrialData,
 } from "../../../shared/parser/index.ts";
 
 export interface TunerSnapshot {
@@ -25,6 +26,11 @@ export interface TunerSnapshot {
   setup: CarSetupEntry | null;
   setupReceived: boolean; // the player's own setup is populated (auto-detect works)
   nextFrontWingValue: number;
+  // From the Time Trial packet (id 14). equalCarPerformance is the assumption the
+  // single prior-gain table rests on; null until a TT packet is seen.
+  equalCarPerformance: number | null; // 0 = Realistic, 1 = Equal
+  customSetup: number | null; // player's session-best lap on a custom setup
+  lapValid: number | null; // player's session-best lap validity
   packetCount: number;
   lastUpdate: number;
 }
@@ -52,6 +58,9 @@ export class TunerState {
   #nextFrontWingValue = 0;
   #setupTrackId = -1; // track the stored setup was captured on
   #setupPlayerIdx = -1; // player car index it was captured for
+  #equalCarPerformance: number | null = null; // from TimeTrial (id 14)
+  #customSetup: number | null = null;
+  #lapValid: number | null = null;
 
   ingest(pkt: ParsedPacket, atMs: number): void {
     const h = pkt.header;
@@ -78,6 +87,15 @@ export class TunerState {
         this.#setupTrackId = this.trackId;
         this.#setupPlayerIdx = h.playerCarIndex;
       }
+    } else if (pkt.id === 14) {
+      // equalCarPerformance is session-global, so any dataset carries it; the
+      // player's own context (customSetup, lap validity) comes from their
+      // session-best set. Held across UID resets like the rest of the state.
+      const tt = pkt.data as TimeTrialData;
+      const best = tt.playerSessionBest;
+      this.#equalCarPerformance = best.equalCarPerformance;
+      this.#customSetup = best.customSetup;
+      this.#lapValid = best.valid;
     }
   }
 
@@ -104,6 +122,9 @@ export class TunerState {
       setup: this.#setup,
       setupReceived: this.#setupIsCurrent(),
       nextFrontWingValue: this.#nextFrontWingValue,
+      equalCarPerformance: this.#equalCarPerformance,
+      customSetup: this.#customSetup,
+      lapValid: this.#lapValid,
       packetCount: this.packetCount,
       lastUpdate: this.lastUpdate,
     };

@@ -21,6 +21,8 @@ import type {
   EventData,
   FinalClassificationData,
   FinalClassificationEntry,
+  TimeTrialData,
+  TimeTrialDataSet,
 } from "./types.ts";
 
 // --- Session (id 1) -----------------------------------------------------------
@@ -543,6 +545,36 @@ export function parseFinalClassification(
   }
 
   return { numCars, classification };
+}
+
+// --- Time Trial (id 14) -------------------------------------------------------
+// Three fixed datasets (player session best, personal best, rival). Each
+// TimeTrialDataSet is 24 bytes in 2025 and 25 in the 2026 pack: only teamId
+// widens from u8 to u16 (same as Participants). No per-car loop and no car count.
+function parseTimeTrialSet(rd: BufferReader, wide: boolean): TimeTrialDataSet {
+  return {
+    carIdx: rd.u8(),
+    teamId: wide ? rd.u16() : rd.u8(),
+    lapTimeMS: rd.u32(),
+    sector1MS: rd.u32(),
+    sector2MS: rd.u32(),
+    sector3MS: rd.u32(),
+    tractionControl: rd.u8(),
+    gearboxAssist: rd.u8(),
+    antiLockBrakes: rd.u8(),
+    equalCarPerformance: rd.u8(),
+    customSetup: rd.u8(),
+    valid: rd.u8(),
+  };
+}
+
+export function parseTimeTrial(rd: BufferReader, header: PacketHeader): TimeTrialData {
+  const wide = header.packetFormat >= 2026;
+  return {
+    playerSessionBest: parseTimeTrialSet(rd, wide),
+    personalBest: parseTimeTrialSet(rd, wide),
+    rival: parseTimeTrialSet(rd, wide),
+  };
 }
 
 // --- Car Telemetry 2 (id 16) --------------------------------------------------
