@@ -14,7 +14,16 @@ import type {
   CarSetupEntry,
   TimeTrialData,
   MotionExData,
+  LapDataData,
+  CarTelemetryData,
 } from "../../../shared/parser/index.ts";
+import { segmentLap, currentCorner, mergeCornerMap } from "./segmentation.ts";
+import type { TraceSample, Corner, CurrentCorner } from "./segmentation.ts";
+
+// A lap is only segmented if it is clean and reasonably complete, so a partial
+// out-lap or a cut lap does not seed the corner map with junk.
+const MIN_LAP_SAMPLES = 50;
+const MIN_LAP_COVERAGE = 0.5; // fraction of track length the trace must span
 
 // Balance-diagnosis tunables. The cornering gate keeps the readout off on
 // straights (where slip is ~0 and the understeer angle divides by a tiny speed);
@@ -59,6 +68,10 @@ export interface TunerSnapshot {
   lapValid: number | null; // player's session-best lap validity
   // Live balance from MotionEx (id 13). null until a corner has been driven.
   balance: BalanceSignal | null;
+  // Corner map for the current track (auto-derived from clean laps) and where the
+  // car is on it right now. corners is empty until a clean lap is segmented.
+  corners: Corner[];
+  currentCorner: CurrentCorner | null;
   packetCount: number;
   lastUpdate: number;
 }
@@ -95,6 +108,17 @@ export class TunerState {
   #rearSlip: number | null = null;
   #understeerAngle: number | null = null;
   #cornering = false;
+  // Corner segmentation (LapData id 2 + CarTelemetry id 6). The corner map is
+  // cached per track and survives UID resets; the in-progress lap trace does not.
+  #trackLength = 0;
+  #lapDistance = 0;
+  #currentLapNum = -1;
+  #lapInvalidated = false;
+  #lapTrace: TraceSample[] = [];
+  #tSpeed: number | null = null;
+  #tThrottle = 0;
+  #tBrake = 0;
+  #cornerMaps = new Map<number, Corner[]>();
 
   ingest(pkt: ParsedPacket, atMs: number): void {
     const h = pkt.header;
@@ -110,6 +134,16 @@ export class TunerState {
       const s = pkt.data as SessionData;
       this.sessionType = s.sessionType;
       this.trackId = s.trackId;
+      this.#trackLength = s.trackLength;
+    } else if (pkt.id === 2) {
+      this.#ingestLapData(pkt.data as LapDataData, h.playerCarIndex);
+    } else if (pkt.id === 6) {
+      const t = (pkt.data as CarTelemetryData).cars[h.playerCarIndex];
+      if (t) {
+        this.#tSpeed = t.speed;
+        this.#tThrottle = t.throttle;
+        this.#tBrake = t.brake;
+      }
     } else if (pkt.id === 5) {
       const d = pkt.data as CarSetupsData;
       const mine = d.cars[h.playerCarIndex] ?? null;
@@ -161,6 +195,46 @@ export class TunerState {
     this.#understeerAngle = ema(this.#understeerAngle, understeerAngle);
   }
 
+  // Accumulate the player's lap trace and finalize a lap when the lap number
+  // ticks over. Each LapData sample pairs the current lap distance with the most
+  // recent telemetry (speed/throttle/brake), which is dense enough at ~46 Hz.
+  #ingestLapData(d: LapDataData, playerIdx: number): void {
+    const lap = d.cars[playerIdx];
+    if (!lap) return;
+
+    if (this.#currentLapNum === -1) this.#currentLapNum = lap.currentLapNum;
+    if (lap.currentLapNum !== this.#currentLapNum) {
+      this.#finalizeLap();
+      this.#currentLapNum = lap.currentLapNum;
+      this.#lapTrace = [];
+      this.#lapInvalidated = false;
+    }
+    if (lap.currentLapInvalid) this.#lapInvalidated = true;
+
+    this.#lapDistance = lap.lapDistance;
+    if (this.#tSpeed !== null && lap.lapDistance >= 0) {
+      this.#lapTrace.push({
+        lapDistance: lap.lapDistance,
+        speed: this.#tSpeed,
+        throttle: this.#tThrottle,
+        brake: this.#tBrake,
+      });
+    }
+  }
+
+  // Segment a just-completed lap and fold it into the per-track corner map, but
+  // only if it was clean and spanned enough of the track to be trustworthy.
+  #finalizeLap(): void {
+    if (this.#lapInvalidated || this.trackId < 0 || this.#trackLength <= 0) return;
+    if (this.#lapTrace.length < MIN_LAP_SAMPLES) return;
+    const span = this.#lapTrace[this.#lapTrace.length - 1].lapDistance;
+    if (span < MIN_LAP_COVERAGE * this.#trackLength) return;
+
+    const fresh = segmentLap(this.#lapTrace);
+    if (fresh.length === 0) return;
+    this.#cornerMaps.set(this.trackId, mergeCornerMap(this.#cornerMaps.get(this.trackId), fresh));
+  }
+
   // The stored setup counts as "received" only while it still matches the live
   // context. Time Trial reuses a setup across lap resets (same track/player, just
   // a new session UID), but switching track or player must not keep showing the
@@ -173,6 +247,7 @@ export class TunerState {
   }
 
   snapshot(): TunerSnapshot {
+    const corners = this.#cornerMaps.get(this.trackId) ?? [];
     return {
       format: this.format,
       gameYear: this.gameYear,
@@ -197,6 +272,8 @@ export class TunerState {
               understeerAngle: this.#understeerAngle ?? 0,
               cornering: this.#cornering,
             },
+      corners,
+      currentCorner: corners.length ? currentCorner(corners, this.#lapDistance) : null,
       packetCount: this.packetCount,
       lastUpdate: this.lastUpdate,
     };

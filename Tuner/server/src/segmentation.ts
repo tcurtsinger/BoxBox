@@ -1,0 +1,202 @@
+// Corner segmentation from a lap's telemetry trace. Pure functions, no state, so
+// they unit-test cleanly. The approach is the textbook one: smooth the speed
+// trace, find its turning points, and treat each prominent speed minimum as a
+// corner apex bounded by the speed maxima on either side (the braking point
+// before and the point back at speed after). No per-circuit database: corners
+// fall out of the telemetry itself, so it works on any layout including new
+// 2026-pack tracks. Keyed by lap distance so windows are comparable across laps.
+//
+// The constants below are first-cut and tuned against a synthetic lap; they need
+// confirmation against a real captured lap before the diagnosis leans on them.
+
+export interface TraceSample {
+  lapDistance: number; // metres along the lap
+  speed: number; // km/h
+  throttle: number; // 0..1
+  brake: number; // 0..1
+}
+
+export interface Corner {
+  index: number; // 1-based, in lap order
+  entryDist: number; // metres: preceding speed maximum (braking / turn-in)
+  apexDist: number; // metres: speed minimum
+  exitDist: number; // metres: following speed maximum (back at speed)
+  minSpeed: number; // km/h at the apex
+}
+
+export type CornerPhase = "entry" | "mid" | "exit";
+
+export interface SegmentOptions {
+  smoothRadiusM?: number; // half-width of the distance-window speed smoother
+  minProminenceKmh?: number; // a minimum must drop this far below its bounding maxima
+  mergeDistM?: number; // apexes closer than this collapse into one corner
+  midFraction?: number; // half-width of the mid phase as a fraction of corner length
+}
+
+const DEFAULTS = {
+  smoothRadiusM: 15,
+  minProminenceKmh: 25,
+  mergeDistM: 40,
+  midFraction: 0.15,
+} satisfies Required<SegmentOptions>;
+
+// Sort by distance and keep strictly increasing, finite samples (a clean lap
+// trace is already mostly ordered; this guards against jitter and duplicates).
+function clean(trace: TraceSample[]): TraceSample[] {
+  const ok = trace.filter(
+    (s) => Number.isFinite(s.lapDistance) && Number.isFinite(s.speed) && s.lapDistance >= 0,
+  );
+  ok.sort((a, b) => a.lapDistance - b.lapDistance);
+  const out: TraceSample[] = [];
+  for (const s of ok) {
+    const prev = out[out.length - 1];
+    if (!prev || s.lapDistance > prev.lapDistance) out.push(s);
+  }
+  return out;
+}
+
+// Centered moving average of speed over a distance window (metres), which makes
+// the smoothing independent of sample density. Two-pointer window over sorted pts.
+function smoothSpeed(pts: TraceSample[], radiusM: number): number[] {
+  const n = pts.length;
+  const out = new Array<number>(n);
+  let lo = 0;
+  let hi = 0;
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const d = pts[i].lapDistance;
+    while (lo < n && pts[lo].lapDistance < d - radiusM) sum -= pts[lo++].speed;
+    while (hi < n && pts[hi].lapDistance <= d + radiusM) sum += pts[hi++].speed;
+    out[i] = sum / (hi - lo);
+  }
+  return out;
+}
+
+interface Extreme {
+  i: number;
+  kind: "min" | "max";
+}
+
+// Turning points of the smoothed series, alternating min/max, with a small
+// deadband so flat noise does not register. A turning point is the last point of
+// a monotonic run (the point right before the slope flips). The trace endpoints
+// are seeded as maxima: a clean lap starts and ends on the start/finish straight
+// at speed, so they are the natural outer bounds for the first and last corners.
+function findExtrema(sm: number[]): Extreme[] {
+  const EPS = 0.1; // km/h
+  const n = sm.length;
+  const turns: Extreme[] = [{ i: 0, kind: "max" }];
+  let dir = 0; // 1 rising, -1 falling
+  for (let i = 1; i < n; i++) {
+    const delta = sm[i] - sm[i - 1];
+    if (delta > EPS) {
+      if (dir === -1) turns.push({ i: i - 1, kind: "min" });
+      dir = 1;
+    } else if (delta < -EPS) {
+      if (dir === 1) turns.push({ i: i - 1, kind: "max" });
+      dir = -1;
+    }
+  }
+  turns.push({ i: n - 1, kind: "max" });
+  return turns;
+}
+
+/** Segment one lap's trace into ordered corners. Returns [] if the trace is too sparse. */
+export function segmentLap(trace: TraceSample[], opts: SegmentOptions = {}): Corner[] {
+  const o = { ...DEFAULTS, ...opts };
+  const pts = clean(trace);
+  if (pts.length < 8) return [];
+
+  const sm = smoothSpeed(pts, o.smoothRadiusM);
+  const extrema = findExtrema(sm);
+
+  // For each minimum, its bounding maxima are the nearest maxima on each side.
+  // Prominence is how far it sits below the lower of those two (topographic).
+  const corners: Corner[] = [];
+  for (let k = 0; k < extrema.length; k++) {
+    if (extrema[k].kind !== "min") continue;
+    let leftMax: Extreme | undefined;
+    for (let j = k - 1; j >= 0; j--)
+      if (extrema[j].kind === "max") {
+        leftMax = extrema[j];
+        break;
+      }
+    let rightMax: Extreme | undefined;
+    for (let j = k + 1; j < extrema.length; j++)
+      if (extrema[j].kind === "max") {
+        rightMax = extrema[j];
+        break;
+      }
+    if (!leftMax || !rightMax) continue; // corner runs off the start/finish; skip for now
+
+    const minI = extrema[k].i;
+    const prominence = Math.min(sm[leftMax.i], sm[rightMax.i]) - sm[minI];
+    if (prominence < o.minProminenceKmh) continue;
+
+    corners.push({
+      index: 0, // numbered after merge
+      entryDist: pts[leftMax.i].lapDistance,
+      apexDist: pts[minI].lapDistance,
+      exitDist: pts[rightMax.i].lapDistance,
+      minSpeed: pts[minI].speed,
+    });
+  }
+
+  // Collapse apexes that sit within mergeDistM of each other (a bumpy single
+  // corner can produce two minima); keep the slower one and widen the window.
+  const merged: Corner[] = [];
+  for (const c of corners) {
+    const prev = merged[merged.length - 1];
+    if (prev && c.apexDist - prev.apexDist < o.mergeDistM) {
+      prev.exitDist = c.exitDist;
+      if (c.minSpeed < prev.minSpeed) {
+        prev.apexDist = c.apexDist;
+        prev.minSpeed = c.minSpeed;
+      }
+    } else {
+      merged.push({ ...c });
+    }
+  }
+
+  return merged.map((c, idx) => ({ ...c, index: idx + 1 }));
+}
+
+export interface CurrentCorner {
+  index: number;
+  phase: CornerPhase;
+}
+
+/** Which corner and phase the car is in at a lap distance, or null on a straight. */
+export function currentCorner(
+  corners: Corner[],
+  lapDistance: number,
+  midFraction = DEFAULTS.midFraction,
+): CurrentCorner | null {
+  for (const c of corners) {
+    if (lapDistance < c.entryDist || lapDistance > c.exitDist) continue;
+    const midHalf = (c.exitDist - c.entryDist) * midFraction;
+    let phase: CornerPhase;
+    if (lapDistance < c.apexDist - midHalf) phase = "entry";
+    else if (lapDistance <= c.apexDist + midHalf) phase = "mid";
+    else phase = "exit";
+    return { index: c.index, phase };
+  }
+  return null;
+}
+
+// Fold a fresh lap's corners into the cached per-track map. The first clean lap
+// seeds it; later laps that find the same number of corners nudge the windows
+// toward the running picture (EMA), so the map sharpens with running. A lap that
+// finds a different count is ignored rather than allowed to corrupt the map.
+export function mergeCornerMap(existing: Corner[] | undefined, fresh: Corner[]): Corner[] {
+  if (!existing || existing.length === 0) return fresh;
+  if (fresh.length !== existing.length) return existing;
+  const a = 0.3;
+  return existing.map((c, i) => ({
+    index: i + 1,
+    entryDist: c.entryDist + a * (fresh[i].entryDist - c.entryDist),
+    apexDist: c.apexDist + a * (fresh[i].apexDist - c.apexDist),
+    exitDist: c.exitDist + a * (fresh[i].exitDist - c.exitDist),
+    minSpeed: c.minSpeed + a * (fresh[i].minSpeed - c.minSpeed),
+  }));
+}

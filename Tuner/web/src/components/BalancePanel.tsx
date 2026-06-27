@@ -1,8 +1,22 @@
-import type { BalanceSignal } from "../types";
+import type { BalanceSignal, Corner, CurrentCorner } from "../types";
 import { balanceVerdict, indicatorPct, radToDeg } from "../presentation/balance";
 
 interface Props {
   balance: BalanceSignal;
+  corners: Corner[];
+  currentCorner: CurrentCorner | null;
+}
+
+const PHASE_LABEL: Record<CurrentCorner["phase"], string> = {
+  entry: "Entry",
+  mid: "Mid",
+  exit: "Exit",
+};
+
+function locationLabel(corners: Corner[], current: CurrentCorner | null): string {
+  if (current) return `Turn ${current.index} · ${PHASE_LABEL[current.phase]}`;
+  if (corners.length) return "Straight";
+  return "Mapping track…";
 }
 
 // Live understeer/oversteer readout from MotionEx (id 13). The gauge plots the
@@ -10,7 +24,7 @@ interface Props {
 // Dimmed off-corner, since the signal is only meaningful under cornering load.
 // This is the diagnosis core's foundation; per-corner phasing and signed setup
 // suggestions arrive in the next increments.
-export function BalancePanel({ balance }: Props) {
+export function BalancePanel({ balance, corners, currentCorner }: Props) {
   const v = balanceVerdict(balance);
   const pct = indicatorPct(balance.slipBalance);
   const idle = v.tone === "idle";
@@ -18,7 +32,10 @@ export function BalancePanel({ balance }: Props) {
   return (
     <section className={`balance balance-${v.tone}`}>
       <div className="balance-head">
-        <span className="balance-title">Balance</span>
+        <div className="balance-head-left">
+          <span className="balance-title">Balance</span>
+          <span className="balance-loc">{locationLabel(corners, currentCorner)}</span>
+        </div>
         <span className="balance-verdict">{v.label}</span>
       </div>
 
@@ -45,6 +62,13 @@ export function BalancePanel({ balance }: Props) {
           dim={idle}
         />
       </div>
+
+      {corners.length > 0 && (
+        <p className="balance-foot">
+          {corners.length} corners mapped from clean laps · per-corner diagnosis and setup
+          suggestions arrive next.
+        </p>
+      )}
     </section>
   );
 }

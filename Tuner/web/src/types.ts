@@ -36,6 +36,19 @@ export interface BalanceSignal {
   cornering: boolean;
 }
 
+export interface Corner {
+  index: number;
+  entryDist: number;
+  apexDist: number;
+  exitDist: number;
+  minSpeed: number;
+}
+
+export interface CurrentCorner {
+  index: number;
+  phase: "entry" | "mid" | "exit";
+}
+
 export interface TunerSnapshot {
   format: number;
   gameYear: number;
@@ -51,6 +64,8 @@ export interface TunerSnapshot {
   customSetup: number | null;
   lapValid: number | null;
   balance: BalanceSignal | null;
+  corners: Corner[];
+  currentCorner: CurrentCorner | null;
   packetCount: number;
   lastUpdate: number;
 }

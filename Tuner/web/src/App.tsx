@@ -44,7 +44,9 @@ export function App() {
       <main className="tuner-main">
         {s?.setupReceived && s.setup ? (
           <>
-            {s.balance && <BalancePanel balance={s.balance} />}
+            {s.balance && (
+              <BalancePanel balance={s.balance} corners={s.corners} currentCorner={s.currentCorner} />
+            )}
             <SetupPanel setup={s.setup} nextFrontWing={s.nextFrontWingValue} />
           </>
         ) : (

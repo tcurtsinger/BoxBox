@@ -212,3 +212,67 @@ test("balance survives a session-UID change (TT lap reset)", () => {
   assert.equal(snap.sessionUID, "2002");
   assert.ok(snap.balance, "balance must persist across the UID change");
 });
+
+// --- Corner segmentation (LapData id 2 + CarTelemetry id 6) -------------------
+// A 1000 m lap with three corners as Gaussian speed dips (same shape the
+// segmentation unit test uses). The player car is at index 5 (hdr above).
+function gaussSpeed(d: number): number {
+  const corners = [
+    { apex: 250, min: 120, sigma: 45 },
+    { apex: 550, min: 90, sigma: 40 },
+    { apex: 820, min: 150, sigma: 35 },
+  ];
+  let dip = 0;
+  for (const c of corners) dip += (320 - c.min) * Math.exp(-((d - c.apex) ** 2) / (2 * c.sigma ** 2));
+  return 320 - dip;
+}
+function atPlayer<T>(entry: T): T[] {
+  const a: T[] = [];
+  a[5] = entry;
+  return a;
+}
+function step(s: TunerState, d: number, lapNum: number, invalid = false, uid = "1001"): void {
+  const speed = gaussSpeed(d);
+  feed(s, 6, { cars: atPlayer({ index: 5, speed, throttle: speed > 260 ? 1 : 0.3, brake: speed < 200 ? 0.6 : 0 }), mfdPanelIndex: 0, suggestedGear: 0 }, uid);
+  feed(s, 2, { cars: atPlayer({ index: 5, lapDistance: d, currentLapNum: lapNum, currentLapInvalid: invalid }), timeTrialPBCarIdx: 255, timeTrialRivalCarIdx: 255 }, uid);
+}
+function driveLap(s: TunerState, lapNum: number, opts: { invalidAt?: number; uid?: string } = {}): void {
+  for (let d = 0; d <= 1000; d += 5) {
+    step(s, d, lapNum, opts.invalidAt !== undefined && Math.abs(d - opts.invalidAt) < 3, opts.uid);
+  }
+}
+
+test("segments a clean lap into corners and locates the car", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  driveLap(s, 1);
+  assert.equal(s.snapshot().corners.length, 0, "not segmented until the lap completes");
+
+  // Cross the line into lap 2 at Turn 2's apex: finalizes lap 1 and locates us.
+  step(s, 550, 2);
+  const snap = s.snapshot();
+  assert.equal(snap.corners.length, 3);
+  assert.ok(snap.currentCorner);
+  assert.equal(snap.currentCorner.index, 2);
+  assert.equal(snap.currentCorner.phase, "mid");
+});
+
+test("does not segment an invalidated lap", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  driveLap(s, 1, { invalidAt: 300 }); // a cut somewhere on the lap
+  step(s, 10, 2);
+  assert.equal(s.snapshot().corners.length, 0);
+});
+
+test("the corner map survives a session-UID change (TT lap reset)", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  driveLap(s, 1);
+  step(s, 10, 2);
+  assert.equal(s.snapshot().corners.length, 3);
+
+  // New UID (lap reset), same track: the auto-derived map must persist.
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 }, "2002");
+  assert.equal(s.snapshot().corners.length, 3);
+});
