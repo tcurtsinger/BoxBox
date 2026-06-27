@@ -363,3 +363,21 @@ test("the per-corner diagnosis survives a session-UID change (TT lap reset)", ()
   feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 }, "2002");
   assert.ok(s.snapshot().cornerDiagnosis.some((d) => d.mid), "diagnosis persists across the UID change");
 });
+
+test("produces signed setup advice once the diagnosis is established (2d-2)", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  feed(s, 5, gridWith(20)); // a real setup, so advice can be anchored and clamped
+  assert.equal(s.snapshot().setupAdvice, null, "no advice before any diagnosis");
+
+  driveLap(s, 1);
+  step(s, 5, 2); // finalize lap 1 -> corners seen once
+  driveLapWithMotion(s, 2, { frontSlip: 0.08, rearSlip: 0.02 }); // strong understeer
+  step(s, 5, 3); // finalize lap 2 -> corners seen twice (confirmed)
+
+  const adv = s.snapshot().setupAdvice;
+  assert.ok(adv, "advice once corners are confirmed and bucketed");
+  const fw = adv.suggestions.find((x) => x.key === "frontWing");
+  assert.ok(fw && fw.delta > 0, "strong mid understeer -> add front wing");
+  assert.ok(adv.suggestions.every((x) => x.confidence === "prior"), "priors until the loop measures");
+});

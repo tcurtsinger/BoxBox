@@ -22,6 +22,8 @@ import { segmentLap, currentCorner, mergeCornerMap } from "./segmentation.ts";
 import type { TraceSample, MappedCorner, CurrentCorner } from "./segmentation.ts";
 import { newPhaseTriple, foldSample, buildCornerDiagnosis } from "./diagnosis.ts";
 import type { PhaseTriple, CornerDiagnosis } from "./diagnosis.ts";
+import { suggestSetup } from "./suggest.ts";
+import type { SetupAdvice } from "./suggest.ts";
 
 // A lap is only segmented if it is clean and reasonably complete, so a partial
 // out-lap or a cut lap does not seed the corner map with junk.
@@ -80,6 +82,10 @@ export interface TunerSnapshot {
   // Per-corner, per-phase balance aggregated across laps (the 2d diagnosis). Empty
   // until corners exist and cornering frames have been bucketed.
   cornerDiagnosis: CornerDiagnosis[];
+  // Signed setup-slider suggestions derived from the diagnosis (the tuning table +
+  // hand-authored priors). null until there is enough to advise. Every suggestion
+  // is "prior" confidence until the online loop measures a real gain.
+  setupAdvice: SetupAdvice | null;
   packetCount: number;
   lastUpdate: number;
 }
@@ -302,6 +308,16 @@ export class TunerState {
 
   snapshot(): TunerSnapshot {
     const corners = this.#cornerMaps.get(this.trackId) ?? [];
+    const cornerDiagnosis = corners.length
+      ? buildCornerDiagnosis(corners, this.#cornerDiag.get(this.trackId) ?? new Map())
+      : [];
+    // Advice only once the setup is the live one and the diagnosis has something to
+    // say; suggestSetup returns null otherwise.
+    const setupCurrent = this.#setupIsCurrent();
+    const setupAdvice =
+      setupCurrent && this.#setup && cornerDiagnosis.length
+        ? suggestSetup(cornerDiagnosis, this.#setup)
+        : null;
     return {
       format: this.format,
       gameYear: this.gameYear,
@@ -312,7 +328,7 @@ export class TunerState {
       playerCarIndex: this.playerCarIndex,
       sessionTime: this.sessionTime,
       setup: this.#setup,
-      setupReceived: this.#setupIsCurrent(),
+      setupReceived: setupCurrent,
       nextFrontWingValue: this.#nextFrontWingValue,
       equalCarPerformance: this.#equalCarPerformance,
       customSetup: this.#customSetup,
@@ -329,9 +345,8 @@ export class TunerState {
             },
       corners,
       currentCorner: corners.length ? currentCorner(corners, this.#lapDistance) : null,
-      cornerDiagnosis: corners.length
-        ? buildCornerDiagnosis(corners, this.#cornerDiag.get(this.trackId) ?? new Map())
-        : [],
+      cornerDiagnosis,
+      setupAdvice,
       packetCount: this.packetCount,
       lastUpdate: this.lastUpdate,
     };

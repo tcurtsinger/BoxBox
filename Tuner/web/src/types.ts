@@ -77,6 +77,31 @@ export interface CornerDiagnosis {
   exit: PhaseDiagnosis | null;
 }
 
+export type Confidence = "prior" | "forming" | "measured";
+
+// Keys that can carry a suggestion (a subset of the setup levers). Matches
+// SuggestKey in the server's suggest.ts.
+export type SuggestKey =
+  | "frontWing"
+  | "rearWing"
+  | "onThrottle"
+  | "offThrottle"
+  | "frontAntiRollBar"
+  | "rearAntiRollBar"
+  | "brakeBias";
+
+export interface SetupSuggestion {
+  key: SuggestKey;
+  delta: number; // signed, native step units
+  confidence: Confidence;
+  basis: string;
+}
+
+export interface SetupAdvice {
+  headline: string;
+  suggestions: SetupSuggestion[];
+}
+
 export interface TunerSnapshot {
   format: number;
   gameYear: number;
@@ -96,6 +121,7 @@ export interface TunerSnapshot {
   corners: Corner[];
   currentCorner: CurrentCorner | null;
   cornerDiagnosis: CornerDiagnosis[];
+  setupAdvice: SetupAdvice | null;
   packetCount: number;
   lastUpdate: number;
 }
