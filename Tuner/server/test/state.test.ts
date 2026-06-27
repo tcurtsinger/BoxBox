@@ -487,6 +487,24 @@ test("a multi-lever change is not attributed (cannot isolate the effect)", () =>
   assert.equal(s.learnedGains().size, 0, "a two-lever change teaches nothing");
 });
 
+test("the --log captures the baseline setup and each change (self-describing capture)", () => {
+  const s = new TunerState();
+  const recs: any[] = [];
+  s.log = (r) => recs.push(r);
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  feed(s, 5, gridWith(20)); // first real setup -> baseline record
+  feed(s, 5, gridWith(24)); // front wing 20 -> 24 -> change record
+
+  const setupRecs = recs.filter((r) => r.kind === "setup");
+  assert.ok(
+    setupRecs.some((r) => r.initial && r.values.frontWing === 20),
+    "the baseline setup is logged once",
+  );
+  const change = setupRecs.find((r) => r.changed);
+  assert.ok(change, "a change record was logged");
+  assert.deepEqual(change.changed, [{ k: "frontWing", from: 20, to: 24 }]);
+});
+
 test("the estimator survives a session-UID change (TT lap reset)", () => {
   const s = new TunerState();
   confirmCorners(s);

@@ -49,6 +49,13 @@ const TRACKED_LEVERS: SuggestKey[] = [
   "frontWing", "rearWing", "onThrottle", "offThrottle", "frontAntiRollBar", "rearAntiRollBar", "brakeBias",
 ];
 
+// The setup levers' values as a flat record, for the baseline --log capture.
+function leverValues(s: CarSetupEntry): Record<string, number> {
+  const o: Record<string, number> = {};
+  for (const k of SETUP_KEYS) o[k] = s[k] as number;
+  return o;
+}
+
 // Balance-diagnosis tunables. The cornering gate keeps the readout off on
 // straights (where slip is ~0 and the understeer angle divides by a tiny speed);
 // the EMA smooths the ~46 Hz signal over a few tenths of a second.
@@ -226,11 +233,15 @@ export class TunerState {
       // Keep the last real setup: a transient zeroed frame (e.g. mid-reset)
       // should not blank the panel once we have a populated one.
       if (setupLooksReal(mine) && mine) {
+        const first = !this.#setup;
         if (this.#setup) this.#onSetupChange(this.#setup, mine);
         this.#setup = mine;
         this.#nextFrontWingValue = d.nextFrontWingValue;
         this.#setupTrackId = this.trackId;
         this.#setupPlayerIdx = h.playerCarIndex;
+        // Log the baseline setup once, so a capture carries the starting values the
+        // later change records are relative to.
+        if (first) this.log?.({ kind: "setup", t: this.sessionTime, initial: true, values: leverValues(mine) });
       }
     } else if (pkt.id === 14) {
       // equalCarPerformance is session-global, so any dataset carries it; the
@@ -385,7 +396,16 @@ export class TunerState {
   // outgoing setup had a well-sampled window to read as the "before". Either way
   // the window resets, since the car has changed.
   #onSetupChange(old: CarSetupEntry, next: CarSetupEntry): void {
-    if (!SETUP_KEYS.some((k) => old[k] !== next[k])) return; // nothing actually changed
+    const changedKeys = SETUP_KEYS.filter((k) => old[k] !== next[k]);
+    if (changedKeys.length === 0) return; // nothing actually changed
+
+    // Record the change so a --log capture is self-describing (the estimator can be
+    // replayed offline without remembering what was changed by hand).
+    this.log?.({
+      kind: "setup",
+      t: this.sessionTime,
+      changed: changedKeys.map((k) => ({ k, from: old[k], to: next[k] })),
+    });
 
     this.#tryCompletePending();
 
