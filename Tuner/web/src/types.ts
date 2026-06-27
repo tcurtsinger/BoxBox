@@ -42,6 +42,7 @@ export interface Corner {
   apexDist: number;
   exitDist: number;
   minSpeed: number;
+  seen: number; // laps this corner has been detected on (confidence)
 }
 
 export interface CurrentCorner {

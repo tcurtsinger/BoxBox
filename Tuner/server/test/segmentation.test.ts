@@ -67,14 +67,28 @@ test("currentCorner classifies entry / mid / exit and straights", () => {
   }
 });
 
-test("mergeCornerMap seeds, refines on equal count, ignores a different count", () => {
+test("mergeCornerMap seeds, refines a nearby corner, and accumulates new ones", () => {
   const a: Corner[] = [{ index: 1, entryDist: 100, apexDist: 150, exitDist: 200, minSpeed: 100 }];
-  assert.equal(mergeCornerMap(undefined, a), a); // seed
+  const seeded = mergeCornerMap(undefined, a); // seed
+  assert.equal(seeded.length, 1);
+  assert.equal(seeded[0].seen, 1);
 
-  const b: Corner[] = [{ index: 1, entryDist: 110, apexDist: 160, exitDist: 210, minSpeed: 110 }];
-  const refined = mergeCornerMap(a, b);
-  assert.ok(refined[0].apexDist > 150 && refined[0].apexDist < 160, "apex nudged toward the fresh lap");
+  // A second lap detects the same corner (apex within tolerance) -> refine + bump seen.
+  const near: Corner[] = [{ index: 1, entryDist: 110, apexDist: 165, exitDist: 210, minSpeed: 110 }];
+  const refined = mergeCornerMap(seeded, near);
+  assert.equal(refined.length, 1);
+  assert.equal(refined[0].seen, 2);
+  assert.ok(refined[0].apexDist > 150 && refined[0].apexDist < 165, "apex nudged toward the fresh lap");
 
-  const two: Corner[] = [...a, { index: 2, entryDist: 300, apexDist: 350, exitDist: 400, minSpeed: 90 }];
-  assert.equal(mergeCornerMap(a, two), a); // different count: keep the cached map
+  // A richer lap finds the same corner PLUS a new one far away -> the map grows
+  // (the old count-matched merge would have discarded this).
+  const richer: Corner[] = [
+    { index: 1, entryDist: 105, apexDist: 152, exitDist: 205, minSpeed: 102 },
+    { index: 2, entryDist: 300, apexDist: 350, exitDist: 400, minSpeed: 90 },
+  ];
+  const grown = mergeCornerMap(refined, richer);
+  assert.equal(grown.length, 2, "the new far-apart corner is added, not ignored");
+  assert.equal(grown[0].seen, 3); // matched corner seen on all three laps
+  assert.equal(grown[1].seen, 1); // the newcomer
+  assert.deepEqual(grown.map((c) => c.index), [1, 2]); // re-indexed by apex order
 });

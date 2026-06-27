@@ -187,19 +187,55 @@ export function currentCorner(
   return null;
 }
 
-// Fold a fresh lap's corners into the cached per-track map. The first clean lap
-// seeds it; later laps that find the same number of corners nudge the windows
-// toward the running picture (EMA), so the map sharpens with running. A lap that
-// finds a different count is ignored rather than allowed to corrupt the map.
-export function mergeCornerMap(existing: Corner[] | undefined, fresh: Corner[]): Corner[] {
-  if (!existing || existing.length === 0) return fresh;
-  if (fresh.length !== existing.length) return existing;
-  const a = 0.3;
-  return existing.map((c, i) => ({
-    index: i + 1,
-    entryDist: c.entryDist + a * (fresh[i].entryDist - c.entryDist),
-    apexDist: c.apexDist + a * (fresh[i].apexDist - c.apexDist),
-    exitDist: c.exitDist + a * (fresh[i].exitDist - c.exitDist),
-    minSpeed: c.minSpeed + a * (fresh[i].minSpeed - c.minSpeed),
-  }));
+// A cached corner carries `seen`: how many laps it has been detected on, i.e. its
+// confidence. A real corner climbs as laps accumulate; a one-off false positive
+// stays at 1, so consumers can weight or filter by it.
+export interface MappedCorner extends Corner {
+  seen: number;
+}
+
+const MATCH_TOL_M = 100; // fresh apex within this of a cached one = the same corner
+const GEO_ALPHA = 0.3; // EMA weight when refining a matched corner's geometry
+
+// Fold a fresh lap's corners into the per-track map by PROXIMITY, not by count:
+// each fresh corner is matched to the nearest cached corner whose apex is within
+// MATCH_TOL_M (and not already taken), refining its window and bumping `seen`;
+// unmatched fresh corners join as new candidates (seen 1). So the map converges
+// to the union of corners across laps and sharpens with every lap - a richer lap
+// is no longer discarded just because it found a different number of corners.
+export function mergeCornerMap(
+  existing: MappedCorner[] | undefined,
+  fresh: Corner[],
+  tolM = MATCH_TOL_M,
+): MappedCorner[] {
+  if (!existing || existing.length === 0) {
+    return fresh.map((c, i) => ({ ...c, index: i + 1, seen: 1 }));
+  }
+  const out: MappedCorner[] = existing.map((c) => ({ ...c }));
+  const taken = new Set<number>();
+  for (const f of fresh) {
+    let best = -1;
+    let bestD = Infinity;
+    for (let i = 0; i < out.length; i++) {
+      if (taken.has(i)) continue;
+      const d = Math.abs(out[i].apexDist - f.apexDist);
+      if (d <= tolM && d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    if (best >= 0) {
+      taken.add(best);
+      const e = out[best];
+      e.entryDist += GEO_ALPHA * (f.entryDist - e.entryDist);
+      e.apexDist += GEO_ALPHA * (f.apexDist - e.apexDist);
+      e.exitDist += GEO_ALPHA * (f.exitDist - e.exitDist);
+      e.minSpeed += GEO_ALPHA * (f.minSpeed - e.minSpeed);
+      e.seen += 1;
+    } else {
+      out.push({ ...f, seen: 1 });
+    }
+  }
+  out.sort((a, b) => a.apexDist - b.apexDist);
+  return out.map((c, i) => ({ ...c, index: i + 1 }));
 }

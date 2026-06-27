@@ -19,7 +19,7 @@ import type {
 } from "../../../shared/parser/index.ts";
 import { constants } from "../../../shared/parser/index.ts";
 import { segmentLap, currentCorner, mergeCornerMap } from "./segmentation.ts";
-import type { TraceSample, Corner, CurrentCorner } from "./segmentation.ts";
+import type { TraceSample, MappedCorner, CurrentCorner } from "./segmentation.ts";
 
 // A lap is only segmented if it is clean and reasonably complete, so a partial
 // out-lap or a cut lap does not seed the corner map with junk.
@@ -70,9 +70,10 @@ export interface TunerSnapshot {
   lapValid: number | null; // player's session-best lap validity
   // Live balance from MotionEx (id 13). null until a corner has been driven.
   balance: BalanceSignal | null;
-  // Corner map for the current track (auto-derived from clean laps) and where the
-  // car is on it right now. corners is empty until a clean lap is segmented.
-  corners: Corner[];
+  // Corner map for the current track (auto-derived from laps; each corner carries
+  // a `seen` confidence) and where the car is on it right now. Empty until a lap
+  // is segmented.
+  corners: MappedCorner[];
   currentCorner: CurrentCorner | null;
   packetCount: number;
   lastUpdate: number;
@@ -125,7 +126,7 @@ export class TunerState {
   #tThrottle = 0;
   #tBrake = 0;
   #tSteer = 0; // normalized steering input (-1..1), for the log only
-  #cornerMaps = new Map<number, Corner[]>();
+  #cornerMaps = new Map<number, MappedCorner[]>();
 
   ingest(pkt: ParsedPacket, atMs: number): void {
     const h = pkt.header;

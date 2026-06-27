@@ -65,8 +65,10 @@ export function BalancePanel({ balance, corners, currentCorner }: Props) {
 
       {corners.length > 0 && (
         <p className="balance-foot">
-          {corners.length} corners mapped from clean laps · per-corner diagnosis and setup
-          suggestions arrive next.
+          {corners.length} corners mapped{" "}
+          {corners.filter((c) => c.seen >= 2).length > 0 &&
+            `(${corners.filter((c) => c.seen >= 2).length} confirmed) `}
+          · sharpens each lap · per-corner diagnosis and setup suggestions arrive next.
         </p>
       )}
     </section>

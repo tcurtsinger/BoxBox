@@ -265,6 +265,18 @@ test("still maps a lap that was flagged invalid (geometry survives a cut)", () =
   assert.equal(s.snapshot().corners.length, 3, "the corner map is built regardless of validity");
 });
 
+test("the corner map sharpens across laps (seen count climbs)", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  driveLap(s, 1);
+  driveLap(s, 2); // crossing into lap 2 finalizes lap 1, etc.
+  driveLap(s, 3);
+  step(s, 10, 4); // finalize lap 3
+  const corners = s.snapshot().corners;
+  assert.equal(corners.length, 3);
+  assert.ok(corners.every((c) => c.seen >= 3), "each corner confirmed on all three laps");
+});
+
 test("does not segment an incomplete lap (partial coverage)", () => {
   const s = new TunerState();
   feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
