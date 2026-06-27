@@ -1,4 +1,4 @@
-import type { BalanceSignal } from "../types";
+import type { BalanceSignal, PhaseTone } from "../types";
 
 // Slip-balance scale for the gauge. Realistic front-minus-rear slip-angle
 // differences sit within a couple of degrees; values outside the range peg the
@@ -29,3 +29,12 @@ export function indicatorPct(slipBalance: number): number {
   const clamped = Math.max(-GAUGE_RANGE_RAD, Math.min(GAUGE_RANGE_RAD, slipBalance));
   return ((clamped + GAUGE_RANGE_RAD) / (2 * GAUGE_RANGE_RAD)) * 100;
 }
+
+// Short tags for the per-corner diagnosis cells. The tone (and its colour, via the
+// diag-<tone> class) is computed server-side; the web only labels and colours it.
+export const PHASE_TONE_LABEL: Record<PhaseTone, string> = {
+  understeer: "US",
+  oversteer: "OS",
+  "power-oversteer": "POW",
+  neutral: "·",
+};

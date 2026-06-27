@@ -20,6 +20,8 @@ import type {
 import { constants } from "../../../shared/parser/index.ts";
 import { segmentLap, currentCorner, mergeCornerMap } from "./segmentation.ts";
 import type { TraceSample, MappedCorner, CurrentCorner } from "./segmentation.ts";
+import { newPhaseTriple, foldSample, buildCornerDiagnosis } from "./diagnosis.ts";
+import type { PhaseTriple, CornerDiagnosis } from "./diagnosis.ts";
 
 // A lap is only segmented if it is clean and reasonably complete, so a partial
 // out-lap or a cut lap does not seed the corner map with junk.
@@ -75,6 +77,9 @@ export interface TunerSnapshot {
   // is segmented.
   corners: MappedCorner[];
   currentCorner: CurrentCorner | null;
+  // Per-corner, per-phase balance aggregated across laps (the 2d diagnosis). Empty
+  // until corners exist and cornering frames have been bucketed.
+  cornerDiagnosis: CornerDiagnosis[];
   packetCount: number;
   lastUpdate: number;
 }
@@ -127,6 +132,9 @@ export class TunerState {
   #tBrake = 0;
   #tSteer = 0; // normalized steering input (-1..1), for the log only
   #cornerMaps = new Map<number, MappedCorner[]>();
+  // Per-track, per-corner (by stable id) phase buckets for the 2d diagnosis.
+  // Survives UID resets like the corner map, so it accumulates across laps/runs.
+  #cornerDiag = new Map<number, Map<number, PhaseTriple>>();
 
   ingest(pkt: ParsedPacket, atMs: number): void {
     const h = pkt.header;
@@ -206,6 +214,29 @@ export class TunerState {
       sa, fw: steer, yaw: yawRate, vx: d.localVelocity.x, vz: d.localVelocity.z,
       fs: frontSlip, rs: rearSlip, sb: frontSlip - rearSlip, ua: understeerAngle, cor: cornering,
     });
+
+    // Attribute this frame to a (corner, phase) bucket for the 2d per-phase
+    // diagnosis. Gated on being inside a mapped corner window and at real road
+    // speed, but NOT on the steer-based cornering gate: an on-throttle exit (where
+    // the steer is already unwinding) is exactly the traction signal we must keep.
+    const corners = this.#cornerMaps.get(this.trackId);
+    if (corners && corners.length && speed > CORNERING_SPEED_FLOOR) {
+      const cc = currentCorner(corners, this.#lapDistance);
+      if (cc) {
+        const corner = corners[cc.index - 1];
+        let byCorner = this.#cornerDiag.get(this.trackId);
+        if (!byCorner) {
+          byCorner = new Map();
+          this.#cornerDiag.set(this.trackId, byCorner);
+        }
+        let triple = byCorner.get(corner.id);
+        if (!triple) {
+          triple = newPhaseTriple();
+          byCorner.set(corner.id, triple);
+        }
+        foldSample(triple[cc.phase], frontSlip - rearSlip, understeerAngle, this.#tThrottle, this.#tBrake);
+      }
+    }
 
     if (!cornering) return;
     this.#slipBalance = ema(this.#slipBalance, frontSlip - rearSlip);
@@ -298,6 +329,9 @@ export class TunerState {
             },
       corners,
       currentCorner: corners.length ? currentCorner(corners, this.#lapDistance) : null,
+      cornerDiagnosis: corners.length
+        ? buildCornerDiagnosis(corners, this.#cornerDiag.get(this.trackId) ?? new Map())
+        : [],
       packetCount: this.packetCount,
       lastUpdate: this.lastUpdate,
     };

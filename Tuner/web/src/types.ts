@@ -38,6 +38,7 @@ export interface BalanceSignal {
 
 export interface Corner {
   index: number;
+  id: number; // stable identity across merges (diagnosis buckets key on it)
   entryDist: number;
   apexDist: number;
   exitDist: number;
@@ -45,9 +46,35 @@ export interface Corner {
   seen: number; // laps this corner has been detected on (confidence)
 }
 
+export type CornerPhase = "entry" | "mid" | "exit";
+
 export interface CurrentCorner {
   index: number;
-  phase: "entry" | "mid" | "exit";
+  phase: CornerPhase;
+}
+
+export type PhaseTone = "understeer" | "oversteer" | "power-oversteer" | "neutral";
+
+// Per-phase aggregated balance (means across laps) plus its derived tone. The
+// server owns the classifier; the web only renders the tone.
+export interface PhaseDiagnosis {
+  samples: number;
+  slipBalance: number; // radians, >0 understeer
+  understeerAngle: number; // radians
+  throttle: number; // 0..1
+  brake: number; // 0..1
+  tone: PhaseTone;
+}
+
+export interface CornerDiagnosis {
+  id: number;
+  index: number;
+  apexDist: number;
+  minSpeed: number;
+  seen: number;
+  entry: PhaseDiagnosis | null;
+  mid: PhaseDiagnosis | null;
+  exit: PhaseDiagnosis | null;
 }
 
 export interface TunerSnapshot {
@@ -68,6 +95,7 @@ export interface TunerSnapshot {
   balance: BalanceSignal | null;
   corners: Corner[];
   currentCorner: CurrentCorner | null;
+  cornerDiagnosis: CornerDiagnosis[];
   packetCount: number;
   lastUpdate: number;
 }

@@ -45,7 +45,12 @@ export function App() {
         {s?.setupReceived && s.setup ? (
           <>
             {s.balance && (
-              <BalancePanel balance={s.balance} corners={s.corners} currentCorner={s.currentCorner} />
+              <BalancePanel
+                balance={s.balance}
+                corners={s.corners}
+                currentCorner={s.currentCorner}
+                diagnosis={s.cornerDiagnosis}
+              />
             )}
             <SetupPanel setup={s.setup} nextFrontWing={s.nextFrontWingValue} />
           </>

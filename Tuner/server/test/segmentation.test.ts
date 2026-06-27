@@ -92,3 +92,29 @@ test("mergeCornerMap seeds, refines a nearby corner, and accumulates new ones", 
   assert.equal(grown[1].seen, 1); // the newcomer
   assert.deepEqual(grown.map((c) => c.index), [1, 2]); // re-indexed by apex order
 });
+
+test("mergeCornerMap keeps a stable id when an earlier corner shifts the index", () => {
+  // One known corner around apex 400.
+  const first = mergeCornerMap(undefined, [
+    { index: 1, entryDist: 300, apexDist: 400, exitDist: 500, minSpeed: 90 },
+  ]);
+  assert.equal(first[0].id, 1);
+  assert.equal(first[0].index, 1);
+
+  // A later lap finds an EARLIER corner (apex 150) plus the known one. The map
+  // re-indexes by apex order, but ids must not move - the 2d diagnosis buckets
+  // are keyed on id, so a shifting index would mis-attribute their samples.
+  const grown = mergeCornerMap(first, [
+    { index: 1, entryDist: 100, apexDist: 150, exitDist: 200, minSpeed: 100 },
+    { index: 2, entryDist: 300, apexDist: 405, exitDist: 500, minSpeed: 92 },
+  ]);
+  assert.equal(grown.length, 2);
+
+  const original = grown.find((c) => c.id === 1);
+  assert.ok(original, "the original corner keeps id 1");
+  assert.equal(original.index, 2, "re-indexed to 2 by apex order");
+  assert.ok(Math.abs(original.apexDist - 400) < 5, "still the ~400 m corner");
+
+  const newer = grown.find((c) => c.id === 2);
+  assert.ok(newer && newer.index === 1, "the earlier newcomer is index 1 with a fresh id");
+});

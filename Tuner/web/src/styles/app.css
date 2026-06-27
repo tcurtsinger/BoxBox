@@ -267,6 +267,112 @@
   color: var(--text);
 }
 
+/* ---- Per-corner diagnosis table ---------------------------------------- */
+.diag {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+.diag-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.diag-title > span:first-child {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.diag-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.diag-table {
+  display: flex;
+  flex-direction: column;
+}
+.diag-row {
+  display: grid;
+  grid-template-columns: 48px 72px repeat(3, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.diag-row:first-child {
+  border-top: none;
+}
+.diag-head {
+  padding-bottom: 7px;
+}
+.diag-head span,
+.diag-phase-head {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.diag-row-faint {
+  opacity: 0.5;
+}
+.diag-turn {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.diag-min {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.diag-min small {
+  font-size: 9px;
+  color: var(--text-faint);
+}
+.diag-cell {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+.diag-tag {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+}
+.diag-deg {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+.diag-understeer .diag-tag {
+  color: var(--amber);
+}
+.diag-oversteer .diag-tag {
+  color: var(--blue);
+}
+.diag-power-oversteer .diag-tag {
+  color: var(--red);
+}
+.diag-neutral .diag-tag {
+  color: var(--text-faint);
+}
+.diag-empty {
+  font-family: var(--mono);
+  color: var(--text-faint);
+  opacity: 0.5;
+}
+
 /* ---- Setup panel -------------------------------------------------------- */
 .tuner-main {
   flex: 1;

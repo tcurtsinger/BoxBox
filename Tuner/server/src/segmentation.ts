@@ -190,8 +190,15 @@ export function currentCorner(
 // A cached corner carries `seen`: how many laps it has been detected on, i.e. its
 // confidence. A real corner climbs as laps accumulate; a one-off false positive
 // stays at 1, so consumers can weight or filter by it.
+//
+// `id` is a stable identity assigned once when the corner first joins the map and
+// preserved across every merge, unlike `index` which is re-derived by apex order
+// each merge (and so shifts when a new corner is discovered earlier in the lap).
+// Per-corner accumulators (the 2d diagnosis buckets) key on `id` so they stay
+// attached to the same physical corner even as the map grows and re-indexes.
 export interface MappedCorner extends Corner {
   seen: number;
+  id: number;
 }
 
 const MATCH_TOL_M = 100; // fresh apex within this of a cached one = the same corner
@@ -209,9 +216,10 @@ export function mergeCornerMap(
   tolM = MATCH_TOL_M,
 ): MappedCorner[] {
   if (!existing || existing.length === 0) {
-    return fresh.map((c, i) => ({ ...c, index: i + 1, seen: 1 }));
+    return fresh.map((c, i) => ({ ...c, index: i + 1, seen: 1, id: i + 1 }));
   }
   const out: MappedCorner[] = existing.map((c) => ({ ...c }));
+  let nextId = Math.max(0, ...out.map((c) => c.id)) + 1; // stable ids never reused
   const taken = new Set<number>();
   for (const f of fresh) {
     let best = -1;
@@ -233,9 +241,10 @@ export function mergeCornerMap(
       e.minSpeed += GEO_ALPHA * (f.minSpeed - e.minSpeed);
       e.seen += 1;
     } else {
-      out.push({ ...f, seen: 1 });
+      out.push({ ...f, seen: 1, id: nextId++ });
     }
   }
   out.sort((a, b) => a.apexDist - b.apexDist);
+  // Re-index by apex order for display; `id` and `seen` ride along unchanged.
   return out.map((c, i) => ({ ...c, index: i + 1 }));
 }

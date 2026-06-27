@@ -313,3 +313,53 @@ test("the corner map survives a session-UID change (TT lap reset)", () => {
   feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 }, "2002");
   assert.equal(s.snapshot().corners.length, 3);
 });
+
+// --- Per-corner, per-phase diagnosis (2d-1) -----------------------------------
+// Like step(), but also feeds a MotionEx (id 13) frame so the balance is bucketed
+// into the (corner, phase) it belongs to. The default sample understeers.
+function stepWithMotion(
+  s: TunerState,
+  d: number,
+  lapNum: number,
+  opts: { frontSlip?: number; rearSlip?: number } = {},
+  uid = "1001",
+): void {
+  step(s, d, lapNum, false, uid);
+  feed(s, 13, motionEx({ frontSlip: opts.frontSlip ?? 0.05, rearSlip: opts.rearSlip ?? 0.02, speed: 50 }), uid);
+}
+function driveLapWithMotion(s: TunerState, lapNum: number, opts: { frontSlip?: number; rearSlip?: number } = {}): void {
+  for (let d = 0; d <= 1000; d += 5) stepWithMotion(s, d, lapNum, opts);
+}
+
+test("aggregates a per-corner, per-phase diagnosis once corners exist", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  driveLap(s, 1); // builds the trace (no motion yet)
+  step(s, 5, 2); // finalize lap 1 -> the corner map exists
+  assert.equal(s.snapshot().corners.length, 3);
+  assert.deepEqual(
+    s.snapshot().cornerDiagnosis.map((d) => d.mid),
+    [null, null, null],
+    "no balance bucketed until motion frames flow with corners present",
+  );
+
+  driveLapWithMotion(s, 2); // now fronts slip more than rears, in every corner window
+  const diag = s.snapshot().cornerDiagnosis;
+  assert.equal(diag.length, 3);
+  const mids = diag.filter((d) => d.mid);
+  assert.ok(mids.length >= 1, "at least one corner got mid-phase samples");
+  assert.ok(mids.every((d) => d.mid!.slipBalance > 0), "mid-corner reads understeer");
+  assert.ok(diag.every((d) => typeof d.id === "number"), "each diagnosis carries its stable corner id");
+});
+
+test("the per-corner diagnosis survives a session-UID change (TT lap reset)", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  driveLap(s, 1);
+  step(s, 5, 2);
+  driveLapWithMotion(s, 2);
+  assert.ok(s.snapshot().cornerDiagnosis.some((d) => d.mid), "diagnosis present before reset");
+
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 }, "2002");
+  assert.ok(s.snapshot().cornerDiagnosis.some((d) => d.mid), "diagnosis persists across the UID change");
+});
