@@ -265,6 +265,23 @@ test("does not segment an invalidated lap", () => {
   assert.equal(s.snapshot().corners.length, 0);
 });
 
+test("the diagnostic log captures raw motion frames and the resolved track name", () => {
+  const s = new TunerState();
+  const recs: any[] = [];
+  s.log = (r) => recs.push(r);
+
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 }); // Melbourne
+  feed(s, 13, motionEx());
+
+  assert.equal(s.snapshot().trackName, "Melbourne"); // trackId 0 resolves to a name
+  const session = recs.find((r) => r.kind === "session");
+  assert.ok(session && session.trackId === 0);
+  const frame = recs.find((r) => r.kind === "f");
+  assert.ok(frame, "a raw motion frame was logged");
+  assert.equal(frame.sa.length, 4); // the four wheel slip angles
+  assert.ok(frame.fs > frame.rs, "front slip exceeds rear (the understeer sample)");
+});
+
 test("the corner map survives a session-UID change (TT lap reset)", () => {
   const s = new TunerState();
   feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });

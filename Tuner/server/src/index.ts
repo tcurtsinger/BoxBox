@@ -1,15 +1,25 @@
 // BoxBox Tuner live ingest CLI. Point F1 (Time Trial) at this machine and watch
-// the auto-detected setup. Zero dependencies.   node src/index.ts [udpPort]
+// the auto-detected setup. Zero dependencies.
+//   node src/index.ts [udpPort] [--log <file>]
 // Also serves the setup snapshot over HTTP/SSE for the web panel.
-//   F1_UDP_PORT / first arg = UDP port (default 20777)
-//   TUNER_HTTP_PORT          = HTTP port (default 8090)
+//   F1_UDP_PORT / first numeric arg = UDP port (default 20777)
+//   TUNER_HTTP_PORT                 = HTTP port (default 8090)
+//   --log <file>                    = capture raw motion/lap/corner frames as
+//                                     JSONL (for offline balance + segmentation
+//                                     analysis); defaults to tuner-log.jsonl
+import fs from "node:fs";
 import { TunerState } from "./state.ts";
 import { attachUdp } from "./net/udp.ts";
 import { startHttpServer } from "./net/http.ts";
 
-const UDP_PORT = Number.isFinite(Number(process.argv[2]))
-  ? Number(process.argv[2])
-  : Number(process.env.F1_UDP_PORT) || 20777;
+const argv = process.argv.slice(2);
+let UDP_PORT = Number(process.env.F1_UDP_PORT) || 20777;
+let LOG_PATH: string | null = null;
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === "--log" || a === "-l") LOG_PATH = argv[++i] || "tuner-log.jsonl";
+  else if (Number.isFinite(Number(a))) UDP_PORT = Number(a);
+}
 const HTTP_PORT = Number(process.env.TUNER_HTTP_PORT) || 8090;
 
 const SESSION_LABEL: Record<number, string> = {
@@ -19,6 +29,16 @@ const SESSION_LABEL: Record<number, string> = {
 };
 
 const state = new TunerState();
+
+let logStream: fs.WriteStream | null = null;
+let logCount = 0;
+if (LOG_PATH) {
+  logStream = fs.createWriteStream(LOG_PATH, { flags: "a" });
+  state.log = (rec) => {
+    logStream!.write(JSON.stringify(rec) + "\n");
+    logCount++;
+  };
+}
 
 attachUdp(state, {
   port: UDP_PORT,
@@ -39,7 +59,7 @@ function n(v: number, d = 1): string {
 function render(): void {
   const s = state.snapshot();
   const out: string[] = [];
-  out.push(`BoxBox Tuner   UDP ${UDP_PORT} / HTTP ${HTTP_PORT}   packets ${s.packetCount}`);
+  out.push(`BoxBox Tuner   UDP ${UDP_PORT} / HTTP ${HTTP_PORT}   packets ${s.packetCount}${LOG_PATH ? `   log: ${LOG_PATH} (${logCount})` : ""}`);
 
   if (!s.setupReceived || !s.setup) {
     out.push("");
@@ -52,7 +72,19 @@ function render(): void {
   }
 
   const c = s.setup;
-  out.push(`Session ${SESSION_LABEL[s.sessionType] ?? s.sessionType}   trackId ${s.trackId}   format ${s.format}   player car ${s.playerCarIndex}`);
+  const track = s.trackName ? `${s.trackName} (#${s.trackId})` : `track #${s.trackId}`;
+  out.push(`Session ${SESSION_LABEL[s.sessionType] ?? s.sessionType}   ${track}   format ${s.format}   player car ${s.playerCarIndex}`);
+  if (s.currentCorner) {
+    out.push(`  Corner: T${s.currentCorner.index} ${s.currentCorner.phase}   (${s.corners.length} mapped)`);
+  } else if (s.corners.length) {
+    out.push(`  Corner: straight   (${s.corners.length} mapped)`);
+  }
+  if (s.balance) {
+    const v = s.balance.cornering
+      ? (s.balance.slipBalance > 0.005 ? "UNDERSTEER" : s.balance.slipBalance < -0.005 ? "OVERSTEER" : "neutral")
+      : "(straight)";
+    out.push(`  Balance: ${v}   slip F ${n(s.balance.frontSlip * 57.3, 2)} R ${n(s.balance.rearSlip * 57.3, 2)} deg`);
+  }
   out.push("");
   out.push(`  Aero        front wing ${c.frontWing}    rear wing ${c.rearWing}`);
   out.push(`  Diff        on ${c.onThrottle}%   off ${c.offThrottle}%   engine braking ${c.engineBraking}%`);
@@ -77,5 +109,9 @@ console.log(`mock ready: serving Tuner snapshot on :${HTTP_PORT}`);
 
 process.on("SIGINT", () => {
   http.close();
+  if (logStream) {
+    logStream.end();
+    console.log(`\nLog written: ${LOG_PATH} (${logCount} records)`);
+  }
   process.exit(0);
 });

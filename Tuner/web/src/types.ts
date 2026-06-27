@@ -55,6 +55,7 @@ export interface TunerSnapshot {
   sessionUID: string;
   sessionType: number;
   trackId: number;
+  trackName: string | null;
   playerCarIndex: number;
   sessionTime: number;
   setup: CarSetupEntry | null;

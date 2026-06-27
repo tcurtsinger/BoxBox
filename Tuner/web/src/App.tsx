@@ -29,7 +29,7 @@ export function App() {
         </div>
         <div className="header-meta">
           <Meta label="Session" value={sessionLabel} />
-          <Meta label="Track" value={s && s.trackId >= 0 ? `#${s.trackId}` : "-"} />
+          <Meta label="Track" value={s && s.trackId >= 0 ? (s.trackName ?? `#${s.trackId}`) : "-"} />
           <Meta label="Setup" value={s?.setupReceived ? "Auto-detected" : "Waiting"} />
         </div>
         {s && s.equalCarPerformance !== null && (

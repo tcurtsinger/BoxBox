@@ -17,6 +17,7 @@ import type {
   LapDataData,
   CarTelemetryData,
 } from "../../../shared/parser/index.ts";
+import { constants } from "../../../shared/parser/index.ts";
 import { segmentLap, currentCorner, mergeCornerMap } from "./segmentation.ts";
 import type { TraceSample, Corner, CurrentCorner } from "./segmentation.ts";
 
@@ -56,6 +57,7 @@ export interface TunerSnapshot {
   sessionUID: string;
   sessionType: number; // 18 = Time Trial, 1-4 = Practice (raw; labelled on the web)
   trackId: number;
+  trackName: string | null; // resolved circuit name, null if the id is unknown
   playerCarIndex: number;
   sessionTime: number;
   setup: CarSetupEntry | null;
@@ -86,6 +88,10 @@ function setupLooksReal(s: CarSetupEntry | null): boolean {
 }
 
 export class TunerState {
+  // Optional diagnostic log sink (the server's --log flag). When set, raw motion
+  // frames, lap traces and segmented corners are emitted for offline analysis -
+  // how we confirm the balance metric and tune the segmentation against real laps.
+  log: ((rec: unknown) => void) | null = null;
   format = 0;
   gameYear = 0;
   sessionUID = "";
@@ -118,6 +124,7 @@ export class TunerState {
   #tSpeed: number | null = null;
   #tThrottle = 0;
   #tBrake = 0;
+  #tSteer = 0; // normalized steering input (-1..1), for the log only
   #cornerMaps = new Map<number, Corner[]>();
 
   ingest(pkt: ParsedPacket, atMs: number): void {
@@ -132,6 +139,9 @@ export class TunerState {
 
     if (pkt.id === 1) {
       const s = pkt.data as SessionData;
+      if (s.trackId !== this.trackId) {
+        this.log?.({ kind: "session", t: h.sessionTime, trackId: s.trackId, trackLength: s.trackLength, sessionType: s.sessionType });
+      }
       this.sessionType = s.sessionType;
       this.trackId = s.trackId;
       this.#trackLength = s.trackLength;
@@ -143,6 +153,7 @@ export class TunerState {
         this.#tSpeed = t.speed;
         this.#tThrottle = t.throttle;
         this.#tBrake = t.brake;
+        this.#tSteer = t.steer;
       }
     } else if (pkt.id === 5) {
       const d = pkt.data as CarSetupsData;
@@ -178,17 +189,24 @@ export class TunerState {
     const rearSlip = (Math.abs(sa[0]) + Math.abs(sa[1])) / 2;
     const speed = Math.hypot(d.localVelocity.x, d.localVelocity.z);
     const steer = d.frontWheelsAngle;
-
-    this.#cornering = speed > CORNERING_SPEED_FLOOR && Math.abs(steer) > CORNERING_STEER_FLOOR;
-    if (!this.#cornering) return;
-
+    const yawRate = d.angularVelocity.y;
     // Understeer angle: actual steer minus the Ackermann steer the yaw response
     // implies. Direction-normalized by steer sign so >0 means understeer in
-    // either-handed corner.
-    const yawRate = d.angularVelocity.y;
-    const ackermann = (WHEELBASE_M * yawRate) / speed;
-    const understeerAngle = (steer - ackermann) * Math.sign(steer);
+    // either-handed corner. Guard the divide at a crawl.
+    const understeerAngle = speed > 1 ? (steer - (WHEELBASE_M * yawRate) / speed) * Math.sign(steer) : 0;
+    const cornering = speed > CORNERING_SPEED_FLOOR && Math.abs(steer) > CORNERING_STEER_FLOOR;
+    this.#cornering = cornering;
 
+    // Log the raw frame (incl. straights) before the gate, so a real lap can be
+    // replayed offline to confirm the sign convention and tune the metric.
+    this.log?.({
+      kind: "f", t: this.sessionTime, d: this.#lapDistance, lap: this.#currentLapNum, ok: !this.#lapInvalidated,
+      sp: this.#tSpeed, th: this.#tThrottle, br: this.#tBrake, st: this.#tSteer,
+      sa, fw: steer, yaw: yawRate, vx: d.localVelocity.x, vz: d.localVelocity.z,
+      fs: frontSlip, rs: rearSlip, sb: frontSlip - rearSlip, ua: understeerAngle, cor: cornering,
+    });
+
+    if (!cornering) return;
     this.#slipBalance = ema(this.#slipBalance, frontSlip - rearSlip);
     this.#frontSlip = ema(this.#frontSlip, frontSlip);
     this.#rearSlip = ema(this.#rearSlip, rearSlip);
@@ -231,6 +249,7 @@ export class TunerState {
     if (span < MIN_LAP_COVERAGE * this.#trackLength) return;
 
     const fresh = segmentLap(this.#lapTrace);
+    this.log?.({ kind: "corners", lap: this.#currentLapNum, trackId: this.trackId, samples: this.#lapTrace.length, corners: fresh });
     if (fresh.length === 0) return;
     this.#cornerMaps.set(this.trackId, mergeCornerMap(this.#cornerMaps.get(this.trackId), fresh));
   }
@@ -254,6 +273,7 @@ export class TunerState {
       sessionUID: this.sessionUID,
       sessionType: this.sessionType,
       trackId: this.trackId,
+      trackName: constants.TRACK_NAMES[this.trackId] ?? null,
       playerCarIndex: this.playerCarIndex,
       sessionTime: this.sessionTime,
       setup: this.#setup,
