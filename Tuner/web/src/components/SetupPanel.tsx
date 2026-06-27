@@ -1,98 +1,37 @@
 import type { CarSetupEntry } from "../types";
+import { SETUP_GROUPS, fillPct } from "../presentation/setup";
 
 interface Props {
   setup: CarSetupEntry;
   nextFrontWing: number;
 }
 
-interface Group {
-  title: string;
-  unit?: string;
-  rows: [string, string][];
-}
-
-const int = (v: number) => String(Math.round(v));
-const pct = (v: number) => `${Math.round(v)}%`;
-const deg = (v: number) => `${v.toFixed(2)}°`;
-const psi = (v: number) => v.toFixed(1);
-const kg = (v: number) => `${v.toFixed(1)} kg`;
-
-// Grouped to mirror the in-game setup screen. Values are auto-detected from the
-// Car Setups packet; the signed suggestion + confidence colour will slot in beside
-// each value once the diagnosis engine lands. (Layout to be refined against real
-// in-game reference screenshots.)
+// Mirrors the in-game setup screen: grouped sliders, each row a label, a fill bar
+// showing where the value sits in its range, and the value. The signed suggestion
+// + confidence colour will slot in beside the value once the diagnosis engine lands.
 export function SetupPanel({ setup, nextFrontWing }: Props) {
-  const groups: Group[] = [
-    {
-      title: "Aerodynamics",
-      rows: [
-        ["Front Wing", int(setup.frontWing)],
-        ["Rear Wing", int(setup.rearWing)],
-      ],
-    },
-    {
-      title: "Transmission",
-      rows: [
-        ["Differential On-Throttle", pct(setup.onThrottle)],
-        ["Differential Off-Throttle", pct(setup.offThrottle)],
-        ["Engine Braking", pct(setup.engineBraking)],
-      ],
-    },
-    {
-      title: "Suspension Geometry",
-      rows: [
-        ["Front Camber", deg(setup.frontCamber)],
-        ["Rear Camber", deg(setup.rearCamber)],
-        ["Front Toe", deg(setup.frontToe)],
-        ["Rear Toe", deg(setup.rearToe)],
-      ],
-    },
-    {
-      title: "Suspension",
-      rows: [
-        ["Front Suspension", int(setup.frontSuspension)],
-        ["Rear Suspension", int(setup.rearSuspension)],
-        ["Front Anti-Roll Bar", int(setup.frontAntiRollBar)],
-        ["Rear Anti-Roll Bar", int(setup.rearAntiRollBar)],
-        ["Front Ride Height", int(setup.frontRideHeight)],
-        ["Rear Ride Height", int(setup.rearRideHeight)],
-      ],
-    },
-    {
-      title: "Brakes",
-      rows: [
-        ["Brake Pressure", pct(setup.brakePressure)],
-        ["Brake Bias", pct(setup.brakeBias)],
-      ],
-    },
-    {
-      title: "Tyre Pressures",
-      unit: "psi",
-      rows: [
-        ["Front Left", psi(setup.frontLeftTyrePressure)],
-        ["Front Right", psi(setup.frontRightTyrePressure)],
-        ["Rear Left", psi(setup.rearLeftTyrePressure)],
-        ["Rear Right", psi(setup.rearRightTyrePressure)],
-      ],
-    },
-  ];
-
   return (
     <div className="setup">
       <div className="setup-grid">
-        {groups.map((g) => (
+        {SETUP_GROUPS.map((g) => (
           <section className="setup-card" key={g.title}>
             <h2 className="setup-card-title">
               {g.title}
               {g.unit && <span className="setup-card-unit">{g.unit}</span>}
             </h2>
             <div className="setup-rows">
-              {g.rows.map(([label, value]) => (
-                <div className="setup-row" key={label}>
-                  <span className="setup-label">{label}</span>
-                  <span className="setup-value">{value}</span>
-                </div>
-              ))}
+              {g.sliders.map((s) => {
+                const value = setup[s.key];
+                return (
+                  <div className="setup-row" key={s.key}>
+                    <span className="setup-label">{s.label}</span>
+                    <span className="setup-track" title={`${s.fmt(s.min)} – ${s.fmt(s.max)}`}>
+                      <span className="setup-fill" style={{ width: `${fillPct(value, s.min, s.max)}%` }} />
+                    </span>
+                    <span className="setup-value">{s.fmt(value)}</span>
+                  </div>
+                );
+              })}
             </div>
           </section>
         ))}
@@ -100,8 +39,8 @@ export function SetupPanel({ setup, nextFrontWing }: Props) {
 
       <p className="setup-foot">
         <span>
-          Ballast {int(setup.ballast)} &middot; Fuel {kg(setup.fuelLoad)} &middot; Next front wing{" "}
-          {int(nextFrontWing)}
+          Fuel {setup.fuelLoad.toFixed(1)} kg <span className="setup-locked">locked in Time Trial</span>
+          {" "}&middot; Ballast {Math.round(setup.ballast)} &middot; Next front wing {Math.round(nextFrontWing)}
         </span>
         <span className="setup-note">
           Auto-detected from the live feed. Setup-change suggestions arrive with the diagnosis engine.
