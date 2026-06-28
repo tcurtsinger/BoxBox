@@ -801,6 +801,159 @@
   border-radius: 3px;
 }
 
+/* ---- Tyre wear ---------------------------------------------------------- */
+.wear {
+  max-width: 1100px;
+  margin: 0 auto 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 16px 18px;
+}
+.wear-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.wear-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.wear-sub {
+  margin-left: 8px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: none;
+  color: var(--text-faint);
+}
+.wear-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.wear-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.wear-tyre {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 10px 12px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.wear-corner {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--text-dim);
+}
+.wear-rate {
+  text-align: right;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.wear-bar {
+  grid-column: 1 / -1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-stat);
+  overflow: hidden;
+}
+.wear-fill {
+  display: block;
+  height: 100%;
+  background: var(--text-faint);
+  border-radius: 3px;
+}
+.wear-pct {
+  grid-column: 1 / -1;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.wear-tyre-hot {
+  background: rgba(255, 194, 77, 0.08);
+  border-color: rgba(255, 194, 77, 0.4);
+}
+.wear-tyre-hot .wear-fill {
+  background: var(--amber);
+}
+.wear-tyre-hot .wear-rate {
+  color: var(--amber);
+}
+.wear-advice {
+  padding: 11px 14px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.wear-advice-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.wear-advice-head strong {
+  color: var(--text);
+}
+.wear-prior {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--conf-low);
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+}
+.wear-sugs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.wear-sug {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.wear-sug-param {
+  font-weight: 600;
+  color: var(--text);
+  min-width: 140px;
+}
+.wear-sug-dir {
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--conf-low);
+}
+.wear-sug-reason {
+  color: var(--text-dim);
+}
+.wear-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+
 /* ---- Empty / waiting ---------------------------------------------------- */
 .empty {
   max-width: 520px;
