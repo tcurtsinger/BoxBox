@@ -30,8 +30,8 @@ import { lapStats, newRun, foldLap, runKey } from "./runstats.ts";
 import type { RunStats } from "./runstats.ts";
 import { buildTrimAdvice } from "./trim.ts";
 import type { TrimAdvice } from "./trim.ts";
-import { tyresFromPacket, wearRate, fastestWear, isFreshSet } from "./wear.ts";
-import type { TyreReading, WearStint } from "./wear.ts";
+import { tyresFromPacket, wearRate, fastestWear, isFreshSet, buildWearAdvice } from "./wear.ts";
+import type { TyreReading, WearStint, WearAdvice } from "./wear.ts";
 import { GainEstimator, LEVER_CHANNEL, changeDirection } from "./estimator.ts";
 import type { Channel, LearnedGain, BalanceDirection } from "./estimator.ts";
 import { PROFILE_VERSION } from "./profile.ts";
@@ -154,6 +154,9 @@ export interface TunerSnapshot {
   // signal, measurable only on a Practice long run. null off-session or until a
   // Car Damage frame is seen.
   wear: WearStint | null;
+  // Directional fine-param advice from the wear pattern (a low-confidence prior).
+  // null until a few laps of meaningful wear exist.
+  wearAdvice: WearAdvice | null;
   packetCount: number;
   lastUpdate: number;
 }
@@ -675,6 +678,7 @@ export class TunerState {
           ? buildTrimAdvice(this.#setup.frontWing, this.#setup.rearWing, trackRuns ? [...trackRuns.values()] : [])
           : null,
       wear,
+      wearAdvice: wear ? buildWearAdvice(wear) : null,
       packetCount: this.packetCount,
       lastUpdate: this.lastUpdate,
     };

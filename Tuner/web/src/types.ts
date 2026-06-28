@@ -150,6 +150,22 @@ export interface WearStint {
   ageLaps: number | null; // tyre age in laps (id 7)
 }
 
+// Wear -> fine-param advice (mirrors wear.ts). Directional only, a low-confidence
+// prior: the sources give direction, not magnitude.
+export type WearParam = "frontToe" | "rearToe" | "frontAntiRollBar" | "rearAntiRollBar";
+
+export interface WearSuggestion {
+  param: WearParam;
+  direction: "lower" | "raise";
+  reason: string;
+}
+
+export interface WearAdvice {
+  headline: string;
+  fastest: TyreCorner;
+  suggestions: WearSuggestion[]; // empty when wear is even
+}
+
 export type BalanceDirection = "looser" | "stabler";
 
 // The last single-lever change the driver can give thumbs feedback on. null when
@@ -186,6 +202,7 @@ export interface TunerSnapshot {
   run: RunStats | null;
   trim: TrimAdvice | null;
   wear: WearStint | null;
+  wearAdvice: WearAdvice | null;
   packetCount: number;
   lastUpdate: number;
 }
