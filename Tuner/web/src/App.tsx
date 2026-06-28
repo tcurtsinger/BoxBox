@@ -3,6 +3,7 @@ import type { ConnState } from "./api/useSnapshot";
 import { setPreference } from "./api/commands";
 import { SetupPanel } from "./components/SetupPanel";
 import { BalancePanel } from "./components/BalancePanel";
+import { TrimPanel } from "./components/TrimPanel";
 
 const SESSION_LABEL: Record<number, string> = {
   1: "Practice 1", 2: "Practice 2", 3: "Practice 3", 4: "Short Practice",
@@ -55,6 +56,7 @@ export function App() {
               />
             )}
             <SetupPanel setup={s.setup} nextFrontWing={s.nextFrontWingValue} advice={s.setupAdvice} lastChange={s.lastChange} />
+            {s.trim && <TrimPanel trim={s.trim} run={s.run} />}
           </>
         ) : (
           <EmptyState conn={conn} />
