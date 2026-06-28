@@ -24,6 +24,8 @@ import { newPhaseTriple, foldSample, buildCornerDiagnosis } from "./diagnosis.ts
 import type { PhaseTriple, CornerDiagnosis } from "./diagnosis.ts";
 import { suggestSetup, rollupDiagnosis } from "./suggest.ts";
 import type { SetupAdvice, SuggestKey } from "./suggest.ts";
+import { lapStats, newRun, foldLap } from "./runstats.ts";
+import type { RunStats } from "./runstats.ts";
 import { GainEstimator, LEVER_CHANNEL, changeDirection } from "./estimator.ts";
 import type { Channel, LearnedGain, BalanceDirection } from "./estimator.ts";
 import { PROFILE_VERSION } from "./profile.ts";
@@ -134,6 +136,10 @@ export interface TunerSnapshot {
   // The last single-lever change, for thumbs feedback; null when there is none to
   // react to (no recent single-lever change, or feedback already given).
   lastChange: LastChange | null;
+  // Measured performance of the current setup run (lap time, top speed, apex
+  // speed): the honest foundation for the aero-trim comparison. null until a clean
+  // lap is banked on the current setup.
+  run: RunStats | null;
   packetCount: number;
   lastUpdate: number;
 }
@@ -208,6 +214,9 @@ export class TunerState {
   // own lifecycle, separate from #pending's A/B/A measurement: persists until the
   // driver reacts or a new change replaces it.
   #lastChange: LastChange | null = null;
+  // Measured performance of the current setup run (lap time, top speed, apex
+  // speeds), reset on any setup change. The aero-trim comparison reads this.
+  #run: RunStats | null = null;
 
   /** Set the driver balance preference, clamped to -1..+1. Returns the applied value. */
   setBalancePreference(p: number): number {
@@ -296,9 +305,12 @@ export class TunerState {
         this.#nextFrontWingValue = d.nextFrontWingValue;
         this.#setupTrackId = this.trackId;
         this.#setupPlayerIdx = h.playerCarIndex;
-        // Log the baseline setup once, so a capture carries the starting values the
-        // later change records are relative to.
-        if (first) this.log?.({ kind: "setup", t: this.sessionTime, initial: true, values: leverValues(mine) });
+        if (first) {
+          this.#run = newRun(mine.frontWing, mine.rearWing); // start measuring the baseline run
+          // Log the baseline setup once, so a capture carries the starting values
+          // the later change records are relative to.
+          this.log?.({ kind: "setup", t: this.sessionTime, initial: true, values: leverValues(mine) });
+        }
       }
     } else if (pkt.id === 14) {
       // equalCarPerformance is session-global, so any dataset carries it; the
@@ -389,7 +401,8 @@ export class TunerState {
 
     if (this.#currentLapNum === -1) this.#currentLapNum = lap.currentLapNum;
     if (lap.currentLapNum !== this.#currentLapNum) {
-      this.#finalizeLap();
+      // The just-completed lap's time arrives as lastLapTimeMS on the new lap.
+      this.#finalizeLap(lap.lastLapTimeMS);
       this.#currentLapNum = lap.currentLapNum;
       this.#lapTrace = [];
       this.#lapInvalidated = false;
@@ -412,7 +425,7 @@ export class TunerState {
   // reasonably-complete lap regardless of validity (#lapInvalidated is kept for
   // lap-time / gain measurement later, not gated on here). Confirmed on a real
   // capture: requiring validity meant a single wide moment lost the whole lap.
-  #finalizeLap(): void {
+  #finalizeLap(lapTimeMS: number): void {
     if (this.trackId < 0 || this.#trackLength <= 0) return;
     if (this.#lapTrace.length < MIN_LAP_SAMPLES) return;
     const span = this.#lapTrace[this.#lapTrace.length - 1].lapDistance;
@@ -420,8 +433,13 @@ export class TunerState {
 
     const fresh = segmentLap(this.#lapTrace);
     this.log?.({ kind: "corners", lap: this.#currentLapNum, trackId: this.trackId, samples: this.#lapTrace.length, corners: fresh });
-    if (fresh.length === 0) return;
-    this.#cornerMaps.set(this.trackId, mergeCornerMap(this.#cornerMaps.get(this.trackId), fresh));
+    if (fresh.length) this.#cornerMaps.set(this.trackId, mergeCornerMap(this.#cornerMaps.get(this.trackId), fresh));
+
+    // Fold the completed lap into the current setup's measured run (lap time is the
+    // aero-trim arbiter), against the corner windows known so far for apex speeds.
+    // Only clean, timed laps count toward a comparison.
+    const ls = lapStats(this.#lapTrace, this.#cornerMaps.get(this.trackId) ?? [], lapTimeMS, !this.#lapInvalidated);
+    if (this.#run && ls.valid && ls.lapTimeMS > 0) this.#run = foldLap(this.#run, ls);
   }
 
   // --- Online gain estimator (the closed loop) --------------------------------
@@ -477,6 +495,7 @@ export class TunerState {
         this.#pending.deltaClicks += next[single] - old[single];
         this.#noteChange(single, old, next, true);
         this.#windowDiag = new Map();
+        this.#run = newRun(next.frontWing, next.rearWing);
         return;
       }
     }
@@ -495,6 +514,7 @@ export class TunerState {
     }
     this.#noteChange(single, old, next, false);
     this.#windowDiag = new Map(); // the new setup starts a fresh window
+    this.#run = newRun(next.frontWing, next.rearWing); // and a fresh measured run
   }
 
   // Track the change the driver can thumbs-rate. Only a single tracked lever is a
@@ -566,6 +586,7 @@ export class TunerState {
       setupAdvice,
       balancePreference: this.#balancePreference,
       lastChange: setupCurrent ? this.#lastChange : null,
+      run: setupCurrent ? this.#run : null,
       packetCount: this.packetCount,
       lastUpdate: this.lastUpdate,
     };

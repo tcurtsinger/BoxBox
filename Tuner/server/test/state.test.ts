@@ -578,6 +578,64 @@ test("feedback with no change to rate leaves the preference untouched", () => {
   assert.equal(s.snapshot().balancePreference, 0);
 });
 
+// --- 2f-1: measured run stats (lap time, top speed, apex) ------------------
+// Drives a full timed lap; lastLapTimeMS rides every packet of the lap and is
+// read at the rollover into it (so it is the previous lap's time).
+function driveTimedLap(s: TunerState, lapNum: number, opts: { lastLapMS?: number; invalidAt?: number } = {}): void {
+  for (let d = 0; d <= 1000; d += 5) {
+    const speed = gaussSpeed(d);
+    const invalid = opts.invalidAt !== undefined && Math.abs(d - opts.invalidAt) < 3;
+    feed(s, 6, { cars: atPlayer({ index: 5, speed, throttle: speed > 260 ? 1 : 0.3, brake: speed < 200 ? 0.6 : 0 }), mfdPanelIndex: 0, suggestedGear: 0 });
+    feed(s, 2, { cars: atPlayer({ index: 5, lapDistance: d, currentLapNum: lapNum, currentLapInvalid: invalid, lastLapTimeMS: opts.lastLapMS ?? 0 }), timeTrialPBCarIdx: 255, timeTrialRivalCarIdx: 255 });
+  }
+}
+
+test("measures the current run: best lap time, top speed, and apex speed", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  feed(s, 5, gridWith(25)); // baseline setup starts a run
+  assert.equal(s.snapshot().run?.bestLapMS, null, "no clean lap banked yet");
+
+  driveTimedLap(s, 1);
+  driveTimedLap(s, 2, { lastLapMS: 90000 }); // finalizes lap 1 at 90.0s
+  driveTimedLap(s, 3, { lastLapMS: 89000 }); // finalizes lap 2 at 89.0s (faster)
+
+  const run = s.snapshot().run;
+  assert.equal(run?.bestLapMS, 89000);
+  assert.equal(run?.validLaps, 2);
+  assert.ok(run && run.topSpeed! > 300, "top speed near the 320 straight-line max");
+  assert.ok(run && run.apexSpeed! > 80 && run.apexSpeed! < 160, "apex speed is a mid-corner average");
+});
+
+test("an invalid lap is excluded from the run's measured best", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  feed(s, 5, gridWith(25));
+
+  driveTimedLap(s, 1);
+  driveTimedLap(s, 2, { lastLapMS: 90000, invalidAt: 250 }); // finalizes lap 1 (valid, 90.0); lap 2 cut
+  driveTimedLap(s, 3, { lastLapMS: 80000 }); // finalizes lap 2 (invalid, 80.0) -> ignored
+
+  const run = s.snapshot().run;
+  assert.equal(run?.bestLapMS, 90000, "the faster invalid lap does not count");
+  assert.equal(run?.validLaps, 1);
+});
+
+test("a setup change resets the measured run", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  feed(s, 5, gridWith(25));
+  driveTimedLap(s, 1);
+  driveTimedLap(s, 2, { lastLapMS: 90000 });
+  assert.equal(s.snapshot().run?.bestLapMS, 90000);
+
+  feed(s, 5, gridWith(28)); // a new setup starts a fresh run
+  const run = s.snapshot().run;
+  assert.equal(run?.bestLapMS, null);
+  assert.equal(run?.validLaps, 0);
+  assert.equal(run?.frontWing, 28);
+});
+
 test("the --log captures the baseline setup and each change (self-describing capture)", () => {
   const s = new TunerState();
   const recs: any[] = [];

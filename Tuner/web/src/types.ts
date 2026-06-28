@@ -102,6 +102,17 @@ export interface SetupAdvice {
   suggestions: SetupSuggestion[];
 }
 
+// Measured performance of one setup run (the aero-trim foundation): the fastest
+// clean lap and that lap's speed profile. Mirrors RunStats in the server.
+export interface RunStats {
+  frontWing: number;
+  rearWing: number;
+  validLaps: number;
+  bestLapMS: number | null;
+  topSpeed: number | null; // km/h, of the best lap
+  apexSpeed: number | null; // km/h, mean per-corner minimum on the best lap
+}
+
 export type BalanceDirection = "looser" | "stabler";
 
 // The last single-lever change the driver can give thumbs feedback on. null when
@@ -135,6 +146,7 @@ export interface TunerSnapshot {
   setupAdvice: SetupAdvice | null;
   balancePreference: number; // -1 loose .. 0 neutral .. +1 stable
   lastChange: LastChange | null;
+  run: RunStats | null;
   packetCount: number;
   lastUpdate: number;
 }
