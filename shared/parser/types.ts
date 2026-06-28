@@ -34,6 +34,10 @@ export interface SessionData {
   spectatorCarIndex: number;
   numMarshalZones: number;
   safetyCarStatus: number;
+  // From the 2026 tail, past the fixed marshal-zone and weather-sample arrays.
+  // null when not decoded (pre-2026 format or a short packet). Lets the Tuner read
+  // the equal-performance flag in Practice, where the TimeTrial packet is absent.
+  equalCarPerformance: number | null; // 0 = Off, 1 = On
 }
 
 export interface LiveryColour {

@@ -188,6 +188,36 @@ test("Session: spectating, type and conditions", () => {
   assert.equal(s.airTemperature, 21);
   assert.equal(s.numMarshalZones, 3);
   assert.equal(s.safetyCarStatus, 2);
+  assert.equal(s.equalCarPerformance, 0, "decoded from the 2026 tail (zero-filled here)");
+});
+
+test("Session: equalCarPerformance is read from the 2026 tail (Practice path)", () => {
+  const w = new W(926);
+  writeHeader(w, 1); // format 2026
+  w.u8(1) // weather
+    .i8(25) // trackTemp
+    .i8(20) // airTemp
+    .u8(0) // totalLaps
+    .u16(5000) // trackLength
+    .u8(2) // sessionType = P2 (Practice)
+    .i8(0) // trackId
+    .u8(0) // formula
+    .u16(0) // sessionTimeLeft
+    .u16(0) // sessionDuration
+    .u8(80) // pitSpeedLimit
+    .u8(0) // gamePaused
+    .u8(0) // isSpectating
+    .u8(0) // spectatorCarIndex
+    .u8(0) // sliProNativeSupport
+    .u8(0) // numMarshalZones
+    .skip(21 * 5) // MarshalZone[21]
+    .u8(0) // safetyCarStatus
+    .skip(554) // -> m_equalCarPerformance (past the fixed weather + assist block)
+    .u8(1); // equalCarPerformance = On
+
+  const pkt = parsePacket(w.buf);
+  assert.ok(pkt && pkt.id === 1);
+  assert.equal((pkt.data as SessionData).equalCarPerformance, 1);
 });
 
 test("Participants: 2026 stride, names and Public/Restricted flags", () => {

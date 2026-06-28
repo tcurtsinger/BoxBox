@@ -118,9 +118,10 @@ export interface TunerSnapshot {
   setup: CarSetupEntry | null;
   setupReceived: boolean; // the player's own setup is populated (auto-detect works)
   nextFrontWingValue: number;
-  // From the Time Trial packet (id 14). equalCarPerformance is the assumption the
-  // single prior-gain table rests on; null until a TT packet is seen.
-  equalCarPerformance: number | null; // 0 = Realistic, 1 = Equal
+  // equalCarPerformance is the assumption the single prior-gain table rests on,
+  // from the TimeTrial packet (id 14) in Time Trial or the Session packet (id 1
+  // 2026 tail) in Practice; null until one is seen.
+  equalCarPerformance: number | null; // 0 = Realistic/Off, 1 = Equal/On
   customSetup: number | null; // player's session-best lap on a custom setup
   lapValid: number | null; // player's session-best lap validity
   // Live balance from MotionEx (id 13). null until a corner has been driven.
@@ -184,7 +185,7 @@ export class TunerState {
   #nextFrontWingValue = 0;
   #setupTrackId = -1; // track the stored setup was captured on
   #setupPlayerIdx = -1; // player car index it was captured for
-  #equalCarPerformance: number | null = null; // from TimeTrial (id 14)
+  #equalCarPerformance: number | null = null; // from TimeTrial (id 14) or Session (id 1)
   #customSetup: number | null = null;
   #lapValid: number | null = null;
   // Balance EMAs from MotionEx (id 13); null until the first cornering sample.
@@ -306,6 +307,9 @@ export class TunerState {
       this.sessionType = s.sessionType;
       this.trackId = s.trackId;
       this.#trackLength = s.trackLength;
+      // equalCarPerformance also rides the Session packet (2026 tail), so the flag
+      // is available in Practice, where the TimeTrial packet (id 14) is not sent.
+      if (typeof s.equalCarPerformance === "number") this.#equalCarPerformance = s.equalCarPerformance;
     } else if (pkt.id === 2) {
       this.#ingestLapData(pkt.data as LapDataData, h.playerCarIndex);
     } else if (pkt.id === 6) {

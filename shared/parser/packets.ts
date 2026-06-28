@@ -29,7 +29,7 @@ import type {
 // --- Session (id 1) -----------------------------------------------------------
 // We decode the leading fields (identical across formats) up to safetyCarStatus.
 // The 2026-only tail (active-aero / DRS zones, extra assists) is parsed later.
-export function parseSession(rd: BufferReader, _header: PacketHeader): SessionData {
+export function parseSession(rd: BufferReader, header: PacketHeader): SessionData {
   const weather = rd.u8();
   const trackTemperature = rd.i8();
   const airTemperature = rd.i8();
@@ -49,6 +49,18 @@ export function parseSession(rd: BufferReader, _header: PacketHeader): SessionDa
   rd.skip(21 * 5); // MarshalZone[21] = { f32 zoneStart, i8 zoneFlag }
   const safetyCarStatus = rd.u8();
 
+  // equalCarPerformance lives 554 bytes further on in the 2026 layout, past the
+  // fixed-size weather-forecast array and the assist/identifier block (offsets per
+  // the EA 2026 spec; arrays are fixed length, so this is deterministic):
+  //   networkGame(1) numWeatherSamples(1) weatherSamples[64]*8(512) forecast(1)
+  //   aiDifficulty(1) 3*linkId(12) 3*pitWindow(3) 11*assist(11) timeOfDay(4)
+  //   sessionLength+4*units(5) 3*periodCounts(3) = 554, then the u8 flag.
+  let equalCarPerformance: number | null = null;
+  if (header.packetFormat >= 2026 && rd.remaining >= 555) {
+    rd.skip(554);
+    equalCarPerformance = rd.u8();
+  }
+
   return {
     weather,
     trackTemperature,
@@ -66,6 +78,7 @@ export function parseSession(rd: BufferReader, _header: PacketHeader): SessionDa
     spectatorCarIndex,
     numMarshalZones,
     safetyCarStatus,
+    equalCarPerformance,
   };
 }
 
