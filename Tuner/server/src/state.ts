@@ -24,8 +24,8 @@ import { newPhaseTriple, foldSample, buildCornerDiagnosis } from "./diagnosis.ts
 import type { PhaseTriple, CornerDiagnosis } from "./diagnosis.ts";
 import { suggestSetup, rollupDiagnosis } from "./suggest.ts";
 import type { SetupAdvice, SuggestKey } from "./suggest.ts";
-import { GainEstimator, LEVER_CHANNEL } from "./estimator.ts";
-import type { Channel, LearnedGain } from "./estimator.ts";
+import { GainEstimator, LEVER_CHANNEL, changeDirection } from "./estimator.ts";
+import type { Channel, LearnedGain, BalanceDirection } from "./estimator.ts";
 import { PROFILE_VERSION } from "./profile.ts";
 import type { TunerProfile } from "./profile.ts";
 
@@ -38,6 +38,11 @@ const MIN_LAP_COVERAGE = 0.5; // fraction of track length the trace must span
 // it trusts a before/after measurement. A setup's window must hold at least this
 // many in-corner samples on the measured channel (well under a lap at ~46 Hz).
 const MIN_WINDOW_SAMPLES = 30;
+
+// How far one thumbs-up/down moves the balance preference (-1..+1). Decisive: ~one
+// 0.33-wide bucket per tap, so a single reaction shifts the target a notch. The
+// preference is stored continuously, so repeated taps still go deeper in a bucket.
+const FEEDBACK_STEP = 0.34;
 
 // Setup levers (beyond the tracked ones) whose change still shifts balance, so a
 // change to any of them must reset the measurement window even though we do not
@@ -83,6 +88,16 @@ export interface BalanceSignal {
   cornering: boolean; // false on straights / low speed; readout meaningful only when true
 }
 
+// The most recent single-lever change the driver can give thumbs feedback on, with
+// the deterministic direction it moved the car. Transient (not persisted); cleared
+// once feedback is given or replaced by the next change.
+export interface LastChange {
+  lever: SuggestKey;
+  fromValue: number;
+  toValue: number;
+  direction: BalanceDirection;
+}
+
 export interface TunerSnapshot {
   format: number;
   gameYear: number;
@@ -116,6 +131,9 @@ export interface TunerSnapshot {
   setupAdvice: SetupAdvice | null;
   // Driver balance preference (-1 loose .. 0 neutral .. +1 stable) the advice aims for.
   balancePreference: number;
+  // The last single-lever change, for thumbs feedback; null when there is none to
+  // react to (no recent single-lever change, or feedback already given).
+  lastChange: LastChange | null;
   packetCount: number;
   lastUpdate: number;
 }
@@ -186,11 +204,30 @@ export class TunerState {
   #windowDiag = new Map<number, PhaseTriple>();
   // The open measurement awaiting an "after" reading on the new setup.
   #pending: { lever: SuggestKey; deltaClicks: number; channel: Channel; channelBefore: number } | null = null;
+  // The last single-lever change the driver can thumbs-rate (see LastChange). Its
+  // own lifecycle, separate from #pending's A/B/A measurement: persists until the
+  // driver reacts or a new change replaces it.
+  #lastChange: LastChange | null = null;
 
   /** Set the driver balance preference, clamped to -1..+1. Returns the applied value. */
   setBalancePreference(p: number): number {
     this.#balancePreference = Math.max(-1, Math.min(1, Number.isFinite(p) ? p : 0));
     return this.#balancePreference;
+  }
+
+  /**
+   * Apply thumbs feedback on the last change: a thumbs-up (positive) nudges the
+   * preference toward the direction that change moved the car, a thumbs-down away
+   * from it. One nudge per change (consumed after). No-op if there is nothing to
+   * react to. Returns the resulting preference.
+   */
+  applyFeedback(thumb: number): number {
+    if (!this.#lastChange) return this.#balancePreference;
+    const up = thumb >= 0 ? 1 : -1;
+    const toward = this.#lastChange.direction === "looser" ? -1 : 1; // looser = negative pref
+    const next = this.setBalancePreference(this.#balancePreference + up * toward * FEEDBACK_STEP);
+    this.#lastChange = null; // consumed: one reaction per change
+    return next;
   }
 
   /** The online loop's learned per-lever gains (for the UI and tests). */
@@ -438,6 +475,7 @@ export class TunerState {
       const w = this.#windowChannel(this.#pending.channel);
       if (w.samples < MIN_WINDOW_SAMPLES) {
         this.#pending.deltaClicks += next[single] - old[single];
+        this.#noteChange(single, old, next, true);
         this.#windowDiag = new Map();
         return;
       }
@@ -455,7 +493,23 @@ export class TunerState {
         this.#pending = { lever: single, deltaClicks: next[single] - old[single], channel, channelBefore: before.value };
       }
     }
+    this.#noteChange(single, old, next, false);
     this.#windowDiag = new Map(); // the new setup starts a fresh window
+  }
+
+  // Track the change the driver can thumbs-rate. Only a single tracked lever is a
+  // clean feedback target (a known balance direction); anything else clears it.
+  // Coalescing a no-driving ramp keeps the original "from" so the card shows the
+  // net move, matching the measurement coalescing above.
+  #noteChange(single: SuggestKey | null, old: CarSetupEntry, next: CarSetupEntry, coalesce: boolean): void {
+    if (!single) {
+      this.#lastChange = null;
+      return;
+    }
+    const direction = changeDirection(single, next[single] - old[single]);
+    if (!direction) return; // a changed lever has a nonzero delta, so this is defensive
+    const from = coalesce && this.#lastChange?.lever === single ? this.#lastChange.fromValue : old[single];
+    this.#lastChange = { lever: single, fromValue: from, toValue: next[single], direction };
   }
 
   // The stored setup counts as "received" only while it still matches the live
@@ -511,6 +565,7 @@ export class TunerState {
       cornerDiagnosis,
       setupAdvice,
       balancePreference: this.#balancePreference,
+      lastChange: setupCurrent ? this.#lastChange : null,
       packetCount: this.packetCount,
       lastUpdate: this.lastUpdate,
     };

@@ -84,3 +84,9 @@ export function fillPct(value: number, min: number, max: number): number {
   if (max === min) return 0;
   return Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
 }
+
+// Slider metadata keyed by setup key, so a lever name/value can be rendered away
+// from the grid (e.g. the thumbs-feedback card) with the same labels and formats.
+export const SLIDER_BY_KEY: Map<SetupKey, Slider> = new Map(
+  SETUP_GROUPS.flatMap((g) => g.sliders).map((s) => [s.key, s]),
+);

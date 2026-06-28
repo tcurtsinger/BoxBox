@@ -91,3 +91,20 @@ test("OPTIONS preflight is answered with the allowed methods and origin", async 
     srv.close();
   }
 });
+
+test("POST /api/feedback validates the thumb and is a no-op with no change to rate", async () => {
+  const state = new TunerState();
+  const srv = startHttpServer(state, { port: 18093 });
+  try {
+    // A zero thumb is rejected (must be +1 up or -1 down).
+    const bad = await call({ port: 18093, method: "POST", path: "/api/feedback", body: JSON.stringify({ thumb: 0 }) });
+    assert.equal(bad.status, 400);
+
+    // A valid thumb with no pending change leaves the preference where it was.
+    const ok = await call({ port: 18093, method: "POST", path: "/api/feedback", body: JSON.stringify({ thumb: 1 }) });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(JSON.parse(ok.body), { balancePreference: 0 });
+  } finally {
+    srv.close();
+  }
+});

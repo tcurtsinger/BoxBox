@@ -566,6 +566,58 @@
   color: var(--conf-high);
 }
 
+/* Thumbs feedback on the last applied change: the subjective preference signal.
+   Purple tint+border (the brand accent) marks it as an action prompt, distinct
+   from the neutral status and green dialed-in cards. The two thumbs colour only
+   on hover. */
+.setup-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 2px 14px;
+  padding: 10px 14px;
+  background: rgba(167, 139, 250, 0.08);
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.feedback-text strong {
+  color: var(--text);
+}
+.feedback-thumbs {
+  display: inline-flex;
+  gap: 8px;
+  flex: none;
+}
+.feedback-btn {
+  appearance: none;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.feedback-btn:hover {
+  color: var(--text);
+}
+.feedback-up:hover {
+  background: rgba(46, 207, 104, 0.1);
+  border-color: rgba(46, 207, 104, 0.4);
+  color: var(--green);
+}
+.feedback-down:hover {
+  background: rgba(255, 91, 82, 0.1);
+  border-color: rgba(255, 91, 82, 0.4);
+  color: var(--red);
+}
+
 /* Confidence legend in the footer: the same colour scale the badges use. */
 .setup-legend {
   display: flex;

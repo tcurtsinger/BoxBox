@@ -33,6 +33,20 @@ export const LEVER_CHANNEL: Record<SuggestKey, { channel: Channel; sign: 1 | -1 
   brakeBias: { channel: "entry", sign: 1 },
 };
 
+export type BalanceDirection = "looser" | "stabler";
+
+/**
+ * Which way an applied click-delta moves the car's balance, from the lever's known
+ * direction. The channel is understeer-positive, so a positive (clicks * sign)
+ * means more understeer ("stabler"); negative means less ("looser"). Returns null
+ * for a no-op delta. Used by the thumbs-feedback nudge, which only needs the
+ * direction a change pushed the car, not its magnitude.
+ */
+export function changeDirection(lever: SuggestKey, deltaClicks: number): BalanceDirection | null {
+  if (deltaClicks === 0) return null;
+  return Math.sign(deltaClicks) * LEVER_CHANNEL[lever].sign > 0 ? "stabler" : "looser";
+}
+
 export interface LearnedGain {
   magnitude: number | null; // clicks per radian of the channel; null = unmeasured (use prior)
   observations: number;

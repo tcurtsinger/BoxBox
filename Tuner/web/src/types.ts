@@ -102,6 +102,17 @@ export interface SetupAdvice {
   suggestions: SetupSuggestion[];
 }
 
+export type BalanceDirection = "looser" | "stabler";
+
+// The last single-lever change the driver can give thumbs feedback on. null when
+// there is nothing to react to (no recent single-lever change, or already rated).
+export interface LastChange {
+  lever: SuggestKey;
+  fromValue: number;
+  toValue: number;
+  direction: BalanceDirection;
+}
+
 export interface TunerSnapshot {
   format: number;
   gameYear: number;
@@ -123,6 +134,7 @@ export interface TunerSnapshot {
   cornerDiagnosis: CornerDiagnosis[];
   setupAdvice: SetupAdvice | null;
   balancePreference: number; // -1 loose .. 0 neutral .. +1 stable
+  lastChange: LastChange | null;
   packetCount: number;
   lastUpdate: number;
 }

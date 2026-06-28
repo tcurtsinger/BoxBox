@@ -16,3 +16,18 @@ export async function setPreference(preference: number): Promise<void> {
     // Network/server error: SSE keeps showing the real value; nothing to undo.
   }
 }
+
+// Thumbs feedback on the last applied change: +1 liked it, -1 did not. The server
+// nudges the balance preference and clears the change; the next SSE frame reflects
+// both, so this is fire-and-forget like setPreference.
+export async function sendFeedback(thumb: 1 | -1): Promise<void> {
+  try {
+    await fetch(`${SERVER}/api/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thumb }),
+    });
+  } catch {
+    // Network/server error: SSE keeps showing the real state; nothing to undo.
+  }
+}

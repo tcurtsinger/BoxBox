@@ -75,6 +75,24 @@ export function startHttpServer(
       return;
     }
 
+    if (req.method === "POST" && url === "/api/feedback") {
+      readBody(req)
+        .then((raw) => {
+          let thumb: unknown;
+          try {
+            thumb = (JSON.parse(raw || "{}") as { thumb?: unknown }).thumb;
+          } catch {
+            return sendJson(res, 400, { error: "invalid JSON" });
+          }
+          if (typeof thumb !== "number" || !Number.isFinite(thumb) || thumb === 0) {
+            return sendJson(res, 400, { error: "thumb must be a nonzero number (+1 up, -1 down)" });
+          }
+          sendJson(res, 200, { balancePreference: state.applyFeedback(thumb) });
+        })
+        .catch(() => sendJson(res, 413, { error: "body too large" }));
+      return;
+    }
+
     if (url === "/healthz") {
       res.writeHead(200, { "Content-Type": "text/plain" });
       res.end("ok");

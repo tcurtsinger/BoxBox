@@ -508,6 +508,76 @@ test("a multi-lever change is not attributed (cannot isolate the effect)", () =>
   assert.equal(s.learnedGains().size, 0, "a two-lever change teaches nothing");
 });
 
+// --- P3c: thumbs feedback on the last change -------------------------------
+const approx = (a: number, b: number): boolean => Math.abs(a - b) < 1e-9;
+
+test("a single-lever change becomes a thumbs-feedback target with its direction", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0 });
+  feed(s, 5, gridWith(25)); // baseline (no change yet)
+  assert.equal(s.snapshot().lastChange, null);
+
+  feed(s, 5, gridWith(27)); // front wing 25 -> 27: looser
+  const up = s.snapshot().lastChange;
+  assert.equal(up?.lever, "frontWing");
+  assert.equal(up?.fromValue, 25);
+  assert.equal(up?.toValue, 27);
+  assert.equal(up?.direction, "looser");
+
+  feed(s, 5, gridWith(23)); // front wing 27 -> 23: stabler
+  const down = s.snapshot().lastChange;
+  assert.equal(down?.direction, "stabler");
+  assert.equal(down?.fromValue, 27);
+  assert.equal(down?.toValue, 23);
+});
+
+test("a multi-lever change clears the feedback target (no clean direction)", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0 });
+  feed(s, 5, gridWith(25));
+  feed(s, 5, gridWith(27)); // a single-lever change sets a target
+  assert.ok(s.snapshot().lastChange);
+
+  feed(s, 5, gridWith2({ frontWing: 22, rearWing: 28 })); // two levers move at once
+  assert.equal(s.snapshot().lastChange, null);
+});
+
+test("thumbs-up on a looser change nudges toward loose and is consumed", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0 });
+  feed(s, 5, gridWith(25));
+  feed(s, 5, gridWith(27)); // looser
+  assert.equal(s.snapshot().balancePreference, 0);
+
+  assert.ok(approx(s.applyFeedback(1), -0.34), "liked looser -> toward loose");
+  assert.equal(s.snapshot().lastChange, null, "the change is consumed");
+  assert.ok(approx(s.applyFeedback(1), -0.34), "a second tap is a no-op (nothing to rate)");
+});
+
+test("thumbs-down on a looser change nudges toward stable", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0 });
+  feed(s, 5, gridWith(25));
+  feed(s, 5, gridWith(27)); // looser
+  assert.ok(approx(s.applyFeedback(-1), 0.34), "disliked looser -> toward stable");
+});
+
+test("thumbs-up on a stabler change nudges toward stable", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0 });
+  feed(s, 5, gridWith(25));
+  feed(s, 5, gridWith(23)); // stabler (front wing down)
+  assert.ok(approx(s.applyFeedback(1), 0.34), "liked stabler -> toward stable");
+});
+
+test("feedback with no change to rate leaves the preference untouched", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0 });
+  feed(s, 5, gridWith(25)); // baseline only, no change
+  assert.equal(s.applyFeedback(1), 0);
+  assert.equal(s.snapshot().balancePreference, 0);
+});
+
 test("the --log captures the baseline setup and each change (self-describing capture)", () => {
   const s = new TunerState();
   const recs: any[] = [];

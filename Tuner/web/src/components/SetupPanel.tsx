@@ -1,10 +1,12 @@
-import type { CarSetupEntry, SetupAdvice, SetupSuggestion } from "../types";
-import { SETUP_GROUPS, fillPct } from "../presentation/setup";
+import type { CarSetupEntry, LastChange, SetupAdvice, SetupSuggestion } from "../types";
+import { SETUP_GROUPS, SLIDER_BY_KEY, fillPct } from "../presentation/setup";
+import { sendFeedback } from "../api/commands";
 
 interface Props {
   setup: CarSetupEntry;
   nextFrontWing: number;
   advice: SetupAdvice | null;
+  lastChange: LastChange | null;
 }
 
 // Mirrors the in-game setup screen: grouped sliders, each row a label, a fill bar,
@@ -12,7 +14,7 @@ interface Props {
 // colour-coded by confidence: orange = a prior guess, yellow = forming, green =
 // measured and settled. Only the dominant levers carry suggestions; fine params
 // stay blank until there is data to earn one.
-export function SetupPanel({ setup, nextFrontWing, advice }: Props) {
+export function SetupPanel({ setup, nextFrontWing, advice, lastChange }: Props) {
   const sugs = advice?.suggestions ?? [];
   const byKey = new Map<string, SetupSuggestion>(sugs.map((s) => [s.key, s]));
   const measured = sugs.filter((s) => s.confidence === "measured").length;
@@ -21,6 +23,8 @@ export function SetupPanel({ setup, nextFrontWing, advice }: Props) {
 
   return (
     <div className="setup">
+      {lastChange && <FeedbackCard change={lastChange} />}
+
       {advice && (
         <div className={`setup-status${dialedIn ? " setup-status-dialed" : ""}`}>
           {dialedIn ? (
@@ -85,6 +89,32 @@ export function SetupPanel({ setup, nextFrontWing, advice }: Props) {
           {" "}&middot; Ballast {Math.round(setup.ballast)} &middot; Next front wing {Math.round(nextFrontWing)}
         </span>
       </p>
+    </div>
+  );
+}
+
+// React to the last applied change: a thumbs-up/down that nudges the balance
+// target toward (or away from) the direction the change moved the car. The
+// subjective signal that tunes where the suggestions aim, complementing the
+// objective gain loop. Disappears once rated (the server consumes it).
+function FeedbackCard({ change }: { change: LastChange }) {
+  const slider = SLIDER_BY_KEY.get(change.lever);
+  const label = slider?.label ?? change.lever;
+  const fmt = slider?.fmt ?? ((v: number) => String(v));
+  return (
+    <div className="setup-feedback">
+      <span className="feedback-text">
+        You changed <strong>{label}</strong> {fmt(change.fromValue)} &rarr; {fmt(change.toValue)} &middot; made the car{" "}
+        <strong>{change.direction}</strong>. How did it feel?
+      </span>
+      <span className="feedback-thumbs">
+        <button type="button" className="feedback-btn feedback-up" onClick={() => sendFeedback(1)} aria-label="I liked that change">
+          &#128077; Liked it
+        </button>
+        <button type="button" className="feedback-btn feedback-down" onClick={() => sendFeedback(-1)} aria-label="I did not like that change">
+          &#128078; Not for me
+        </button>
+      </span>
     </div>
   );
 }

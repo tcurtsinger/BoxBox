@@ -1,9 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GainEstimator } from "../src/estimator.ts";
+import { GainEstimator, changeDirection } from "../src/estimator.ts";
 
 // frontWing's channel is mid with expected sign -1 (more wing -> less understeer ->
 // lower mid balance). onThrottle's channel is exit with sign +1.
+
+test("changeDirection reads the deterministic balance direction of an applied delta", () => {
+  // Front wing up cuts understeer -> looser; down adds it -> stabler.
+  assert.equal(changeDirection("frontWing", 2), "looser");
+  assert.equal(changeDirection("frontWing", -2), "stabler");
+  // Rear wing is the opposite sign: up adds understeer -> stabler.
+  assert.equal(changeDirection("rearWing", 3), "stabler");
+  // On-throttle diff calms a loose exit -> stabler when raised.
+  assert.equal(changeDirection("onThrottle", 5), "stabler");
+  // A no-op delta has no direction.
+  assert.equal(changeDirection("frontWing", 0), null);
+});
 
 test("records a correct-direction measurement as forming, with a magnitude", () => {
   const e = new GainEstimator();

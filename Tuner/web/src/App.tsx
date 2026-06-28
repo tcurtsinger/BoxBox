@@ -54,7 +54,7 @@ export function App() {
                 diagnosis={s.cornerDiagnosis}
               />
             )}
-            <SetupPanel setup={s.setup} nextFrontWing={s.nextFrontWingValue} advice={s.setupAdvice} />
+            <SetupPanel setup={s.setup} nextFrontWing={s.nextFrontWingValue} advice={s.setupAdvice} lastChange={s.lastChange} />
           </>
         ) : (
           <EmptyState conn={conn} />
