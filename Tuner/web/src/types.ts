@@ -113,6 +113,23 @@ export interface RunStats {
   apexSpeed: number | null; // km/h, mean per-corner minimum on the best lap
 }
 
+// Aero-trim advice (mirrors trim.ts): the two trims to try and the ranked
+// comparison of measured wing levels.
+export type TrimDirection = "more-top-speed" | "more-downforce";
+
+export interface TrimVariant {
+  label: TrimDirection;
+  frontWing: number;
+  rearWing: number;
+}
+
+export interface TrimAdvice {
+  current: { frontWing: number; rearWing: number };
+  variants: TrimVariant[];
+  runs: RunStats[]; // measured (>=1 clean lap), most downforce first
+  fastestKey: string | null; // "<front>-<rear>" of the quickest level
+}
+
 export type BalanceDirection = "looser" | "stabler";
 
 // The last single-lever change the driver can give thumbs feedback on. null when
@@ -147,6 +164,7 @@ export interface TunerSnapshot {
   balancePreference: number; // -1 loose .. 0 neutral .. +1 stable
   lastChange: LastChange | null;
   run: RunStats | null;
+  trim: TrimAdvice | null;
   packetCount: number;
   lastUpdate: number;
 }

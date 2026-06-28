@@ -636,6 +636,52 @@ test("a setup change resets the measured run", () => {
   assert.equal(run?.frontWing, 28);
 });
 
+// --- 2f-2: aero-trim comparison across wing levels -------------------------
+// Note on attribution: a lap in progress when the wings change is attributed to
+// the new wings at finalize. Real players change wings in the garage, which voids
+// that out-lap, so the tests invalidate the transition lap to model that.
+test("compares two measured wing levels and names the faster trim", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  feed(s, 5, gridWith(25)); // wings front 25 / rear 24
+
+  driveTimedLap(s, 1);
+  driveTimedLap(s, 2, { lastLapMS: 90000, invalidAt: 250 }); // bank 90.0s on 25/24; lap 2 is the pit/transition lap
+
+  feed(s, 5, gridWith2({ frontWing: 21, rearWing: 20 })); // a lower-downforce trim
+  driveTimedLap(s, 3, { lastLapMS: 99999 }); // finalizes the invalid transition lap (ignored)
+  driveTimedLap(s, 4, { lastLapMS: 89000 }); // bank 89.0s on the 21/20 level
+
+  const trim = s.snapshot().trim;
+  assert.ok(trim, "trim advice is present");
+  assert.deepEqual(trim.current, { frontWing: 21, rearWing: 20 });
+  assert.equal(trim.runs.length, 2, "both measured levels appear");
+  assert.equal(trim.fastestKey, "21-20", "the lower-downforce level was quicker here");
+  // Sorted most downforce first (25+24=49 before 21+20=41).
+  assert.deepEqual(trim.runs.map((r) => `${r.frontWing}-${r.rearWing}`), ["25-24", "21-20"]);
+});
+
+test("returning to a wing level resumes its measured run", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  feed(s, 5, gridWith(25));
+  driveTimedLap(s, 1);
+  driveTimedLap(s, 2, { lastLapMS: 90000, invalidAt: 250 }); // 25/24: 90.0s, then pit out (lap 2 void)
+
+  feed(s, 5, gridWith2({ frontWing: 21, rearWing: 20 })); // switch away
+  driveTimedLap(s, 3, { lastLapMS: 99999 }); // finalize the void transition lap (ignored)
+  driveTimedLap(s, 4, { lastLapMS: 89000, invalidAt: 250 }); // 21/20: 89.0s, then pit out (lap 4 void)
+
+  feed(s, 5, gridWith(25)); // switch back to the original wings
+  driveTimedLap(s, 5, { lastLapMS: 99999 }); // finalize the void transition lap (ignored)
+  driveTimedLap(s, 6, { lastLapMS: 88000 }); // a faster 25/24 lap resumes that run
+
+  const run = s.snapshot().run;
+  assert.equal(run?.frontWing, 25);
+  assert.equal(run?.bestLapMS, 88000, "the resumed run keeps its better lap");
+  assert.ok(run && run.validLaps >= 2, "laps from both stints on this level count");
+});
+
 test("the --log captures the baseline setup and each change (self-describing capture)", () => {
   const s = new TunerState();
   const recs: any[] = [];

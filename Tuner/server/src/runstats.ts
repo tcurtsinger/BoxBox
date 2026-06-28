@@ -48,6 +48,9 @@ export function newRun(frontWing: number, rearWing: number): RunStats {
   return { frontWing, rearWing, validLaps: 0, bestLapMS: null, topSpeed: null, apexSpeed: null };
 }
 
+/** Storage key for a run: its wing pair (the aero state being measured). */
+export const runKey = (r: { frontWing: number; rearWing: number }): string => `${r.frontWing}-${r.rearWing}`;
+
 /**
  * Fold one clean lap into a run. A new fastest lap replaces the run's recorded
  * speed profile, so topSpeed/apexSpeed always describe the current best lap.

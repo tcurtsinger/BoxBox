@@ -24,8 +24,10 @@ import { newPhaseTriple, foldSample, buildCornerDiagnosis } from "./diagnosis.ts
 import type { PhaseTriple, CornerDiagnosis } from "./diagnosis.ts";
 import { suggestSetup, rollupDiagnosis } from "./suggest.ts";
 import type { SetupAdvice, SuggestKey } from "./suggest.ts";
-import { lapStats, newRun, foldLap } from "./runstats.ts";
+import { lapStats, newRun, foldLap, runKey } from "./runstats.ts";
 import type { RunStats } from "./runstats.ts";
+import { buildTrimAdvice } from "./trim.ts";
+import type { TrimAdvice } from "./trim.ts";
 import { GainEstimator, LEVER_CHANNEL, changeDirection } from "./estimator.ts";
 import type { Channel, LearnedGain, BalanceDirection } from "./estimator.ts";
 import { PROFILE_VERSION } from "./profile.ts";
@@ -137,9 +139,12 @@ export interface TunerSnapshot {
   // react to (no recent single-lever change, or feedback already given).
   lastChange: LastChange | null;
   // Measured performance of the current setup run (lap time, top speed, apex
-  // speed): the honest foundation for the aero-trim comparison. null until a clean
-  // lap is banked on the current setup.
+  // speed): the honest foundation for the aero-trim comparison. null off-session;
+  // zeros until a clean lap is banked on the current wing level.
   run: RunStats | null;
+  // Aero-trim advice: the two trims to try (lower/higher downforce) and the ranked
+  // comparison of the wing levels measured so far. null off-session.
+  trim: TrimAdvice | null;
   packetCount: number;
   lastUpdate: number;
 }
@@ -214,9 +219,11 @@ export class TunerState {
   // own lifecycle, separate from #pending's A/B/A measurement: persists until the
   // driver reacts or a new change replaces it.
   #lastChange: LastChange | null = null;
-  // Measured performance of the current setup run (lap time, top speed, apex
-  // speeds), reset on any setup change. The aero-trim comparison reads this.
-  #run: RunStats | null = null;
+  // Measured runs per track, keyed by wing pair (the aero state). A stint on a
+  // wing level accumulates here and resumes if the driver returns to it, so the
+  // aero-trim comparison can rank the levels actually driven. Survives UID resets
+  // like the corner map.
+  #runs = new Map<number, Map<string, RunStats>>();
 
   /** Set the driver balance preference, clamped to -1..+1. Returns the applied value. */
   setBalancePreference(p: number): number {
@@ -305,12 +312,10 @@ export class TunerState {
         this.#nextFrontWingValue = d.nextFrontWingValue;
         this.#setupTrackId = this.trackId;
         this.#setupPlayerIdx = h.playerCarIndex;
-        if (first) {
-          this.#run = newRun(mine.frontWing, mine.rearWing); // start measuring the baseline run
-          // Log the baseline setup once, so a capture carries the starting values
-          // the later change records are relative to.
-          this.log?.({ kind: "setup", t: this.sessionTime, initial: true, values: leverValues(mine) });
-        }
+        // Log the baseline setup once, so a capture carries the starting values the
+        // later change records are relative to. The measured run for these wings
+        // starts lazily when the first clean lap on them is finalized.
+        if (first) this.log?.({ kind: "setup", t: this.sessionTime, initial: true, values: leverValues(mine) });
       }
     } else if (pkt.id === 14) {
       // equalCarPerformance is session-global, so any dataset carries it; the
@@ -435,11 +440,15 @@ export class TunerState {
     this.log?.({ kind: "corners", lap: this.#currentLapNum, trackId: this.trackId, samples: this.#lapTrace.length, corners: fresh });
     if (fresh.length) this.#cornerMaps.set(this.trackId, mergeCornerMap(this.#cornerMaps.get(this.trackId), fresh));
 
-    // Fold the completed lap into the current setup's measured run (lap time is the
-    // aero-trim arbiter), against the corner windows known so far for apex speeds.
-    // Only clean, timed laps count toward a comparison.
+    // Fold the completed lap into the current wing level's measured run (lap time
+    // is the aero-trim arbiter), against the corner windows known so far for apex
+    // speeds. Only clean, timed laps count toward a comparison.
     const ls = lapStats(this.#lapTrace, this.#cornerMaps.get(this.trackId) ?? [], lapTimeMS, !this.#lapInvalidated);
-    if (this.#run && ls.valid && ls.lapTimeMS > 0) this.#run = foldLap(this.#run, ls);
+    if (this.#setup && ls.valid && ls.lapTimeMS > 0) {
+      const m = this.#trackRuns();
+      const key = runKey(this.#setup);
+      m.set(key, foldLap(m.get(key) ?? newRun(this.#setup.frontWing, this.#setup.rearWing), ls));
+    }
   }
 
   // --- Online gain estimator (the closed loop) --------------------------------
@@ -495,7 +504,6 @@ export class TunerState {
         this.#pending.deltaClicks += next[single] - old[single];
         this.#noteChange(single, old, next, true);
         this.#windowDiag = new Map();
-        this.#run = newRun(next.frontWing, next.rearWing);
         return;
       }
     }
@@ -514,7 +522,16 @@ export class TunerState {
     }
     this.#noteChange(single, old, next, false);
     this.#windowDiag = new Map(); // the new setup starts a fresh window
-    this.#run = newRun(next.frontWing, next.rearWing); // and a fresh measured run
+  }
+
+  // The measured runs for the current track (created on first access).
+  #trackRuns(): Map<string, RunStats> {
+    let m = this.#runs.get(this.trackId);
+    if (!m) {
+      m = new Map();
+      this.#runs.set(this.trackId, m);
+    }
+    return m;
   }
 
   // Track the change the driver can thumbs-rate. Only a single tracked lever is a
@@ -555,6 +572,13 @@ export class TunerState {
       setupCurrent && this.#setup && cornerDiagnosis.length
         ? suggestSetup(cornerDiagnosis, this.#setup, this.#balancePreference, this.#estimator.asMap())
         : null;
+    // The measured run for the wing level currently on the car (zeros until a clean
+    // lap is banked), and all measured runs for the trim comparison.
+    const trackRuns = this.#runs.get(this.trackId);
+    const currentRun =
+      setupCurrent && this.#setup
+        ? trackRuns?.get(runKey(this.#setup)) ?? newRun(this.#setup.frontWing, this.#setup.rearWing)
+        : null;
     return {
       format: this.format,
       gameYear: this.gameYear,
@@ -586,7 +610,11 @@ export class TunerState {
       setupAdvice,
       balancePreference: this.#balancePreference,
       lastChange: setupCurrent ? this.#lastChange : null,
-      run: setupCurrent ? this.#run : null,
+      run: currentRun,
+      trim:
+        setupCurrent && this.#setup
+          ? buildTrimAdvice(this.#setup.frontWing, this.#setup.rearWing, trackRuns ? [...trackRuns.values()] : [])
+          : null,
       packetCount: this.packetCount,
       lastUpdate: this.lastUpdate,
     };
