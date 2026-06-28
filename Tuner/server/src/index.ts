@@ -11,6 +11,7 @@ import fs from "node:fs";
 import { TunerState } from "./state.ts";
 import { attachUdp } from "./net/udp.ts";
 import { startHttpServer } from "./net/http.ts";
+import { profilePath, readProfile, writeProfile } from "./profile.ts";
 
 const argv = process.argv.slice(2);
 let UDP_PORT = Number(process.env.F1_UDP_PORT) || 20777;
@@ -29,9 +30,34 @@ const SESSION_LABEL: Record<number, string> = {
 };
 
 const state = new TunerState();
-// Driver balance preference (-1 loose .. 0 neutral .. +1 stable). Settable via env
-// for now; the interactive control + per-driver profile arrive in a later step.
+
+// Per-driver profile: load learned gains + preference on start, persist on change
+// and shutdown, so the loop's knowledge survives restarts. Keyed by driver name
+// (TUNER_DRIVER, default "default"); files live in TUNER_PROFILE_DIR (./profiles).
+const DRIVER = process.env.TUNER_DRIVER || "default";
+const PROFILE_DIR = process.env.TUNER_PROFILE_DIR || "profiles";
+const PROFILE_FILE = profilePath(PROFILE_DIR, DRIVER);
+const loaded = readProfile(PROFILE_FILE);
+if (loaded) state.loadProfile(loaded);
+// An explicit preference env still wins (lets you override a saved one).
 if (process.env.TUNER_BALANCE_PREF) state.setBalancePreference(Number(process.env.TUNER_BALANCE_PREF));
+
+// Save the profile when it changes (compare serialized JSON), throttled by the
+// poll, plus once on shutdown. Gains change rarely (per applied setup change), so
+// this writes seldom.
+let lastSaved = "";
+function saveProfileIfChanged(): void {
+  const json = JSON.stringify(state.serializeProfile(DRIVER));
+  if (json === lastSaved) return;
+  try {
+    writeProfile(PROFILE_FILE, JSON.parse(json));
+    lastSaved = json;
+  } catch (err) {
+    console.error(`profile save failed: ${(err as Error).message}`);
+  }
+}
+lastSaved = JSON.stringify(state.serializeProfile(DRIVER)); // don't rewrite an unchanged just-loaded profile
+setInterval(saveProfileIfChanged, 5000);
 
 let logStream: fs.WriteStream | null = null;
 let logCount = 0;
@@ -112,6 +138,7 @@ console.log(`mock ready: serving Tuner snapshot on :${HTTP_PORT}`);
 
 process.on("SIGINT", () => {
   http.close();
+  saveProfileIfChanged();
   if (logStream) {
     logStream.end();
     console.log(`\nLog written: ${LOG_PATH} (${logCount} records)`);

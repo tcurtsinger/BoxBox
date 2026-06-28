@@ -13,6 +13,9 @@ build/
 *.log
 *.jsonl
 
+# Per-driver Tuner profiles (runtime data, not source)
+profiles/
+
 # Environment / secrets
 .env
 .env.*

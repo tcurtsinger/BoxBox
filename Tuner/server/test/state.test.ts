@@ -526,6 +526,31 @@ test("the --log captures the baseline setup and each change (self-describing cap
   assert.deepEqual(change.changed, [{ k: "frontWing", from: 20, to: 24 }]);
 });
 
+test("a driver profile round-trips preference and learned gains across a restart (P3a)", () => {
+  const s = new TunerState();
+  confirmCorners(s);
+  driveLapWithMotion(s, 2, { frontSlip: 0.08, rearSlip: 0.02 });
+  driveLapWithMotion(s, 3, { frontSlip: 0.08, rearSlip: 0.02 });
+  feed(s, 5, gridWith(22));
+  driveLapWithMotion(s, 4, { frontSlip: 0.04, rearSlip: 0.02 });
+  driveLapWithMotion(s, 5, { frontSlip: 0.04, rearSlip: 0.02 });
+  s.setBalancePreference(-0.5);
+
+  const learned = s.learnedGains().get("frontWing");
+  assert.ok(learned, "a gain was learned");
+  const profile = s.serializeProfile("nick");
+  assert.equal(profile.driver, "nick");
+
+  // "Restart": a fresh state loads the saved profile.
+  const s2 = new TunerState();
+  s2.loadProfile(profile);
+  assert.equal(s2.snapshot().balancePreference, -0.5, "preference restored");
+  const restored = s2.learnedGains().get("frontWing");
+  assert.ok(restored, "gain restored");
+  assert.equal(restored.confidence, learned.confidence);
+  assert.ok(Math.abs((restored.magnitude ?? 0) - (learned.magnitude ?? 0)) < 1e-9, "magnitude restored");
+});
+
 test("the estimator survives a session-UID change (TT lap reset)", () => {
   const s = new TunerState();
   confirmCorners(s);

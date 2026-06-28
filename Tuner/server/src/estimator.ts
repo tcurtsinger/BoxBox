@@ -93,4 +93,22 @@ export class GainEstimator {
     }
     return out;
   }
+
+  // Persistence: only the raw per-lever observation magnitudes are stored; the
+  // mean and confidence are recomputed on restore, so there is one source of truth.
+  serialize(): Record<string, number[]> {
+    const out: Record<string, number[]> = {};
+    for (const [k, g] of this.#gains) out[k] = [...g.mags];
+    return out;
+  }
+
+  restore(data: Record<string, number[]> | undefined): void {
+    this.#gains.clear();
+    if (!data) return;
+    for (const k of Object.keys(data)) {
+      const mags = data[k];
+      if (!Array.isArray(mags) || mags.length === 0) continue;
+      this.#gains.set(k as SuggestKey, { mags: [...mags], magnitude: mean(mags), confidence: computeConfidence(mags) });
+    }
+  }
 }

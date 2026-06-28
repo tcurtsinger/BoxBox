@@ -69,3 +69,24 @@ test("asMap only contains levers that have been measured", () => {
   assert.equal(m.size, 1);
   assert.ok(m.has("frontWing"));
 });
+
+test("serialize/restore round-trips the learned gains", () => {
+  const e = new GainEstimator();
+  e.record("frontWing", 2, 0.06, 0.04);
+  e.record("frontWing", -2, 0.04, 0.06); // -> measured
+  e.record("onThrottle", 1, -0.02, 0.0); // -> forming
+  const data = e.serialize();
+
+  const e2 = new GainEstimator();
+  e2.restore(data);
+  assert.deepEqual(e2.get("frontWing"), e.get("frontWing"));
+  assert.deepEqual(e2.get("onThrottle"), e.get("onThrottle"));
+  assert.equal(e2.get("frontWing").confidence, "measured");
+});
+
+test("restore tolerates missing or empty data", () => {
+  const e = new GainEstimator();
+  e.restore(undefined);
+  e.restore({ frontWing: [] });
+  assert.equal(e.asMap().size, 0);
+});

@@ -26,6 +26,8 @@ import { suggestSetup, rollupDiagnosis } from "./suggest.ts";
 import type { SetupAdvice, SuggestKey } from "./suggest.ts";
 import { GainEstimator, LEVER_CHANNEL } from "./estimator.ts";
 import type { Channel, LearnedGain } from "./estimator.ts";
+import { PROFILE_VERSION } from "./profile.ts";
+import type { TunerProfile } from "./profile.ts";
 
 // A lap is only segmented if it is clean and reasonably complete, so a partial
 // out-lap or a cut lap does not seed the corner map with junk.
@@ -193,6 +195,23 @@ export class TunerState {
   /** The online loop's learned per-lever gains (for the UI and tests). */
   learnedGains(): Map<SuggestKey, LearnedGain> {
     return this.#estimator.asMap();
+  }
+
+  /** Snapshot the persistable driver profile (preference + learned gains). */
+  serializeProfile(driver: string): TunerProfile {
+    return {
+      version: PROFILE_VERSION,
+      driver,
+      balancePreference: this.#balancePreference,
+      gains: this.#estimator.serialize(),
+    };
+  }
+
+  /** Restore a saved profile (preference + learned gains). Ignores stale fields. */
+  loadProfile(p: TunerProfile | null): void {
+    if (!p) return;
+    if (typeof p.balancePreference === "number") this.setBalancePreference(p.balancePreference);
+    this.#estimator.restore(p.gains);
   }
 
   ingest(pkt: ParsedPacket, atMs: number): void {
