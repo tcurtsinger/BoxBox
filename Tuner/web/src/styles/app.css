@@ -884,6 +884,9 @@
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
+.wear-temp {
+  font-family: var(--mono);
+}
 .wear-tyre-hot {
   background: rgba(255, 194, 77, 0.08);
   border-color: rgba(255, 194, 77, 0.4);

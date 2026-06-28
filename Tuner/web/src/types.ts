@@ -148,11 +148,13 @@ export interface WearStint {
   fastest: TyreCorner | null;
   compound: number | null; // visual tyre compound (id 7)
   ageLaps: number | null; // tyre age in laps (id 7)
+  core: TyreReading | null; // smoothed inner/carcass temp (C)
+  surface: TyreReading | null; // smoothed surface temp (C)
 }
 
 // Wear -> fine-param advice (mirrors wear.ts). Directional only, a low-confidence
 // prior: the sources give direction, not magnitude.
-export type WearParam = "frontToe" | "rearToe" | "frontAntiRollBar" | "rearAntiRollBar";
+export type WearParam = "frontToe" | "rearToe" | "frontAntiRollBar" | "rearAntiRollBar" | "frontCamber" | "rearCamber";
 
 export interface WearSuggestion {
   param: WearParam;

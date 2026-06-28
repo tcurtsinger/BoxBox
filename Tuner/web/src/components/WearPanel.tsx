@@ -13,7 +13,7 @@ const LAYOUT: TyreCorner[] = ["fl", "fr", "rl", "rr"]; // 2x2, as the car sits
 // front/rear (and left/right) asymmetry the advice acts on is visible at a glance.
 // The advice is a low-confidence prior (orange), directional only.
 export function WearPanel({ wear, advice }: Props) {
-  const { rate, wear: pct, fastest, compound, ageLaps, laps } = wear;
+  const { rate, wear: pct, fastest, compound, ageLaps, laps, core, surface } = wear;
   const maxRate = rate ? Math.max(rate.fl, rate.fr, rate.rl, rate.rr) : 0;
   const compoundName = compound != null ? COMPOUND_NAME[compound] ?? `#${compound}` : null;
 
@@ -41,7 +41,15 @@ export function WearPanel({ wear, advice }: Props) {
               <span className="wear-bar">
                 <span className="wear-fill" style={{ width: `${fill}%` }} />
               </span>
-              <span className="wear-pct">{pct[c].toFixed(1)}% worn</span>
+              <span className="wear-pct">
+                {pct[c].toFixed(1)}% worn
+                {core && surface && (
+                  <span className="wear-temp">
+                    {" "}
+                    &middot; {Math.round(core[c])}&deg; core / {Math.round(surface[c])}&deg; surf
+                  </span>
+                )}
+              </span>
             </div>
           );
         })}

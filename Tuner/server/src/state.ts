@@ -30,7 +30,7 @@ import { lapStats, newRun, foldLap, runKey } from "./runstats.ts";
 import type { RunStats } from "./runstats.ts";
 import { buildTrimAdvice } from "./trim.ts";
 import type { TrimAdvice } from "./trim.ts";
-import { tyresFromPacket, wearRate, fastestWear, isFreshSet, buildWearAdvice } from "./wear.ts";
+import { tyresFromPacket, wearRate, fastestWear, isFreshSet, buildWearAdvice, emaTyre } from "./wear.ts";
 import type { TyreReading, WearStint, WearAdvice } from "./wear.ts";
 import { GainEstimator, LEVER_CHANNEL, changeDirection } from "./estimator.ts";
 import type { Channel, LearnedGain, BalanceDirection } from "./estimator.ts";
@@ -51,6 +51,11 @@ const MIN_WINDOW_SAMPLES = 30;
 // 0.33-wide bucket per tap, so a single reaction shifts the target a notch. The
 // preference is stored continuously, so repeated taps still go deeper in a bucket.
 const FEEDBACK_STEP = 0.34;
+
+// Tyre temps are noisy frame to frame; a slow EMA gives the sustained operating
+// temp the overload read needs. Only updated above a road-speed floor (km/h).
+const TEMP_EMA_ALPHA = 0.05;
+const TEMP_SPEED_FLOOR = 50;
 
 // Setup levers (beyond the tracked ones) whose change still shifts balance, so a
 // change to any of them must reset the measurement window even though we do not
@@ -244,6 +249,10 @@ export class TunerState {
   #wearLaps = 0;
   #tyreAgeLaps: number | null = null;
   #compound: number | null = null;
+  // Smoothed tyre temps (Car Telemetry id 6), updated while moving. Inner is the
+  // carcass/core (the load-truth signal); surface is the contact patch.
+  #coreTemp: TyreReading | null = null;
+  #surfaceTemp: TyreReading | null = null;
 
   /** Set the driver balance preference, clamped to -1..+1. Returns the applied value. */
   setBalancePreference(p: number): number {
@@ -322,6 +331,11 @@ export class TunerState {
         this.#tThrottle = t.throttle;
         this.#tBrake = t.brake;
         this.#tSteer = t.steer;
+        // Smooth the loaded tyre temps for the wear overload read.
+        if (t.speed > TEMP_SPEED_FLOOR && t.tyresInnerTemperature && t.tyresSurfaceTemperature) {
+          this.#coreTemp = emaTyre(this.#coreTemp, tyresFromPacket(t.tyresInnerTemperature), TEMP_EMA_ALPHA);
+          this.#surfaceTemp = emaTyre(this.#surfaceTemp, tyresFromPacket(t.tyresSurfaceTemperature), TEMP_EMA_ALPHA);
+        }
       }
     } else if (pkt.id === 10) {
       const mine = (pkt.data as CarDamageData).cars[h.playerCarIndex];
@@ -639,6 +653,8 @@ export class TunerState {
             fastest: fastestWear(wearRateNow),
             compound: this.#compound,
             ageLaps: this.#tyreAgeLaps,
+            core: this.#coreTemp,
+            surface: this.#surfaceTemp,
           }
         : null;
     return {

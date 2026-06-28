@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { tyresFromPacket, wearRate, fastestWear, isFreshSet, buildWearAdvice } from "../src/wear.ts";
-import type { WearStint } from "../src/wear.ts";
+import type { WearStint, TyreReading } from "../src/wear.ts";
 
 test("tyresFromPacket maps wheel order RL RR FL FR to named corners", () => {
   assert.deepEqual(tyresFromPacket([10, 20, 30, 40]), { rl: 10, rr: 20, fl: 30, fr: 40 });
@@ -27,8 +27,21 @@ test("isFreshSet detects a wear drop (new tyres), not monotonic growth", () => {
   assert.equal(isFreshSet(last, { fl: 8.1, fr: 9.1, rl: 5.1, rr: 6.1 }), false); // within noise
 });
 
-function stint(rate: { fl: number; fr: number; rl: number; rr: number } | null, laps: number): WearStint {
-  return { laps, wear: { fl: 0, fr: 0, rl: 0, rr: 0 }, rate, fastest: fastestWear(rate), compound: 16, ageLaps: laps };
+function stint(
+  rate: TyreReading | null,
+  laps: number,
+  temps?: { core: TyreReading; surface: TyreReading },
+): WearStint {
+  return {
+    laps,
+    wear: { fl: 0, fr: 0, rl: 0, rr: 0 },
+    rate,
+    fastest: fastestWear(rate),
+    compound: 16,
+    ageLaps: laps,
+    core: temps?.core ?? null,
+    surface: temps?.surface ?? null,
+  };
 }
 
 test("buildWearAdvice needs a few laps and meaningful wear", () => {
@@ -62,5 +75,27 @@ test("rear-biased wear suggests less rear toe and a softer rear bar", () => {
   assert.deepEqual(
     a.suggestions.map((s) => `${s.param}:${s.direction}`),
     ["rearToe:lower", "rearAntiRollBar:lower"],
+  );
+});
+
+test("a hot, overloaded fast axle adds a less-camber suggestion", () => {
+  const core = { fl: 110, fr: 110, rl: 95, rr: 95 };
+  const surface = { fl: 95, fr: 95, rl: 90, rr: 90 }; // front gap 15 > 10
+  const a = buildWearAdvice(stint({ fl: 4, fr: 4, rl: 1.5, rr: 1.5 }, 5, { core, surface }));
+  assert.ok(a);
+  assert.deepEqual(
+    a.suggestions.map((s) => `${s.param}:${s.direction}`),
+    ["frontToe:lower", "frontAntiRollBar:lower", "frontCamber:raise"],
+  );
+});
+
+test("a fast axle that is not running hot gets no camber suggestion", () => {
+  const core = { fl: 100, fr: 100, rl: 98, rr: 98 };
+  const surface = { fl: 96, fr: 96, rl: 95, rr: 95 }; // front gap 4 < 10
+  const a = buildWearAdvice(stint({ fl: 4, fr: 4, rl: 1.5, rr: 1.5 }, 5, { core, surface }));
+  assert.ok(a);
+  assert.deepEqual(
+    a.suggestions.map((s) => s.param),
+    ["frontToe", "frontAntiRollBar"],
   );
 });

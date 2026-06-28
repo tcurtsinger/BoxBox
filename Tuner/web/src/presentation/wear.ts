@@ -21,4 +21,6 @@ export const WEAR_PARAM_LABEL: Record<WearParam, string> = {
   rearToe: "Rear Toe",
   frontAntiRollBar: "Front Anti-Roll Bar",
   rearAntiRollBar: "Rear Anti-Roll Bar",
+  frontCamber: "Front Camber",
+  rearCamber: "Rear Camber",
 };

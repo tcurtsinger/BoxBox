@@ -21,6 +21,17 @@ export function tyresFromPacket(a: number[]): TyreReading {
   return { rl: a[0] ?? 0, rr: a[1] ?? 0, fl: a[2] ?? 0, fr: a[3] ?? 0 };
 }
 
+/** Per-corner exponential moving average, for smoothing noisy temps. */
+export function emaTyre(prev: TyreReading | null, next: TyreReading, alpha: number): TyreReading {
+  if (!prev) return next;
+  return {
+    fl: prev.fl + alpha * (next.fl - prev.fl),
+    fr: prev.fr + alpha * (next.fr - prev.fr),
+    rl: prev.rl + alpha * (next.rl - prev.rl),
+    rr: prev.rr + alpha * (next.rr - prev.rr),
+  };
+}
+
 export interface WearStint {
   laps: number; // laps measured since the stint baseline
   wear: TyreReading; // current wear %, per tyre
@@ -28,6 +39,8 @@ export interface WearStint {
   fastest: TyreCorner | null; // fastest-wearing corner, null until a rate exists
   compound: number | null; // visual tyre compound (id 7)
   ageLaps: number | null; // tyre age in laps (id 7)
+  core: TyreReading | null; // smoothed inner/carcass temp (C), the load-truth signal
+  surface: TyreReading | null; // smoothed surface temp (C)
 }
 
 /** Average wear rate (%/lap) per tyre over a stint; null before a full lap. */
@@ -69,7 +82,7 @@ export function isFreshSet(last: TyreReading, current: TyreReading, eps = 0.5): 
 // could measure it. Left-vs-right asymmetry is treated as track-specific, not a
 // setup fix, so it is reported but not actioned.
 
-export type WearParam = "frontToe" | "rearToe" | "frontAntiRollBar" | "rearAntiRollBar";
+export type WearParam = "frontToe" | "rearToe" | "frontAntiRollBar" | "rearAntiRollBar" | "frontCamber" | "rearCamber";
 
 export interface WearSuggestion {
   param: WearParam;
@@ -86,6 +99,21 @@ export interface WearAdvice {
 const MIN_WEAR_LAPS = 3; // a stable rate needs a few laps
 const ASYM_RATIO = 1.25; // one axle wearing >=25% faster than the other is worth acting on
 const MIN_AXLE_RATE = 0.2; // %/lap floor; below this wear is negligible (noise)
+// Overload read: a persistently hotter core than surface on the overworked axle
+// means the tyre is carrying too much load (research: "inner >> surface -> reduce
+// camber"). PROVISIONAL threshold; needs calibration from a real capture (the
+// game's normal core-surface gap is not documented). Used only to corroborate the
+// fast-wearing axle, never on its own.
+const OVERLOAD_GAP = 10; // C, core minus surface
+
+/** Mean core-minus-surface gap for an axle, or null if temps are unavailable. */
+function axleOverload(stint: WearStint, axle: "front" | "rear"): number | null {
+  if (!stint.core || !stint.surface) return null;
+  const a: TyreCorner = axle === "front" ? "fl" : "rl";
+  const b: TyreCorner = axle === "front" ? "fr" : "rr";
+  const gap = (stint.core[a] - stint.surface[a] + (stint.core[b] - stint.surface[b])) / 2;
+  return gap;
+}
 
 /** Advice from a wear stint, or null if there is not enough signal yet. */
 export function buildWearAdvice(stint: WearStint): WearAdvice | null {
@@ -118,6 +146,20 @@ export function buildWearAdvice(stint: WearStint): WearAdvice | null {
         { param: "rearToe", direction: "lower", reason: "less rear toe runs the rears cooler" },
         { param: "rearAntiRollBar", direction: "lower", reason: "a softer rear bar eases rear load" },
       ];
+
+  // Temp corroboration: if the overworked axle's core runs hot vs its surface, it
+  // is genuinely overloaded, so less (negative) camber spreads the load. Only when
+  // the gap is clear, and on the fast-wearing axle, so it stays a corroborating
+  // suggestion rather than a guess.
+  const overload = axleOverload(stint, frontFaster ? "front" : "rear");
+  if (overload !== null && overload >= OVERLOAD_GAP) {
+    suggestions.push({
+      param: frontFaster ? "frontCamber" : "rearCamber",
+      direction: "raise", // less negative camber
+      reason: `core runs ${overload.toFixed(0)}C hotter than the surface (overloaded), less camber spreads the load`,
+    });
+  }
+
   return {
     headline: `${frontFaster ? "Fronts" : "Rears"} wearing ${ratio}x the ${frontFaster ? "rears" : "fronts"}`,
     fastest,
