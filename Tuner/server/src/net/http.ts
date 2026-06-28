@@ -7,12 +7,33 @@ export interface HttpHandle {
   clientCount(): number;
 }
 
-// Read-only SSE server for the Tuner panel:
-//   GET /events    - SSE stream of setup snapshots
-//   GET /api/state - one-shot snapshot (JSON)
-//   GET /healthz   - liveness check
-// The Tuner has no client writes yet, so there are no POST routes. Default port
-// 8090 so it can coexist with the Race Control server (8080) during development.
+// SSE + small control API for the Tuner panel:
+//   GET  /events          - SSE stream of setup snapshots
+//   GET  /api/state       - one-shot snapshot (JSON)
+//   POST /api/preference  - set the driver balance preference {preference: -1..1}
+//   GET  /healthz         - liveness check
+// Default port 8090 so it can coexist with the Race Control server (8080) during
+// development. The dev UI runs on another origin, so writes need CORS preflight.
+const MAX_BODY = 4 * 1024; // request bodies here are tiny JSON; cap to be safe
+
+// Collect a small request body, rejecting anything over the cap.
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", (chunk) => {
+      data += chunk;
+      if (data.length > MAX_BODY) reject(new Error("body too large"));
+    });
+    req.on("end", () => resolve(data));
+    req.on("error", reject);
+  });
+}
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(body));
+}
+
 export function startHttpServer(
   state: TunerState,
   opts: { port?: number; broadcastMs?: number } = {},
@@ -26,6 +47,33 @@ export function startHttpServer(
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     res.setHeader("Access-Control-Allow-Origin", "*"); // local tool; dev UI runs on another port
     const url = (req.url ?? "/").split("?")[0];
+
+    // CORS preflight for the write routes (the dev UI is a separate origin).
+    if (req.method === "OPTIONS") {
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    if (req.method === "POST" && url === "/api/preference") {
+      readBody(req)
+        .then((raw) => {
+          let pref: unknown;
+          try {
+            pref = (JSON.parse(raw || "{}") as { preference?: unknown }).preference;
+          } catch {
+            return sendJson(res, 400, { error: "invalid JSON" });
+          }
+          if (typeof pref !== "number" || !Number.isFinite(pref)) {
+            return sendJson(res, 400, { error: "preference must be a finite number" });
+          }
+          sendJson(res, 200, { balancePreference: state.setBalancePreference(pref) });
+        })
+        .catch(() => sendJson(res, 413, { error: "body too large" }));
+      return;
+    }
 
     if (url === "/healthz") {
       res.writeHead(200, { "Content-Type": "text/plain" });

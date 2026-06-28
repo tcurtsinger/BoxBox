@@ -1,5 +1,6 @@
 import { useSnapshot } from "./api/useSnapshot";
 import type { ConnState } from "./api/useSnapshot";
+import { setPreference } from "./api/commands";
 import { SetupPanel } from "./components/SetupPanel";
 import { BalancePanel } from "./components/BalancePanel";
 
@@ -31,7 +32,7 @@ export function App() {
           <Meta label="Session" value={sessionLabel} />
           <Meta label="Track" value={s && s.trackId >= 0 ? (s.trackName ?? `#${s.trackId}`) : "-"} />
           <Meta label="Setup" value={s?.setupReceived ? "Auto-detected" : "Waiting"} />
-          <Meta label="Balance target" value={s ? targetLabel(s.balancePreference) : "-"} />
+          <BalanceControl preference={s ? s.balancePreference : null} />
         </div>
         {s && s.equalCarPerformance !== null && (
           <EqualPerfBadge on={s.equalCarPerformance === 1} />
@@ -76,12 +77,47 @@ function EqualPerfBadge({ on }: { on: boolean }) {
   );
 }
 
-// Read-only label for the driver's balance target (set server-side for now; the
-// interactive control arrives with the driver profile).
-function targetLabel(pref: number): string {
-  if (pref <= -0.33) return "Loose";
-  if (pref >= 0.33) return "Stable";
-  return "Neutral";
+// The driver's balance target: how loose (oversteer) or stable (understeer) they
+// want the car to feel. A coarse three-way pick that shifts the suggestion target;
+// the planned thumbs-up/down feedback refines it within a bucket over time. The
+// stored value is continuous (-1..+1), so we map it to the matching bucket for the
+// active state and only write when the user picks a *different* bucket, preserving
+// any fine-grained refinement inside the current one.
+const PREF_OPTIONS: { label: string; value: number }[] = [
+  { label: "Loose", value: -1 },
+  { label: "Neutral", value: 0 },
+  { label: "Stable", value: 1 },
+];
+
+function prefBucket(pref: number): number {
+  if (pref <= -0.33) return -1;
+  if (pref >= 0.33) return 1;
+  return 0;
+}
+
+function BalanceControl({ preference }: { preference: number | null }) {
+  const active = preference === null ? null : prefBucket(preference);
+  return (
+    <div className="meta">
+      <span className="meta-label">Balance target</span>
+      <div className="pref-seg" role="group" aria-label="Balance target">
+        {PREF_OPTIONS.map((o) => (
+          <button
+            key={o.label}
+            type="button"
+            className={`pref-opt${o.value === active ? " pref-opt-active" : ""}`}
+            aria-pressed={o.value === active}
+            disabled={preference === null}
+            onClick={() => {
+              if (o.value !== active) setPreference(o.value);
+            }}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function Meta({ label, value }: { label: string; value: string }) {

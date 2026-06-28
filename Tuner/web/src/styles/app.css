@@ -134,6 +134,49 @@
   color: var(--amber);
 }
 
+/* ---- Balance-target control -------------------------------------------- */
+/* Segmented Loose/Neutral/Stable. The 1px gaps over the container's border
+   colour are the dividers, so there are no per-button border rules. */
+.pref-seg {
+  display: inline-flex;
+  gap: 1px;
+  padding: 1px;
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+.pref-opt {
+  appearance: none;
+  border: none;
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  padding: 4px 11px;
+  cursor: pointer;
+}
+.pref-opt:first-child {
+  border-top-left-radius: 5px;
+  border-bottom-left-radius: 5px;
+}
+.pref-opt:last-child {
+  border-top-right-radius: 5px;
+  border-bottom-right-radius: 5px;
+}
+.pref-opt:hover:not(:disabled):not(.pref-opt-active) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.pref-opt-active {
+  background: var(--bg-sel);
+  color: var(--text);
+}
+.pref-opt:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 /* ---- Balance readout ---------------------------------------------------- */
 .balance {
   max-width: 1100px;

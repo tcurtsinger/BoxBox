@@ -187,9 +187,10 @@ export class TunerState {
   // The open measurement awaiting an "after" reading on the new setup.
   #pending: { lever: SuggestKey; deltaClicks: number; channel: Channel; channelBefore: number } | null = null;
 
-  /** Set the driver balance preference, clamped to -1..+1. */
-  setBalancePreference(p: number): void {
+  /** Set the driver balance preference, clamped to -1..+1. Returns the applied value. */
+  setBalancePreference(p: number): number {
     this.#balancePreference = Math.max(-1, Math.min(1, Number.isFinite(p) ? p : 0));
+    return this.#balancePreference;
   }
 
   /** The online loop's learned per-lever gains (for the UI and tests). */
