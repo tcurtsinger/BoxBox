@@ -130,6 +130,26 @@ export interface TrimAdvice {
   fastestKey: string | null; // "<front>-<rear>" of the quickest level
 }
 
+// Tyre wear over the current stint (mirrors wear.ts). Corners named to avoid
+// wheel-order index confusion.
+export type TyreCorner = "fl" | "fr" | "rl" | "rr";
+
+export interface TyreReading {
+  fl: number;
+  fr: number;
+  rl: number;
+  rr: number;
+}
+
+export interface WearStint {
+  laps: number;
+  wear: TyreReading; // current wear %, per tyre
+  rate: TyreReading | null; // %/lap per tyre, null until a lap is measured
+  fastest: TyreCorner | null;
+  compound: number | null; // visual tyre compound (id 7)
+  ageLaps: number | null; // tyre age in laps (id 7)
+}
+
 export type BalanceDirection = "looser" | "stabler";
 
 // The last single-lever change the driver can give thumbs feedback on. null when
@@ -165,6 +185,7 @@ export interface TunerSnapshot {
   lastChange: LastChange | null;
   run: RunStats | null;
   trim: TrimAdvice | null;
+  wear: WearStint | null;
   packetCount: number;
   lastUpdate: number;
 }

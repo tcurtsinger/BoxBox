@@ -16,6 +16,8 @@ import type {
   MotionExData,
   LapDataData,
   CarTelemetryData,
+  CarDamageData,
+  CarStatusData,
 } from "../../../shared/parser/index.ts";
 import { constants } from "../../../shared/parser/index.ts";
 import { segmentLap, currentCorner, mergeCornerMap } from "./segmentation.ts";
@@ -28,6 +30,8 @@ import { lapStats, newRun, foldLap, runKey } from "./runstats.ts";
 import type { RunStats } from "./runstats.ts";
 import { buildTrimAdvice } from "./trim.ts";
 import type { TrimAdvice } from "./trim.ts";
+import { tyresFromPacket, wearRate, fastestWear, isFreshSet } from "./wear.ts";
+import type { TyreReading, WearStint } from "./wear.ts";
 import { GainEstimator, LEVER_CHANNEL, changeDirection } from "./estimator.ts";
 import type { Channel, LearnedGain, BalanceDirection } from "./estimator.ts";
 import { PROFILE_VERSION } from "./profile.ts";
@@ -145,6 +149,10 @@ export interface TunerSnapshot {
   // Aero-trim advice: the two trims to try (lower/higher downforce) and the ranked
   // comparison of the wing levels measured so far. null off-session.
   trim: TrimAdvice | null;
+  // Tyre wear over the current stint (% and %/lap per tyre): the fine-param tuning
+  // signal, measurable only on a Practice long run. null off-session or until a
+  // Car Damage frame is seen.
+  wear: WearStint | null;
   packetCount: number;
   lastUpdate: number;
 }
@@ -224,6 +232,14 @@ export class TunerState {
   // aero-trim comparison can rank the levels actually driven. Survives UID resets
   // like the corner map.
   #runs = new Map<number, Map<string, RunStats>>();
+  // Tyre-wear stint (Car Damage id 10): the latest reading, the baseline it grew
+  // from, and laps since. Rebaselined on a fresh set or a setup change, so the rate
+  // is per current tyres + setup. Compound/age come from Car Status (id 7).
+  #wear: TyreReading | null = null;
+  #wearBaseline: TyreReading | null = null;
+  #wearLaps = 0;
+  #tyreAgeLaps: number | null = null;
+  #compound: number | null = null;
 
   /** Set the driver balance preference, clamped to -1..+1. Returns the applied value. */
   setBalancePreference(p: number): number {
@@ -299,6 +315,26 @@ export class TunerState {
         this.#tThrottle = t.throttle;
         this.#tBrake = t.brake;
         this.#tSteer = t.steer;
+      }
+    } else if (pkt.id === 10) {
+      const mine = (pkt.data as CarDamageData).cars[h.playerCarIndex];
+      if (mine) {
+        const w = tyresFromPacket(mine.tyresWear);
+        // A fresh set (wear dropped vs the last reading) restarts the stint; the
+        // first reading just seeds the baseline.
+        if (this.#wear !== null && isFreshSet(this.#wear, w)) {
+          this.#wearBaseline = w;
+          this.#wearLaps = 0;
+        } else if (this.#wearBaseline === null) {
+          this.#wearBaseline = w;
+        }
+        this.#wear = w;
+      }
+    } else if (pkt.id === 7) {
+      const mine = (pkt.data as CarStatusData).cars[h.playerCarIndex];
+      if (mine) {
+        this.#tyreAgeLaps = mine.tyresAgeLaps;
+        this.#compound = mine.visualTyreCompound;
       }
     } else if (pkt.id === 5) {
       const d = pkt.data as CarSetupsData;
@@ -408,6 +444,7 @@ export class TunerState {
     if (lap.currentLapNum !== this.#currentLapNum) {
       // The just-completed lap's time arrives as lastLapTimeMS on the new lap.
       this.#finalizeLap(lap.lastLapTimeMS);
+      if (this.#wearBaseline !== null) this.#wearLaps += 1; // a lap of wear on this stint
       this.#currentLapNum = lap.currentLapNum;
       this.#lapTrace = [];
       this.#lapInvalidated = false;
@@ -522,6 +559,11 @@ export class TunerState {
     }
     this.#noteChange(single, old, next, false);
     this.#windowDiag = new Map(); // the new setup starts a fresh window
+    if (this.#wear !== null) {
+      // Rebaseline wear so the rate is attributed to the new setup, not blended.
+      this.#wearBaseline = this.#wear;
+      this.#wearLaps = 0;
+    }
   }
 
   // The measured runs for the current track (created on first access).
@@ -579,6 +621,19 @@ export class TunerState {
       setupCurrent && this.#setup
         ? trackRuns?.get(runKey(this.#setup)) ?? newRun(this.#setup.frontWing, this.#setup.rearWing)
         : null;
+    // Tyre-wear stint: the rate is meaningful once a lap has been measured.
+    const wearRateNow = this.#wear && this.#wearBaseline ? wearRate(this.#wearBaseline, this.#wear, this.#wearLaps) : null;
+    const wear: WearStint | null =
+      setupCurrent && this.#wear
+        ? {
+            laps: this.#wearLaps,
+            wear: this.#wear,
+            rate: wearRateNow,
+            fastest: fastestWear(wearRateNow),
+            compound: this.#compound,
+            ageLaps: this.#tyreAgeLaps,
+          }
+        : null;
     return {
       format: this.format,
       gameYear: this.gameYear,
@@ -615,6 +670,7 @@ export class TunerState {
         setupCurrent && this.#setup
           ? buildTrimAdvice(this.#setup.frontWing, this.#setup.rearWing, trackRuns ? [...trackRuns.values()] : [])
           : null,
+      wear,
       packetCount: this.packetCount,
       lastUpdate: this.lastUpdate,
     };

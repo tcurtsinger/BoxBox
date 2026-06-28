@@ -682,6 +682,58 @@ test("returning to a wing level resumes its measured run", () => {
   assert.ok(run && run.validLaps >= 2, "laps from both stints on this level count");
 });
 
+// --- 2g-1: tyre-wear measurement (Car Damage id 10) ------------------------
+test("measures per-tyre wear rate over a stint", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  feed(s, 5, gridWith(25));
+  feed(s, 10, { cars: atPlayer({ index: 5, tyresWear: [0, 0, 0, 0] }) }); // baseline
+  step(s, 0, 1); // establish lap 1
+  feed(s, 10, { cars: atPlayer({ index: 5, tyresWear: [2, 3, 4, 5] }) }); // RL RR FL FR grew
+  step(s, 500, 2); // roll into lap 2 -> one lap of wear
+
+  const w = s.snapshot().wear;
+  assert.ok(w, "wear is exposed");
+  assert.equal(w.laps, 1);
+  assert.deepEqual(w.wear, { rl: 2, rr: 3, fl: 4, fr: 5 });
+  assert.deepEqual(w.rate, { rl: 2, rr: 3, fl: 4, fr: 5 });
+  assert.equal(w.fastest, "fr", "front-right wore fastest");
+});
+
+test("a fresh set restarts the wear stint", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  feed(s, 5, gridWith(25));
+  feed(s, 10, { cars: atPlayer({ index: 5, tyresWear: [0, 0, 0, 0] }) });
+  step(s, 0, 1);
+  feed(s, 10, { cars: atPlayer({ index: 5, tyresWear: [5, 6, 8, 9] }) });
+  step(s, 500, 2);
+  assert.equal(s.snapshot().wear?.laps, 1);
+
+  feed(s, 10, { cars: atPlayer({ index: 5, tyresWear: [0, 0, 0, 0] }) }); // new tyres (wear dropped)
+  const w = s.snapshot().wear;
+  assert.equal(w?.laps, 0);
+  assert.equal(w?.rate, null, "no rate until a lap is measured on the new set");
+  assert.deepEqual(w?.wear, { rl: 0, rr: 0, fl: 0, fr: 0 });
+});
+
+test("a setup change rebaselines tyre wear to the new setup", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 18, trackId: 0, trackLength: 1000 });
+  feed(s, 5, gridWith(25));
+  feed(s, 10, { cars: atPlayer({ index: 5, tyresWear: [0, 0, 0, 0] }) });
+  step(s, 0, 1);
+  feed(s, 10, { cars: atPlayer({ index: 5, tyresWear: [5, 6, 8, 9] }) });
+  step(s, 500, 2);
+  assert.ok(s.snapshot().wear?.rate, "rate present before the change");
+
+  feed(s, 5, gridWith(28)); // a setup change rebaselines wear
+  const w = s.snapshot().wear;
+  assert.equal(w?.laps, 0);
+  assert.equal(w?.rate, null, "rate resets so wear is attributed to the new setup");
+  assert.deepEqual(w?.wear, { rl: 5, rr: 6, fl: 8, fr: 9 }, "current wear is unchanged");
+});
+
 test("the --log captures the baseline setup and each change (self-describing capture)", () => {
   const s = new TunerState();
   const recs: any[] = [];
