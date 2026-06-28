@@ -160,6 +160,7 @@ export interface WearSuggestion {
   param: WearParam;
   direction: "lower" | "raise";
   reason: string;
+  confidence: Confidence; // "prior" until the wear A/B loop measures the lever
 }
 
 export interface WearAdvice {

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { tyresFromPacket, wearRate, fastestWear, isFreshSet, buildWearAdvice } from "../src/wear.ts";
 import type { WearStint, TyreReading } from "../src/wear.ts";
+import type { WearLever, LearnedWear } from "../src/wearEstimator.ts";
 
 test("tyresFromPacket maps wheel order RL RR FL FR to named corners", () => {
   assert.deepEqual(tyresFromPacket([10, 20, 30, 40]), { rl: 10, rr: 20, fl: 30, fr: 40 });
@@ -98,4 +99,22 @@ test("a fast axle that is not running hot gets no camber suggestion", () => {
     a.suggestions.map((s) => s.param),
     ["frontToe", "frontAntiRollBar"],
   );
+});
+
+test("learned gains stamp a suggestion's confidence", () => {
+  const gains = new Map<WearLever, LearnedWear>([
+    ["frontToe", { sensitivity: 50, observations: 2, confidence: "measured", agrees: true }],
+  ]);
+  const a = buildWearAdvice(stint({ fl: 4, fr: 4, rl: 1.5, rr: 1.5 }, 5), gains);
+  assert.equal(a?.suggestions.find((s) => s.param === "frontToe")?.confidence, "measured");
+  assert.equal(a?.suggestions.find((s) => s.param === "frontAntiRollBar")?.confidence, "prior");
+});
+
+test("a lever measured NOT to help is dropped from the advice", () => {
+  const gains = new Map<WearLever, LearnedWear>([
+    ["frontToe", { sensitivity: -50, observations: 2, confidence: "measured", agrees: false }],
+  ]);
+  const a = buildWearAdvice(stint({ fl: 4, fr: 4, rl: 1.5, rr: 1.5 }, 5), gains);
+  assert.equal(a?.suggestions.find((s) => s.param === "frontToe"), undefined, "suppressed");
+  assert.ok(a?.suggestions.find((s) => s.param === "frontAntiRollBar"), "ARB still suggested");
 });

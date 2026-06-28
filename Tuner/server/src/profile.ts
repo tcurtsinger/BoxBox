@@ -8,7 +8,8 @@ export interface TunerProfile {
   version: number;
   driver: string;
   balancePreference: number; // -1 loose .. 0 neutral .. +1 stable
-  gains: Record<string, number[]>; // per-lever observation magnitudes (clicks/rad)
+  gains: Record<string, number[]>; // per-lever balance observation magnitudes (clicks/rad)
+  wearGains?: Record<string, number[]>; // per-lever wear sensitivities (signed); optional for back-compat
 }
 
 export const PROFILE_VERSION = 1;

@@ -59,9 +59,6 @@ export function WearPanel({ wear, advice }: Props) {
         <div className="wear-advice">
           <div className="wear-advice-head">
             <strong>{advice.headline}</strong>
-            <span className="wear-prior" title="A low-confidence prior from general setup knowledge, not yet measured">
-              prior
-            </span>
           </div>
           {advice.suggestions.length > 0 ? (
             <ul className="wear-sugs">
@@ -69,6 +66,18 @@ export function WearPanel({ wear, advice }: Props) {
                 <li key={s.param} className="wear-sug">
                   <span className="wear-sug-param">{WEAR_PARAM_LABEL[s.param]}</span>
                   <span className="wear-sug-dir">{s.direction === "lower" ? "↓ lower" : "↑ raise"}</span>
+                  <span
+                    className={`wear-conf conf-${s.confidence}`}
+                    title={
+                      s.confidence === "measured"
+                        ? "Confirmed by the wear A/B loop on this car"
+                        : s.confidence === "forming"
+                          ? "One measurement so far"
+                          : "A low-confidence prior, not yet measured"
+                    }
+                  >
+                    {s.confidence}
+                  </span>
                   <span className="wear-sug-reason">{s.reason}</span>
                 </li>
               ))}

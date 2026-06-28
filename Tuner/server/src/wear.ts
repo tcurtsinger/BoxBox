@@ -82,12 +82,16 @@ export function isFreshSet(last: TyreReading, current: TyreReading, eps = 0.5): 
 // could measure it. Left-vs-right asymmetry is treated as track-specific, not a
 // setup fix, so it is reported but not actioned.
 
+import type { Confidence } from "./suggest.ts";
+import type { WearLever, LearnedWear } from "./wearEstimator.ts";
+
 export type WearParam = "frontToe" | "rearToe" | "frontAntiRollBar" | "rearAntiRollBar" | "frontCamber" | "rearCamber";
 
 export interface WearSuggestion {
   param: WearParam;
   direction: "lower" | "raise";
   reason: string;
+  confidence: Confidence; // "prior" until the wear A/B loop measures the lever
 }
 
 export interface WearAdvice {
@@ -115,8 +119,18 @@ function axleOverload(stint: WearStint, axle: "front" | "rear"): number | null {
   return gap;
 }
 
-/** Advice from a wear stint, or null if there is not enough signal yet. */
-export function buildWearAdvice(stint: WearStint): WearAdvice | null {
+// Stamp a toe/ARB suggestion with the loop's learned confidence, or drop it if the
+// loop has MEASURED that lowering it does not reduce wear here (so the tool never
+// keeps recommending a change its own data refuted).
+function withGain(s: WearSuggestion, gains: Map<WearLever, LearnedWear>): WearSuggestion | null {
+  const g = gains.get(s.param as WearLever);
+  if (!g) return s;
+  if (g.confidence === "measured" && g.agrees === false) return null;
+  return { ...s, confidence: g.confidence };
+}
+
+/** Advice from a wear stint and the loop's learned gains, or null if no signal yet. */
+export function buildWearAdvice(stint: WearStint, gains: Map<WearLever, LearnedWear> = new Map()): WearAdvice | null {
   const r = stint.rate;
   if (!r || stint.laps < MIN_WEAR_LAPS) return null;
   const front = (r.fl + r.fr) / 2;
@@ -137,26 +151,31 @@ export function buildWearAdvice(stint: WearStint): WearAdvice | null {
 
   const frontFaster = front > rear;
   const ratio = (hi / lo).toFixed(1);
-  const suggestions: WearSuggestion[] = frontFaster
+  const base: WearSuggestion[] = frontFaster
     ? [
-        { param: "frontToe", direction: "lower", reason: "less front toe runs the fronts cooler" },
-        { param: "frontAntiRollBar", direction: "lower", reason: "a softer front bar eases front load" },
+        { param: "frontToe", direction: "lower", reason: "less front toe runs the fronts cooler", confidence: "prior" },
+        { param: "frontAntiRollBar", direction: "lower", reason: "a softer front bar eases front load", confidence: "prior" },
       ]
     : [
-        { param: "rearToe", direction: "lower", reason: "less rear toe runs the rears cooler" },
-        { param: "rearAntiRollBar", direction: "lower", reason: "a softer rear bar eases rear load" },
+        { param: "rearToe", direction: "lower", reason: "less rear toe runs the rears cooler", confidence: "prior" },
+        { param: "rearAntiRollBar", direction: "lower", reason: "a softer rear bar eases rear load", confidence: "prior" },
       ];
+
+  const suggestions = base
+    .map((s) => withGain(s, gains))
+    .filter((s): s is WearSuggestion => s !== null);
 
   // Temp corroboration: if the overworked axle's core runs hot vs its surface, it
   // is genuinely overloaded, so less (negative) camber spreads the load. Only when
   // the gap is clear, and on the fast-wearing axle, so it stays a corroborating
-  // suggestion rather than a guess.
+  // suggestion rather than a guess. Camber is not in the A/B loop, so it stays prior.
   const overload = axleOverload(stint, frontFaster ? "front" : "rear");
   if (overload !== null && overload >= OVERLOAD_GAP) {
     suggestions.push({
       param: frontFaster ? "frontCamber" : "rearCamber",
       direction: "raise", // less negative camber
       reason: `core runs ${overload.toFixed(0)}C hotter than the surface (overloaded), less camber spreads the load`,
+      confidence: "prior",
     });
   }
 
@@ -166,3 +185,5 @@ export function buildWearAdvice(stint: WearStint): WearAdvice | null {
     suggestions,
   };
 }
+
+export { MIN_WEAR_LAPS };

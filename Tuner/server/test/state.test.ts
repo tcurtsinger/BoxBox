@@ -734,6 +734,48 @@ test("a setup change rebaselines tyre wear to the new setup", () => {
   assert.deepEqual(w?.wear, { rl: 5, rr: 6, fl: 8, fr: 9 }, "current wear is unchanged");
 });
 
+// --- 2i: the wear A/B loop ---------------------------------------------------
+function gridToe(frontToe: number): { cars: CarSetupEntry[]; nextFrontWingValue: number } {
+  const player = { ...playerSetup(25), frontToe };
+  const cars = Array.from({ length: 24 }, (_, i) => (i === 5 ? player : zeroCar(i)));
+  return { cars, nextFrontWingValue: 27 };
+}
+function feedWear(s: TunerState, rl: number, rr: number, fl: number, fr: number): void {
+  feed(s, 10, { cars: atPlayer({ index: 5, tyresWear: [rl, rr, fl, fr] }) });
+}
+
+test("the wear A/B loop confirms a lever's direction (prior -> forming)", () => {
+  const s = new TunerState();
+  feed(s, 1, { sessionType: 2, trackId: 0, trackLength: 1000 }); // Practice
+  feed(s, 5, gridToe(0.1)); // setup A: more front toe
+  feedWear(s, 0, 0, 0, 0);
+  step(s, 0, 1); // establish lap 1
+
+  // Stint A: 3 laps, fronts wear ~4%/lap, rears ~2%/lap.
+  for (let lap = 1; lap <= 3; lap++) {
+    feedWear(s, lap * 2, lap * 2, lap * 4, lap * 4);
+    step(s, 500, lap + 1);
+  }
+
+  feed(s, 5, gridToe(0.08)); // less front toe -> opens a wear measurement (before front rate ~4)
+  feedWear(s, 0, 0, 0, 0); // fresh set on B
+
+  // Stint B: 3 laps, fronts now wear ~2%/lap (lowering toe helped).
+  for (let lap = 1; lap <= 3; lap++) {
+    feedWear(s, lap * 1, lap * 1, lap * 2, lap * 2);
+    step(s, 500, lap + 4);
+  }
+
+  const g = s.learnedWearGains().get("frontToe");
+  assert.ok(g, "frontToe was measured");
+  assert.equal(g.confidence, "forming");
+  assert.equal(g.agrees, true, "lowering front toe reduced front wear, as the prior expected");
+
+  // The advice now carries that confidence on the front-toe suggestion.
+  const ft = s.snapshot().wearAdvice?.suggestions.find((x) => x.param === "frontToe");
+  assert.equal(ft?.confidence, "forming");
+});
+
 test("the --log captures the baseline setup and each change (self-describing capture)", () => {
   const s = new TunerState();
   const recs: any[] = [];

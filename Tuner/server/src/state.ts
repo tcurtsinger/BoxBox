@@ -30,8 +30,10 @@ import { lapStats, newRun, foldLap, runKey } from "./runstats.ts";
 import type { RunStats } from "./runstats.ts";
 import { buildTrimAdvice } from "./trim.ts";
 import type { TrimAdvice } from "./trim.ts";
-import { tyresFromPacket, wearRate, fastestWear, isFreshSet, buildWearAdvice, emaTyre } from "./wear.ts";
+import { tyresFromPacket, wearRate, fastestWear, isFreshSet, buildWearAdvice, emaTyre, MIN_WEAR_LAPS } from "./wear.ts";
 import type { TyreReading, WearStint, WearAdvice } from "./wear.ts";
+import { WearEstimator } from "./wearEstimator.ts";
+import type { WearLever } from "./wearEstimator.ts";
 import { GainEstimator, LEVER_CHANNEL, changeDirection } from "./estimator.ts";
 import type { Channel, LearnedGain, BalanceDirection } from "./estimator.ts";
 import { PROFILE_VERSION } from "./profile.ts";
@@ -68,6 +70,11 @@ const SETUP_KEYS: (keyof CarSetupEntry)[] = [
 const TRACKED_LEVERS: SuggestKey[] = [
   "frontWing", "rearWing", "onThrottle", "offThrottle", "frontAntiRollBar", "rearAntiRollBar", "brakeBias",
 ];
+// Levers the wear A/B loop validates (its "lower = less wear" prior). A clean wear
+// measurement needs exactly one of these to change, and nothing else.
+const WEAR_LEVERS: WearLever[] = ["frontToe", "rearToe", "frontAntiRollBar", "rearAntiRollBar"];
+const wearAxle = (lever: WearLever): "front" | "rear" =>
+  lever === "frontToe" || lever === "frontAntiRollBar" ? "front" : "rear";
 
 // The setup levers' values as a flat record, for the baseline --log capture.
 function leverValues(s: CarSetupEntry): Record<string, number> {
@@ -253,6 +260,12 @@ export class TunerState {
   // carcass/core (the load-truth signal); surface is the contact patch.
   #coreTemp: TyreReading | null = null;
   #surfaceTemp: TyreReading | null = null;
+  // The wear A/B loop: validates the wear advice's direction per lever, upgrading
+  // its confidence prior -> forming -> measured. In-memory + persisted in the profile.
+  #wearEstimator = new WearEstimator();
+  // The open wear measurement: an axle's "before" rate, awaiting the new setup's
+  // "after" once its stint is well-sampled.
+  #wearPending: { lever: WearLever; deltaClicks: number; axle: "front" | "rear"; rateBefore: number } | null = null;
 
   /** Set the driver balance preference, clamped to -1..+1. Returns the applied value. */
   setBalancePreference(p: number): number {
@@ -280,6 +293,11 @@ export class TunerState {
     return this.#estimator.asMap();
   }
 
+  /** The wear A/B loop's learned per-lever directions (for tests). */
+  learnedWearGains() {
+    return this.#wearEstimator.asMap();
+  }
+
   /** Snapshot the persistable driver profile (preference + learned gains). */
   serializeProfile(driver: string): TunerProfile {
     return {
@@ -287,6 +305,7 @@ export class TunerState {
       driver,
       balancePreference: this.#balancePreference,
       gains: this.#estimator.serialize(),
+      wearGains: this.#wearEstimator.serialize(),
     };
   }
 
@@ -295,6 +314,7 @@ export class TunerState {
     if (!p) return;
     if (typeof p.balancePreference === "number") this.setBalancePreference(p.balancePreference);
     this.#estimator.restore(p.gains);
+    this.#wearEstimator.restore(p.wearGains);
   }
 
   ingest(pkt: ParsedPacket, atMs: number): void {
@@ -466,6 +486,7 @@ export class TunerState {
       // The just-completed lap's time arrives as lastLapTimeMS on the new lap.
       this.#finalizeLap(lap.lastLapTimeMS);
       if (this.#wearBaseline !== null) this.#wearLaps += 1; // a lap of wear on this stint
+      this.#tryCompleteWearPending(); // the new stint may now be sampled enough to measure
       this.#currentLapNum = lap.currentLapNum;
       this.#lapTrace = [];
       this.#lapInvalidated = false;
@@ -580,11 +601,40 @@ export class TunerState {
     }
     this.#noteChange(single, old, next, false);
     this.#windowDiag = new Map(); // the new setup starts a fresh window
+
+    // Wear A/B: a new change abandons any half-finished measurement, then opens a
+    // fresh one if exactly one wear lever moved (and nothing else) and the outgoing
+    // stint had a stable rate to read as the "before".
+    this.#wearPending = null;
+    const wearKey =
+      changedKeys.length === 1 && WEAR_LEVERS.includes(changedKeys[0] as WearLever)
+        ? (changedKeys[0] as WearLever)
+        : null;
+    if (wearKey && this.#wear && this.#wearBaseline && this.#wearLaps >= MIN_WEAR_LAPS) {
+      const before = wearRate(this.#wearBaseline, this.#wear, this.#wearLaps);
+      if (before) {
+        const axle = wearAxle(wearKey);
+        const rateBefore = axle === "front" ? (before.fl + before.fr) / 2 : (before.rl + before.rr) / 2;
+        this.#wearPending = { lever: wearKey, deltaClicks: next[wearKey] - old[wearKey], axle, rateBefore };
+      }
+    }
     if (this.#wear !== null) {
       // Rebaseline wear so the rate is attributed to the new setup, not blended.
       this.#wearBaseline = this.#wear;
       this.#wearLaps = 0;
     }
+  }
+
+  // Complete an open wear measurement once the new setup's stint is well-sampled:
+  // its axle rate is the "after" the estimator compares to the "before".
+  #tryCompleteWearPending(): void {
+    if (!this.#wearPending || !this.#wear || !this.#wearBaseline) return;
+    if (this.#wearLaps < MIN_WEAR_LAPS) return;
+    const rate = wearRate(this.#wearBaseline, this.#wear, this.#wearLaps);
+    if (!rate) return;
+    const after = this.#wearPending.axle === "front" ? (rate.fl + rate.fr) / 2 : (rate.rl + rate.rr) / 2;
+    this.#wearEstimator.record(this.#wearPending.lever, this.#wearPending.deltaClicks, this.#wearPending.rateBefore, after);
+    this.#wearPending = null;
   }
 
   // The measured runs for the current track (created on first access).
@@ -694,7 +744,7 @@ export class TunerState {
           ? buildTrimAdvice(this.#setup.frontWing, this.#setup.rearWing, trackRuns ? [...trackRuns.values()] : [])
           : null,
       wear,
-      wearAdvice: wear ? buildWearAdvice(wear) : null,
+      wearAdvice: wear ? buildWearAdvice(wear, this.#wearEstimator.asMap()) : null,
       packetCount: this.packetCount,
       lastUpdate: this.lastUpdate,
     };
