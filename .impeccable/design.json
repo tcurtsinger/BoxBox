@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-27T00:00:00Z",
+  "title": "Design System: BoxBox",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Mineral Teal",
+        "canonical": "oklch(0.800 0.115 192)",
+        "tonalRamp": ["oklch(0.30 0.05 192)", "oklch(0.40 0.07 192)", "oklch(0.50 0.09 192)", "oklch(0.60 0.10 192)", "oklch(0.72 0.13 193)", "oklch(0.80 0.115 192)", "oklch(0.88 0.08 192)", "oklch(0.95 0.04 192)"]
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Graphite Base",
+        "canonical": "oklch(0.155 0.006 235)",
+        "tonalRamp": ["oklch(0.125 0.005 235)", "oklch(0.155 0.006 235)", "oklch(0.195 0.008 235)", "oklch(0.235 0.010 235)", "oklch(0.300 0.012 235)", "oklch(0.500 0.012 234)", "oklch(0.720 0.010 232)", "oklch(0.965 0.004 230)"]
+      },
+      "data-good": { "role": "tertiary", "displayName": "Data Good — Green", "canonical": "oklch(0.800 0.160 152)", "tonalRamp": ["oklch(0.30 0.06 152)", "oklch(0.42 0.09 152)", "oklch(0.54 0.12 152)", "oklch(0.66 0.15 152)", "oklch(0.80 0.16 152)", "oklch(0.87 0.13 152)", "oklch(0.92 0.09 152)", "oklch(0.96 0.05 152)"] },
+      "data-caution": { "role": "tertiary", "displayName": "Data Caution — Amber", "canonical": "oklch(0.820 0.150 80)", "tonalRamp": ["oklch(0.34 0.07 80)", "oklch(0.46 0.10 80)", "oklch(0.58 0.13 80)", "oklch(0.70 0.15 80)", "oklch(0.82 0.15 80)", "oklch(0.88 0.12 80)", "oklch(0.93 0.08 80)", "oklch(0.97 0.04 80)"] },
+      "data-danger": { "role": "tertiary", "displayName": "Data Danger — Red", "canonical": "oklch(0.640 0.205 27)", "tonalRamp": ["oklch(0.28 0.10 27)", "oklch(0.40 0.15 27)", "oklch(0.52 0.19 27)", "oklch(0.64 0.205 27)", "oklch(0.74 0.17 27)", "oklch(0.83 0.12 27)", "oklch(0.90 0.07 27)", "oklch(0.96 0.03 27)"] },
+      "data-info": { "role": "tertiary", "displayName": "Data Info — Blue", "canonical": "oklch(0.700 0.135 248)", "tonalRamp": ["oklch(0.30 0.06 248)", "oklch(0.42 0.09 248)", "oklch(0.54 0.12 248)", "oklch(0.70 0.135 248)", "oklch(0.80 0.10 248)", "oklch(0.87 0.07 248)", "oklch(0.92 0.04 248)", "oklch(0.96 0.02 248)"] },
+      "data-session": { "role": "tertiary", "displayName": "Data Session — Violet", "canonical": "oklch(0.680 0.150 300)", "tonalRamp": ["oklch(0.30 0.07 300)", "oklch(0.42 0.10 300)", "oklch(0.54 0.13 300)", "oklch(0.68 0.15 300)", "oklch(0.78 0.11 300)", "oklch(0.86 0.08 300)", "oklch(0.92 0.04 300)", "oklch(0.96 0.02 300)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "The single glance value per view — lap delta, balance verdict. Rare." },
+      "data": { "displayName": "Data / Numeric", "purpose": "Geist Mono, tabular figures — every runtime number, time, delta, slider value." },
+      "label": { "displayName": "Label", "purpose": "Functional uppercase field labels and units; never decorative section eyebrows." }
+    },
+    "shadows": [
+      { "name": "floating", "value": "0 8px 24px -8px rgba(0,0,0,0.55)", "purpose": "Popovers, menus, dialogs — the only genuinely floating layers." },
+      { "name": "focus-ring", "value": "0 0 0 3px oklch(0.800 0.115 192 / 0.25)", "purpose": "Keyboard focus and active selection on interactive elements." }
+    ],
+    "motion": [
+      { "name": "ease-out-quint", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Default easing for state transitions and value changes." },
+      { "name": "dur-fast", "value": "160ms", "purpose": "Hover, focus, color shifts." },
+      { "name": "dur-base", "value": "220ms", "purpose": "Panel/state transitions, marker moves." }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "900px" },
+      { "name": "wide", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one 'act here' action per context. Mineral teal fill, dark ink. Used sparingly.",
+      "html": "<button class=\"ds-btn-primary\">Apply change</button>",
+      "css": ".ds-btn-primary { font-family: Geist, Inter, system-ui, sans-serif; font-size: 0.9375rem; font-weight: 600; color: oklch(0.155 0.020 235); background: oklch(0.800 0.115 192); border: none; border-radius: 6px; padding: 8px 16px; cursor: pointer; transition: background 160ms cubic-bezier(0.22,1,0.36,1); } .ds-btn-primary:hover { background: oklch(0.720 0.130 193); } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px oklch(0.800 0.115 192 / 0.25); } .ds-btn-primary:active { background: oklch(0.620 0.090 193); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "The workhorse action in a dense tool: surface fill, full border, ink text.",
+      "html": "<button class=\"ds-btn-ghost\">Manage columns</button>",
+      "css": ".ds-btn-ghost { font-family: Geist, Inter, system-ui, sans-serif; font-size: 0.9375rem; font-weight: 600; color: oklch(0.965 0.004 230); background: oklch(0.195 0.008 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 6px; padding: 8px 16px; cursor: pointer; transition: background 160ms cubic-bezier(0.22,1,0.36,1), border-color 160ms; } .ds-btn-ghost:hover { background: oklch(0.235 0.010 235); border-color: oklch(0.360 0.014 235); } .ds-btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 3px oklch(0.800 0.115 192 / 0.25); }"
+    },
+    {
+      "name": "Status Pill (Caution)",
+      "kind": "chip",
+      "refersTo": "status-pill",
+      "description": "Semantic state tag. Tints background + text toward one data color at low alpha, always with a word — never color alone.",
+      "html": "<span class=\"ds-pill-caution\"><span class=\"ds-pill-dot\"></span>UNDERSTEER</span>",
+      "css": ".ds-pill-caution { display: inline-flex; align-items: center; gap: 6px; font-family: Geist, Inter, system-ui, sans-serif; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.820 0.150 80); background: oklch(0.820 0.150 80 / 0.10); border: 1px solid oklch(0.820 0.150 80 / 0.35); border-radius: 4px; padding: 2px 8px; } .ds-pill-caution .ds-pill-dot { width: 7px; height: 7px; border-radius: 50%; background: oklch(0.820 0.150 80); }"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Resting container: surface on the base floor, 1px border, flat (no shadow at rest). Nested cards forbidden.",
+      "html": "<section class=\"ds-panel\"><h3 class=\"ds-panel-title\">Aero Balance</h3><p class=\"ds-panel-body\">Front wing 6 of 50 — try +2 for rotation on entry.</p></section>",
+      "css": ".ds-panel { background: oklch(0.195 0.008 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 10px; padding: 16px 18px; } .ds-panel-title { margin: 0 0 8px; font-family: Geist, Inter, system-ui, sans-serif; font-size: 0.9375rem; font-weight: 600; color: oklch(0.965 0.004 230); } .ds-panel-body { margin: 0; font-family: Geist, Inter, system-ui, sans-serif; font-size: 0.875rem; line-height: 1.5; color: oklch(0.720 0.010 232); }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Inset well, 1px border; focus shifts border to teal with a ring. Numeric entry uses mono.",
+      "html": "<input class=\"ds-input\" value=\"20777\" aria-label=\"UDP port\" />",
+      "css": ".ds-input { font-family: Geist Mono, JetBrains Mono, ui-monospace, monospace; font-size: 0.9375rem; font-weight: 600; font-variant-numeric: tabular-nums; color: oklch(0.965 0.004 230); background: oklch(0.125 0.005 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 6px; padding: 8px 12px; transition: border-color 160ms cubic-bezier(0.22,1,0.36,1); } .ds-input:focus-visible { outline: none; border-color: oklch(0.800 0.115 192); box-shadow: 0 0 0 3px oklch(0.800 0.115 192 / 0.25); }"
+    },
+    {
+      "name": "Mode Switch",
+      "kind": "nav",
+      "refersTo": "nav",
+      "description": "Top-level identity control. Tuner and Race Control as peers; active segment marked by teal text + a 2px teal underline, not a filled block.",
+      "html": "<nav class=\"ds-modeswitch\"><button class=\"ds-mode is-active\">Tuner</button><button class=\"ds-mode\">Race Control</button></nav>",
+      "css": ".ds-modeswitch { display: inline-flex; gap: 4px; } .ds-mode { position: relative; font-family: Geist, Inter, system-ui, sans-serif; font-size: 0.9375rem; font-weight: 600; color: oklch(0.720 0.010 232); background: none; border: none; padding: 8px 12px 10px; cursor: pointer; transition: color 160ms cubic-bezier(0.22,1,0.36,1); } .ds-mode:hover { color: oklch(0.965 0.004 230); } .ds-mode.is-active { color: oklch(0.800 0.115 192); } .ds-mode.is-active::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; border-radius: 1px; background: oklch(0.800 0.115 192); }"
+    },
+    {
+      "name": "Data Readout",
+      "kind": "custom",
+      "refersTo": "data-readout",
+      "description": "The signature atom: stacked uppercase label + tabular mono value, optional semantic state color and track. Every timing row, setup slider, and stat is a density variant of this.",
+      "html": "<div class=\"ds-readout\"><span class=\"ds-readout-label\">Lap Delta</span><span class=\"ds-readout-value is-good\">-0.182</span></div>",
+      "css": ".ds-readout { display: inline-flex; flex-direction: column; gap: 3px; } .ds-readout-label { font-family: Geist, Inter, system-ui, sans-serif; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.560 0.012 234); } .ds-readout-value { font-family: Geist Mono, JetBrains Mono, ui-monospace, monospace; font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; color: oklch(0.965 0.004 230); line-height: 1.1; } .ds-readout-value.is-good { color: oklch(0.800 0.160 152); } .ds-readout-value.is-danger { color: oklch(0.640 0.205 27); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Hybrid-Era Pit Wall",
+    "overview": "BoxBox looks like the screen a race engineer actually reads — graphite housing, data lit from within, one mineral teal glow marking what matters right now. It is an instrument, not a dashboard-as-decoration, built for two attention budgets at once: a driver glancing at a second monitor mid-lap, and a steward giving a race-control station full focus. The craft target is sim-HUD purpose executed with Linear / Vercel discipline. Color is rationed: a single teal brand accent for brand, selection, and 'act here,' and a separate functional data layer that means something specific every time. Numbers live in a tabular mono so columns lock; motion is responsive, never choreographed.",
+    "keyCharacteristics": [
+      "Near-black graphite surfaces with a faint cool tint — the housing, not the subject.",
+      "One teal-cyan brand accent, used on ≤10% of any screen.",
+      "A disciplined semantic data palette, always paired with shape/text/position (never hue alone).",
+      "Tabular mono for every number; proportional grotesque for everything else.",
+      "Dense by design, calm under pressure; motion that reports state and nothing else."
+    ],
+    "rules": [
+      { "name": "The One Teal Rule", "body": "Teal appears on ≤10% of any screen. It is brand, selection, and 'act here' — nothing else. The moment two unrelated things are teal, one of them is wrong.", "section": "colors" },
+      { "name": "The Meaning-Not-Mood Rule", "body": "A data color may only appear when its specific meaning is true. Green is never 'a nice green here'; it is good/fastest/gain. If a color isn't reporting a state, it's neutral graphite.", "section": "colors" },
+      { "name": "The Redundant-Encoding Rule", "body": "No state is ever signaled by hue alone. Every colored signal also carries text, a glyph, a position, or a shape, so it survives a color-blind read and a washed-out stream feed.", "section": "colors" },
+      { "name": "The Tabular-Always Rule", "body": "Every digit that can change at runtime uses the mono face with tabular-nums. Numbers must never reflow horizontally as they tick.", "section": "typography" },
+      { "name": "The Fixed-Scale Rule", "body": "Type sizes are a fixed rem scale, never fluid clamp(). A heading that shrinks inside a panel looks broken, not responsive.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Resting surfaces cast no shadow. Separate panels with a border and a tonal step; shadow is reserved for things that actually float.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep teal to ≤10% of any screen — brand, selection, and 'act here' only.",
+      "Do pair every colored state with text, a glyph, or position, so it survives a color-blind read and a washed-out stream.",
+      "Do render every runtime number in Geist Mono with tabular-nums so columns lock and values don't jitter.",
+      "Do separate panels with a 1px border and a tonal step; keep resting surfaces flat.",
+      "Do reserve a data color for its one specific meaning — green is good/fastest, amber is caution, never decoration.",
+      "Do tune density per mode (Race Control tighter, Tuner roomier) while keeping one component vocabulary."
+    ],
+    "donts": [
+      "Don't use neon rainbow accents, carbon-fiber textures, angular racing-stripe decoration, or any gamer-RGB move.",
+      "Don't fall into the generic SaaS dashboard: no endless identical card grids, no pastel palette, no big-number hero-metric template.",
+      "Don't render skeuomorphic gauges — no chrome dials, photoreal tachometers, or glossy 3D bezels.",
+      "Don't ship cluttered overlay spam: everything on screen needs a hierarchy and a reason to be there.",
+      "Don't nest cards inside cards — use dividers and tonal insets.",
+      "Don't use border-left/border-right greater than 1px as a colored accent stripe.",
+      "Don't use gradient text, fluid clamp() type, or decorative motion that doesn't report a state.",
+      "Don't signal anything by hue alone."
+    ]
+  }
+}

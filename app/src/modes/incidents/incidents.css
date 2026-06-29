@@ -1,0 +1,294 @@
+/* Incidents feed — chronological log of auto-captured + manually flagged
+   incidents, sharing state with Review. Flat graphite cards, semantic severity
+   dots, teal only on the Flag action. Consumes tokens.css. */
+
+.feed-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-xl) var(--space-2xl);
+}
+.feed-bar,
+.feed-list,
+.feed-empty {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.feed-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+.feed-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.feed-title {
+  margin: 0;
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+.feed-sub {
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.feed-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.feed-empty {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ---- Feed item ---------------------------------------------------------- */
+.feed-item {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: start;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+.feed-item.is-decided {
+  opacity: 0.62;
+}
+.feed-lap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.feed-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 6px;
+}
+.feed-main {
+  min-width: 0;
+}
+.feed-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: 4px;
+}
+.feed-type {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.feed-flagged {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in oklch, var(--data-info) 40%, transparent);
+  background: var(--data-info-tint);
+  color: var(--data-info);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+/* Promote a logged feed item into the review queue. Teal — the one action a
+   steward takes from the feed. */
+.feed-send {
+  margin-left: auto;
+  flex: none;
+  padding: 2px 9px;
+  border: 1px solid var(--primary-dim);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--primary);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.feed-send:hover {
+  background: color-mix(in oklch, var(--primary) 12%, transparent);
+  border-color: var(--primary);
+}
+/* Already promoted, awaiting a decision in the review queue. */
+.feed-review {
+  margin-left: auto;
+  flex: none;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in oklch, var(--data-info) 40%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--data-info-tint);
+  color: var(--data-info);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.feed-verdict {
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex: none;
+}
+.verdict-penalty {
+  color: var(--data-caution);
+  background: var(--data-caution-tint);
+}
+.verdict-none {
+  color: var(--faint);
+}
+.feed-cars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.feed-car {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.feed-car:hover {
+  border-color: var(--primary-dim);
+  color: var(--ink);
+}
+.feed-car.is-active {
+  border-color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+  color: var(--primary);
+}
+.feed-detail {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.feed-note {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--faint);
+}
+
+/* ---- Flag dialog specifics (extends shell.css .dialog) ------------------ */
+.dialog-wide {
+  width: min(560px, 92vw);
+}
+.flag-cars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 156px;
+  overflow-y: auto;
+  padding: 2px;
+}
+.flag-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--faint);
+}
+.flag-car {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--inset);
+  color: var(--muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.flag-car:hover {
+  border-color: var(--primary-dim);
+  color: var(--ink);
+}
+.flag-car.is-on {
+  border-color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 12%, transparent);
+  color: var(--ink);
+}
+.flag-car-no {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--faint);
+}
+.flag-car.is-on .flag-car-no {
+  color: var(--primary);
+}
+.flag-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.flag-type {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--inset);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.flag-type:hover {
+  border-color: var(--primary-dim);
+  color: var(--ink);
+}
+.flag-type.is-on {
+  border-color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+.flag-note {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--inset);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.5;
+  resize: vertical;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.flag-note::placeholder {
+  color: var(--faint);
+}
+.flag-note:focus-visible {
+  border-color: var(--primary);
+}

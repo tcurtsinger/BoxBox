@@ -1,0 +1,290 @@
+/* Review queue — steward record-keeping. Pending flags on the left, the decided
+   log on the right. Flat graphite cards (1px border, no nesting), semantic dots
+   for severity, teal only on the primary record action. Consumes tokens.css. */
+
+.review {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: minmax(360px, 1.5fr) minmax(300px, 1fr);
+  align-content: start;
+  gap: var(--space-2xl);
+  padding: var(--space-xl) var(--space-2xl);
+}
+@media (max-width: 1040px) {
+  .review {
+    grid-template-columns: 1fr;
+    gap: var(--space-xl);
+  }
+}
+
+.review-col {
+  min-width: 0;
+}
+.review-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-md);
+}
+.review-title {
+  margin: 0;
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+.review-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.review-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* ---- Pending card ------------------------------------------------------- */
+.rev-card {
+  padding: var(--space-md) var(--space-lg) var(--space-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+.rev-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+.rev-lap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  flex: none;
+}
+.rev-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.tone-danger {
+  background: var(--data-danger);
+}
+.tone-caution {
+  background: var(--data-caution);
+}
+.tone-muted {
+  background: var(--faint);
+}
+.rev-type {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.rev-source {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.rev-source-manual {
+  color: var(--data-info);
+  border-color: color-mix(in oklch, var(--data-info) 40%, transparent);
+  background: var(--data-info-tint);
+}
+
+.rev-cars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--space-sm);
+}
+.rev-car {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--inset);
+  color: var(--ink);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.rev-car:hover {
+  border-color: var(--primary-dim);
+}
+.rev-car.is-active {
+  border-color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+}
+.rev-car-no {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.rev-car.is-active .rev-car-no {
+  color: var(--primary);
+}
+
+.rev-detail {
+  margin: 0 0 var(--space-md);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.rev-note {
+  width: 100%;
+  margin-bottom: var(--space-md);
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--inset);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.rev-note::placeholder {
+  color: var(--faint);
+}
+.rev-note:focus-visible {
+  border-color: var(--primary);
+}
+.rev-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+.rev-actions .btn {
+  flex: 1;
+}
+
+/* ---- Decided log -------------------------------------------------------- */
+.review-decided {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.rev-decided-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.rev-decided-main {
+  min-width: 0;
+  flex: 1;
+}
+.rev-decided-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.rev-decided-cars {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+/* Undo a decision — send it back to the pending queue. */
+.rev-reopen {
+  margin-left: auto;
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.rev-reopen:hover {
+  border-color: var(--primary-dim);
+  color: var(--ink);
+}
+/* The verdict sits right after Reopen (which took the auto margin). */
+.rev-decided-top .rev-verdict {
+  margin-left: var(--space-sm);
+}
+.rev-verdict {
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex: none;
+}
+.verdict-penalty {
+  color: var(--data-caution);
+  background: var(--data-caution-tint);
+}
+.verdict-none {
+  color: var(--faint);
+}
+.rev-decided-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* ---- Empty states ------------------------------------------------------- */
+.review-empty {
+  padding: var(--space-xl) var(--space-lg);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-card);
+  text-align: center;
+}
+.review-empty-title {
+  margin: 0 0 var(--space-xs);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--data-good);
+}
+.review-empty-body {
+  margin: 0 auto;
+  max-width: 38ch;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.review-decided-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--faint);
+}

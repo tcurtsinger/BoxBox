@@ -1,0 +1,225 @@
+/* Driver detail sidebar — opens beside the timing tower on row select. Quiet
+   graphite panel, stat tiles, telemetry bars in semantic tones. Consumes
+   tokens.css. */
+
+.dp {
+  flex: none;
+  width: 340px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+}
+
+/* ---- Header ------------------------------------------------------------- */
+.dp-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex: none;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border);
+}
+.dp-pos {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: none;
+}
+.dp-team {
+  width: 4px;
+  height: 26px;
+  border-radius: 2px;
+  flex: none;
+}
+.dp-pos-no {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.dp-id {
+  min-width: 0;
+  flex: 1;
+}
+.dp-name {
+  margin: 0;
+  font-size: var(--text-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp-meta {
+  margin: 1px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dp-close {
+  flex: none;
+}
+
+.dp-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-lg);
+}
+
+/* ---- Stat tiles --------------------------------------------------------- */
+.dp-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm);
+}
+.dp-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+}
+.dp-stat-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.dp-stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ---- Sections ----------------------------------------------------------- */
+.dp-section {
+  margin-top: var(--space-xl);
+}
+.dp-section-title {
+  margin: 0 0 var(--space-md);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Tyre corners */
+.dp-corners {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm);
+}
+.dp-corner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+}
+.dp-corner-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.dp-corner-pos {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.dp-corner-temp {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.dp-corner-wear {
+  font-size: 10.5px;
+}
+
+/* Damage rows */
+.dp-damage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.dp-dmg {
+  display: grid;
+  grid-template-columns: 84px 1fr 42px;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.dp-dmg-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.dp-dmg-pct {
+  font-size: 11.5px;
+  text-align: right;
+}
+
+/* Shared telemetry bar */
+.dp-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--inset);
+  overflow: hidden;
+}
+.dp-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+.tone-good {
+  background: var(--data-good);
+}
+.tone-caution {
+  background: var(--data-caution);
+}
+.tone-danger {
+  background: var(--data-danger);
+}
+.tone-text-good {
+  color: var(--data-good);
+}
+.tone-text-caution {
+  color: var(--data-caution);
+}
+.tone-text-danger {
+  color: var(--data-danger);
+}
+
+/* Recent laps */
+.dp-laps {
+  display: flex;
+  flex-direction: column;
+}
+.dp-lap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 2px;
+  border-top: 1px solid var(--border-soft);
+}
+.dp-lap:first-child {
+  border-top: none;
+}
+.dp-lap-label {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.dp-lap-time {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.dp-lap.is-best .dp-lap-time {
+  color: var(--data-good);
+  font-weight: 700;
+}

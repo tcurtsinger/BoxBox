@@ -1,0 +1,58 @@
+/* Base reset + element defaults. Surface is the housing; type is the instrument. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Desktop app chrome: no rubber-band scroll, no text selection on UI furniture. */
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* The Tabular-Always Rule: every runtime number locks to a tabular grid. */
+.mono,
+[class*="-value"],
+[class*="-readout"] {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+button {
+  font-family: inherit;
+}
+
+/* Visually hidden, still announced by screen readers (heading anchors, labels). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

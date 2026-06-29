@@ -1,0 +1,92 @@
+/* BoxBox design tokens — the normative layer from DESIGN.md ("The Hybrid-Era Pit
+   Wall"). OKLCH throughout. Components consume these variables and add zero
+   hardcoded colour. Re-run /impeccable document in scan mode to keep in sync. */
+:root {
+  color-scheme: dark;
+
+  /* ---- Graphite neutral architecture (faint cool tint, hue ~235) -------- */
+  --bg: oklch(0.155 0.006 235);
+  --surface: oklch(0.195 0.008 235);
+  --surface-raised: oklch(0.235 0.010 235);
+  --inset: oklch(0.125 0.005 235);
+  --border: oklch(0.300 0.012 235);
+  --border-soft: oklch(0.245 0.010 235);
+
+  --ink: oklch(0.965 0.004 230);
+  --muted: oklch(0.720 0.010 232);
+  /* Tertiary text. Lifted from 0.560 → clears WCAG AA (4.5:1) on --surface even
+     at small sizes; below that it failed on data-bearing lines (wear %, temps). */
+  --faint: oklch(0.635 0.013 234);
+
+  /* ---- Brand accent — mineral teal-cyan (the only non-semantic colour) --- */
+  --primary: oklch(0.800 0.115 192);
+  --primary-strong: oklch(0.720 0.130 193);
+  --primary-dim: oklch(0.620 0.090 193);
+  --on-primary: oklch(0.155 0.020 235);
+  --focus-ring: oklch(0.800 0.115 192 / 0.25);
+
+  /* ---- Semantic data layer — functional, never decorative --------------- */
+  --data-good: oklch(0.800 0.160 152);
+  --data-caution: oklch(0.820 0.150 80);
+  --data-danger: oklch(0.640 0.205 27);
+  --data-info: oklch(0.700 0.135 248);
+  --data-session: oklch(0.680 0.150 300);
+  --data-flag: oklch(0.860 0.155 98);
+
+  /* Low-alpha tints for semantic pill/callout fills (text stays the solid hue) */
+  --data-good-tint: oklch(0.800 0.160 152 / 0.10);
+  --data-caution-tint: oklch(0.820 0.150 80 / 0.10);
+  --data-danger-tint: oklch(0.640 0.205 27 / 0.10);
+  --data-info-tint: oklch(0.700 0.135 248 / 0.10);
+
+  /* ---- Type — Geist (UI) + Geist Mono (data) ---------------------------- */
+  --font-sans: "Geist Variable", "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono Variable", "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  --text-display: 2rem;       /* 32px — the single glance value per view */
+  --text-headline: 1.25rem;   /* 20px */
+  --text-title: 0.9375rem;    /* 15px */
+  --text-body: 0.875rem;      /* 14px */
+  --text-label: 0.6875rem;    /* 11px */
+  --text-data: 0.9375rem;     /* 15px — mono baseline */
+
+  --tracking-tight: -0.02em;
+  --tracking-label: 0.06em;
+
+  /* ---- Radii — softly squared, never pill (except status dots) ---------- */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-card: 10px;
+
+  /* ---- Spacing (4px base) ----------------------------------------------- */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+
+  /* ---- Elevation — flat by default; shadow only for floating layers ----- */
+  --shadow-floating: 0 8px 24px -8px rgba(0, 0, 0, 0.55);
+
+  /* ---- Motion — responsive, state only ---------------------------------- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 160ms;
+  --dur-base: 220ms;
+
+  /* ---- Semantic z-index scale ------------------------------------------- */
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal-backdrop: 300;
+  --z-modal: 400;
+  --z-toast: 500;
+  --z-tooltip: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+  }
+}

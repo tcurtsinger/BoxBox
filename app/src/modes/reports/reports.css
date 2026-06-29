@@ -1,0 +1,303 @@
+/* Reports — post-session document: summary, final classification, stewarding
+   decisions, CSV export. Flat graphite, teal only on Export, semantic colour
+   for fastest lap / penalty. Consumes tokens.css. */
+
+.report {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-xl) var(--space-2xl);
+}
+.report-inner {
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+/* ---- Header ------------------------------------------------------------- */
+.report-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-xl);
+}
+.report-title {
+  margin: 0;
+  font-size: var(--text-headline);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.report-session {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ---- Summary fact strip ------------------------------------------------- */
+.report-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xl);
+  margin: 0 0 var(--space-2xl);
+  padding: var(--space-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+.report-fact {
+  min-width: 0;
+}
+.report-fact-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.report-fact-value {
+  margin: 4px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.report-fact-sub {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* ---- Sections ----------------------------------------------------------- */
+.report-section {
+  margin-top: var(--space-2xl);
+}
+.report-section:first-of-type {
+  margin-top: 0;
+}
+.report-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-md);
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+.report-section-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 19px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+}
+.report-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+/* Awaiting the first live snapshot (no classification yet). */
+.report-waiting {
+  margin: 0;
+  padding: var(--space-2xl) 0;
+  font-size: 13px;
+  color: var(--faint);
+  text-align: center;
+}
+
+/* ---- Classification table ----------------------------------------------- */
+.cls {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+.cls-head,
+.cls-row {
+  display: grid;
+  grid-template-columns: 44px minmax(180px, 1fr) 100px 88px 52px;
+  align-items: center;
+  column-gap: var(--space-md);
+  padding: 0 var(--space-lg);
+}
+.cls-head {
+  height: 32px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.cls-h {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.cls-a-r {
+  text-align: right;
+  justify-content: flex-end;
+}
+.cls-row {
+  width: 100%;
+  height: 38px;
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  background: none;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.cls-row:first-of-type {
+  border-top: none;
+}
+.cls-row:hover {
+  background: var(--surface);
+}
+.cls-row.is-active {
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+}
+.cls-row.is-active .cls-name {
+  color: var(--primary);
+}
+.cls-c-pos {
+  font-size: 13px;
+  font-weight: 700;
+}
+.cls-c-driver {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+.cls-team {
+  width: 3px;
+  height: 18px;
+  border-radius: 2px;
+  flex: none;
+}
+.cls-num {
+  font-size: 11px;
+  color: var(--faint);
+  flex: none;
+  min-width: 16px;
+}
+.cls-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.cls-team-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.cls-pen {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  background: var(--data-caution-tint);
+  color: var(--data-caution);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.7;
+}
+.cls-a-r.mono {
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.cls-fl {
+  color: var(--data-session);
+  font-weight: 700;
+}
+.cls-gap {
+  color: var(--muted);
+}
+
+@media (max-width: 760px) {
+  .cls-team-name {
+    display: none;
+  }
+}
+
+/* ---- Decisions ---------------------------------------------------------- */
+.dec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.dec-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.dec-lap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  flex: none;
+}
+.dec-main {
+  flex: 1;
+  min-width: 0;
+}
+.dec-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.dec-type {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.dec-cars {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.dec-verdict {
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex: none;
+}
+.dec-verdict.verdict-penalty {
+  color: var(--data-caution);
+  background: var(--data-caution-tint);
+}
+.dec-verdict.verdict-none {
+  color: var(--faint);
+}
+.dec-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}

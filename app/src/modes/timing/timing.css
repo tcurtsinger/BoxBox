@@ -1,0 +1,436 @@
+/* Timing tower — Race Control's densest surface, columns matching the BoxBox
+   mockup (Pos · ± · Driver · Status · Int · Gap · Last · Best · Sectors · ERS ·
+   Tyre · Fuel · Pits) in the dark instrument theme. Flat by default; teal only
+   for selection; semantic colour only for timing meaning. Consumes tokens.css. */
+
+.tt {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  --tt-cols: 34px 40px minmax(132px, 1.5fr) minmax(84px, 1fr) 72px 80px 84px 84px 70px 100px 58px 58px 46px;
+  --tt-min: 1060px;
+}
+
+/* ---- Top bar: session + lap counter ------------------------------------- */
+.tt-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex: none;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border);
+}
+.tt-sess {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  min-width: 0;
+}
+.tt-track {
+  font-size: var(--text-title);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  white-space: nowrap;
+}
+.tt-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  flex: none;
+}
+.tt-lap {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.tt-lap b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.tt-lap-total {
+  color: var(--faint);
+}
+.tt-tag {
+  padding: 2px 7px;
+  border: 1px solid color-mix(in oklch, var(--data-info) 45%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--data-info-tint);
+  color: var(--data-info);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ---- Scroll region: header + body share one horizontal scroll ----------- */
+.tt-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.tt-table {
+  width: 100%;
+  min-width: var(--tt-min);
+  animation: tt-in var(--dur-base) var(--ease-out);
+}
+@keyframes tt-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.tt-head {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: grid;
+  grid-template-columns: var(--tt-cols);
+  column-gap: var(--space-sm);
+  align-items: center;
+  height: 32px;
+  padding: 0 var(--space-lg);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.tt-h {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tt-a-c {
+  text-align: center;
+  justify-content: center;
+}
+.tt-a-r {
+  text-align: right;
+  justify-content: flex-end;
+}
+
+/* Awaiting the first live grid (before any car packets arrive). */
+.tt-waiting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  padding: var(--space-xl);
+  font-size: 13px;
+  color: var(--faint);
+}
+
+/* ---- Row ---------------------------------------------------------------- */
+.tt-row {
+  display: grid;
+  grid-template-columns: var(--tt-cols);
+  column-gap: var(--space-sm);
+  align-items: center;
+  width: 100%;
+  height: 38px;
+  padding: 0 var(--space-lg);
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  background: none;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.tt-row:hover {
+  background: var(--surface);
+}
+.tt-row.is-leader {
+  background: color-mix(in oklch, var(--data-good) 5%, transparent);
+}
+.tt-row.is-selected {
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+}
+.tt-row.is-selected .tt-name {
+  color: var(--primary);
+}
+
+/* Position + change */
+.tt-c-pos {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.tt-c-change {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+}
+.chg-up,
+.chg-down {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.chg-up {
+  color: var(--data-good);
+}
+.chg-down {
+  color: var(--data-danger);
+}
+.chg-none {
+  color: var(--faint);
+}
+
+/* Driver */
+.tt-c-driver {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+.tt-team {
+  width: 3px;
+  height: 18px;
+  border-radius: 2px;
+  flex: none;
+}
+.tt-num-badge {
+  font-size: 11px;
+  color: var(--faint);
+  flex: none;
+  min-width: 16px;
+}
+.tt-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Status */
+.tt-c-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+.tt-empty {
+  color: var(--faint);
+}
+/* Tinted-outline pills: hue text + faint hue fill + hue border. Reads cleanly
+   on the dark surface and keeps text contrast well above 4.5:1. */
+.chip {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  background: color-mix(in oklch, currentColor 12%, transparent);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  line-height: 1.5;
+}
+.chip-pen,
+.chip-flag-red {
+  color: var(--data-danger);
+}
+.chip-flag-blue {
+  color: var(--data-info);
+}
+.chip-flag-yellow {
+  color: var(--data-flag);
+}
+.chip-flag-green {
+  color: var(--data-good);
+}
+.chip-flag-white {
+  color: oklch(0.9 0.005 240);
+}
+
+/* Interval / gap / last / best */
+.tt-c-int,
+.tt-c-gap,
+.tt-c-last,
+.tt-c-best {
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.tt-pit {
+  color: var(--data-info);
+  font-weight: 700;
+}
+.tt-leader {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+}
+.lap-session {
+  color: var(--data-session);
+  font-weight: 700;
+}
+.lap-personal {
+  color: var(--data-good);
+  font-weight: 600;
+}
+.lap-none {
+  color: var(--muted);
+}
+.lap-dim {
+  color: var(--faint);
+}
+
+/* Sectors */
+.tt-c-sectors {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tt-sectors {
+  display: inline-flex;
+  gap: 3px;
+}
+.tt-sector {
+  width: 16px;
+  height: 4px;
+  border-radius: 1px;
+  background: var(--border);
+}
+.sec-personal {
+  background: var(--data-good);
+}
+.sec-session {
+  background: var(--data-session);
+}
+
+/* ERS battery bar */
+.tt-c-ers {
+  display: flex;
+  align-items: center;
+}
+.tt-ers {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 16px;
+  border-radius: 5px;
+  background: var(--inset);
+  overflow: hidden;
+}
+.ers-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 5px;
+}
+.ers-high {
+  background: color-mix(in oklch, var(--data-good) 38%, transparent);
+}
+.ers-mid {
+  background: color-mix(in oklch, var(--data-caution) 38%, transparent);
+}
+.ers-low {
+  background: color-mix(in oklch, var(--data-danger) 42%, transparent);
+}
+.ers-pct {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.tt-ers.is-boost {
+  overflow: visible;
+  box-shadow:
+    0 0 0 1.5px var(--data-session),
+    0 0 9px 1px color-mix(in oklch, var(--data-session) 55%, transparent);
+}
+.tt-ers.is-boost .ers-fill {
+  background: color-mix(in oklch, var(--data-session) 36%, transparent);
+}
+
+/* Tyre — fixed letter slot + right-aligned age so the column stays aligned
+   whether the age is one or two digits. */
+.tt-c-tyre {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.tyre-letter {
+  width: 13px;
+  text-align: center;
+  flex: none;
+  font-size: 13px;
+  font-weight: 700;
+}
+.tyre-S {
+  color: var(--data-danger);
+}
+.tyre-M {
+  color: var(--data-flag);
+}
+.tyre-H {
+  color: var(--ink);
+}
+.tyre-I {
+  color: var(--data-good);
+}
+.tyre-W {
+  color: var(--data-info);
+}
+.tyre-age {
+  width: 26px;
+  text-align: right;
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Fuel */
+.tt-c-fuel {
+  font-size: 12px;
+  color: var(--muted);
+}
+.fuel-low {
+  color: var(--data-danger);
+}
+
+/* Pits */
+.tt-c-pits {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tt-pit-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tt-table {
+    animation: none;
+  }
+}
