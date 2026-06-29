@@ -8,7 +8,9 @@
 //! The gain maps are stored with **string** keys, not the typed lever enums, so a
 //! future or unknown lever can't fail the whole profile load (which would also
 //! discard the balance preference). Unknown keys are simply dropped on the way
-//! back into the typed maps (P3.4).
+//! back into the typed maps (P3.4), and a malformed VALUE (a key whose value is
+//! not an array of finite numbers) is dropped on deserialize rather than failing
+//! the whole load (P3.2) — the balance preference and the valid sections survive.
 
 use std::collections::HashMap;
 
@@ -26,11 +28,39 @@ pub struct TunerProfile {
     /// -1 loose .. 0 neutral .. +1 stable.
     pub balance_preference: f64,
     /// Per-lever balance observation magnitudes (clicks/rad), keyed by lever name.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_gain_map")]
     pub gains: HashMap<String, Vec<f64>>,
     /// Per-lever wear sensitivities (signed), keyed by lever name.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_gain_map")]
     pub wear_gains: HashMap<String, Vec<f64>>,
+}
+
+/// Deserialize a gain/wear map permissively: a single malformed entry must not
+/// fail the whole profile load (which would also discard the balance preference).
+/// Keeps only keys whose value is an array, collecting the finite numbers in it and
+/// dropping everything else — mirrors the legacy TS estimator/wearEstimator restore,
+/// which skips non-array values per key (P3.2).
+fn lenient_gain_map<'de, D>(deserializer: D) -> Result<HashMap<String, Vec<f64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    let mut out: HashMap<String, Vec<f64>> = HashMap::new();
+    if let serde_json::Value::Object(map) = raw {
+        for (k, v) in map {
+            if let serde_json::Value::Array(items) = v {
+                let nums: Vec<f64> = items
+                    .iter()
+                    .filter_map(|x| x.as_f64())
+                    .filter(|x| x.is_finite())
+                    .collect();
+                if !nums.is_empty() {
+                    out.insert(k, nums);
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 impl TunerProfile {
@@ -100,6 +130,37 @@ mod tests {
         let p: TunerProfile = serde_json::from_str(json).expect("unknown key must not fail");
         assert_eq!(p.balance_preference, 0.3);
         assert_eq!(p.gains_typed().len(), 1);
+    }
+
+    #[test]
+    fn malformed_gain_value_does_not_discard_profile() {
+        // A key whose value is NOT an array (here a string / a bare number) must be
+        // dropped without failing the whole load: the balance preference and the
+        // valid sections have to survive (P3.2).
+        let json = r#"{"version":1,"balancePreference":-0.4,
+            "gains":{"frontWing":[1.5,1.7],"brakeBias":"corrupted","rearWing":[2.0]},
+            "wearGains":{"frontToe":[0.5],"rearToe":42}}"#;
+        let p: TunerProfile =
+            serde_json::from_str(json).expect("a malformed value must not fail the load");
+        assert_eq!(p.balance_preference, -0.4, "preference preserved");
+
+        let g = p.gains_typed();
+        assert!(g.contains_key(&SuggestKey::FrontWing), "valid array kept");
+        assert!(g.contains_key(&SuggestKey::RearWing), "valid array kept");
+        assert!(
+            !g.contains_key(&SuggestKey::BrakeBias),
+            "non-array value dropped, not fatal"
+        );
+
+        let w = p.wear_typed();
+        assert!(
+            w.contains_key(&WearLever::FrontToe),
+            "valid wear array kept"
+        );
+        assert!(
+            !w.contains_key(&WearLever::RearToe),
+            "non-array wear value dropped"
+        );
     }
 
     #[test]

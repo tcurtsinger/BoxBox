@@ -246,6 +246,11 @@ pub struct TunerState {
     wear: Option<TyreReading>,
     wear_baseline: Option<TyreReading>,
     wear_laps: u32,
+    // True while every lap of the current wear stint has been clean. An off-track,
+    // lockup or spin lap scrubs tyres abnormally, so its rate is not a trustworthy
+    // A/B sample: display wear still counts every lap, but the wear estimator only
+    // *learns* from a fully clean stint (P2.2). Reset on every rebaseline.
+    wear_stint_clean: bool,
     tyre_age_laps: Option<u8>,
     compound: Option<u8>,
     core_temp: Option<TyreReading>,
@@ -265,6 +270,7 @@ impl TunerState {
             setup_track_id: -1,
             setup_player_idx: -1,
             current_lap_num: -1,
+            wear_stint_clean: true,
             ..Default::default()
         }
     }
@@ -315,6 +321,12 @@ impl TunerState {
     /// toward the direction that change moved the car, a thumbs-down away from it.
     /// One nudge per change (consumed after). Returns the resulting preference.
     pub fn apply_feedback(&mut self, thumb: f64) -> f64 {
+        // A stale setup's last change is hidden from the snapshot; the command must
+        // refuse it too, so a direct call can't rate a change against a setup that no
+        // longer matches the live car/track (P3.3).
+        if !self.setup_is_current() {
+            return self.balance_preference;
+        }
         let Some(lc) = self.last_change.clone() else {
             return self.balance_preference;
         };
@@ -446,6 +458,7 @@ impl TunerState {
             if is_fresh_set(prev, w) {
                 self.wear_baseline = Some(w);
                 self.wear_laps = 0;
+                self.wear_stint_clean = true; // a fresh set starts a clean stint
             }
         } else if self.wear_baseline.is_none() {
             self.wear_baseline = Some(w);
@@ -540,6 +553,10 @@ impl TunerState {
         }
         if lap.current_lap_invalid {
             self.lap_invalidated = true;
+            // Taint the whole wear stint so its rate can't be learned as an A/B
+            // sample. Display wear still counts every lap (rate is over all laps
+            // driven); only the wear estimator is gated (P2.2).
+            self.wear_stint_clean = false;
         }
 
         self.lap_distance = lap.lap_distance as f64;
@@ -569,9 +586,13 @@ impl TunerState {
 
         let fresh = segment_lap(&self.lap_trace);
         if !fresh.is_empty() {
+            // Pass the lap's validity: an invalid lap may seed a new corner (so a
+            // single wide moment doesn't lose the lap's discovery) but must not
+            // refine or confirm geometry already learned from clean laps (P1.4).
             let merged = merge_corner_map(
                 self.corner_maps.get(&self.track_id).map(|v| v.as_slice()),
                 &fresh,
+                !self.lap_invalidated,
             );
             self.corner_maps.insert(self.track_id, merged);
         }
@@ -723,7 +744,9 @@ impl TunerState {
         };
         if let Some(wear_key) = wear_key {
             if let (Some(wear), Some(baseline)) = (self.wear, self.wear_baseline) {
-                if self.wear_laps >= MIN_WEAR_LAPS {
+                // The outgoing stint is the "before"; only open a measurement if it
+                // was fully clean, so a tainted rate can't anchor the A/B (P2.2).
+                if self.wear_laps >= MIN_WEAR_LAPS && self.wear_stint_clean {
                     if let Some(before) = wear_rate(baseline, wear, self.wear_laps) {
                         let front = wear_axle_is_front(wear_key);
                         let rate_before = if front {
@@ -746,6 +769,7 @@ impl TunerState {
         if self.wear.is_some() {
             self.wear_baseline = self.wear;
             self.wear_laps = 0;
+            self.wear_stint_clean = true; // the new setup's stint starts clean
         }
     }
 
@@ -753,6 +777,12 @@ impl TunerState {
         let Some(wp) = self.wear_pending.clone() else {
             return;
         };
+        // The new stint is the "after"; if any lap of it was invalid the rate is
+        // untrustworthy, so abandon the measurement rather than learn from it (P2.2).
+        if !self.wear_stint_clean {
+            self.wear_pending = None;
+            return;
+        }
         let (Some(wear), Some(baseline)) = (self.wear, self.wear_baseline) else {
             return;
         };
@@ -1242,6 +1272,56 @@ mod tests {
         st.ingest(&lapdata(10.0, next_lap, last_ms));
     }
 
+    // Like drive_lap, but every LapData frame is flagged invalid (a wide moment).
+    fn drive_lap_invalid(st: &mut TunerState, lap: u8) {
+        for i in 0..120u32 {
+            let d = i as f64 * 25.0;
+            let off = (d - 1500.0).abs();
+            let speed = if off < 250.0 {
+                300.0 - 200.0 * (250.0 - off) / 250.0
+            } else {
+                300.0
+            };
+            st.ingest(&telemetry(speed as u16, 0.3));
+            st.ingest(&lapdata_invalid(d, lap, 0));
+        }
+    }
+
+    // A Car Damage frame with tyre wear in wheel order [RL, RR, FL, FR].
+    fn damage(rl: f64, rr: f64, fl: f64, fr: f64) -> ParsedPacket {
+        let c = CarDamageEntry {
+            index: 0,
+            tyres_wear: vec![rl as f32, rr as f32, fl as f32, fr as f32],
+            ..Default::default()
+        };
+        p(10, Body::CarDamage(CarDamageData { cars: vec![c] }))
+    }
+
+    // setups() with the front toe overridden, for a single-wear-lever change.
+    fn setups_toe(front_toe: f32) -> ParsedPacket {
+        let mut pkt = setups();
+        if let Some(Body::CarSetups(d)) = pkt.data.as_mut() {
+            d.cars[0].front_toe = front_toe;
+        }
+        pkt
+    }
+
+    // A clean 3-lap baseline stint with climbing wear, then a single-lever (front
+    // toe) change that opens a wear A/B measurement and rebaselines the stint.
+    fn wear_baseline_then_change(st: &mut TunerState) {
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&setups()); // front toe 0.06
+        st.ingest(&damage(0.0, 0.0, 0.0, 0.0)); // seed the wear baseline
+        st.ingest(&lapdata(10.0, 1, 0)); // seed the lap number
+        st.ingest(&damage(1.0, 1.0, 2.0, 2.0));
+        st.ingest(&lapdata(10.0, 2, 0)); // wear_laps = 1
+        st.ingest(&damage(2.0, 2.0, 4.0, 4.0));
+        st.ingest(&lapdata(10.0, 3, 0)); // wear_laps = 2
+        st.ingest(&damage(3.0, 3.0, 6.0, 6.0));
+        st.ingest(&lapdata(10.0, 4, 0)); // wear_laps = 3 (>= MIN_WEAR_LAPS)
+        st.ingest(&setups_toe(0.04)); // 0.06 -> 0.04: opens the measurement, rebaselines
+    }
+
     #[test]
     fn maps_track_and_session_labels() {
         let mut st = TunerState::new();
@@ -1459,5 +1539,133 @@ mod tests {
         // Wrong-way result (balance rose with +clicks) is rejected as noise.
         assert!(!e.record(SuggestKey::FrontWing, 2.0, 0.01, 0.03));
         assert_eq!(e.get(SuggestKey::FrontWing).observations, 1);
+    }
+
+    #[test]
+    fn feedback_noop_when_setup_stale() {
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&setups());
+        // Move one tracked lever so a last_change exists to rate.
+        let mut changed = setups();
+        if let Some(Body::CarSetups(d)) = changed.data.as_mut() {
+            d.cars[0].front_wing = 8; // +2 clicks vs the 6 in setups()
+        }
+        st.ingest(&changed);
+        let before = st.snapshot().balance_preference;
+
+        // Switch tracks: the captured setup no longer matches the live car, so it
+        // (and its hidden last change) goes stale.
+        st.ingest(&session(0, 18, 5000));
+        assert!(
+            !st.snapshot().setup_received,
+            "setup is stale after a track change"
+        );
+        // The feedback command must refuse the stale change, not consume it.
+        assert_eq!(st.apply_feedback(1.0), before, "stale change is not rated");
+
+        // Back on the original track the setup is current again; the change was not
+        // consumed, so it can now be rated and moves the preference.
+        st.ingest(&session(13, 18, 3000));
+        assert!(st.snapshot().setup_received);
+        assert_ne!(
+            st.apply_feedback(1.0),
+            before,
+            "the preserved change rates once the setup is current again"
+        );
+    }
+
+    #[test]
+    fn invalid_lap_seeds_but_does_not_confirm_geometry() {
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&setups());
+
+        // Lap 1 INVALID: a wide moment still discovers the corner (geometry survives
+        // a cut, so a single off doesn't cost the whole lap's discovery), but it is
+        // provisional — seen once, not confirmed.
+        drive_lap_invalid(&mut st, 1);
+        roll_over(&mut st, 2, 90_000);
+        let s1 = st.snapshot();
+        assert_eq!(
+            s1.corners_mapped, 1,
+            "invalid lap seeds a provisional corner"
+        );
+        assert_eq!(s1.corners_confirmed, 0, "but it is not confirmed");
+
+        // Lap 2 INVALID again: an invalid lap must never confirm geometry.
+        drive_lap_invalid(&mut st, 2);
+        roll_over(&mut st, 3, 90_100);
+        assert_eq!(
+            st.snapshot().corners_confirmed,
+            0,
+            "a second invalid lap still doesn't confirm"
+        );
+
+        // Lap 3 CLEAN: promotes the provisional corner (refine + confirm).
+        drive_lap(&mut st, 3, false);
+        roll_over(&mut st, 4, 90_200);
+        let s3 = st.snapshot();
+        assert_eq!(s3.corners_mapped, 1, "still the one corner");
+        assert_eq!(
+            s3.corners_confirmed, 1,
+            "a clean repeat promotes the provisional corner"
+        );
+    }
+
+    #[test]
+    fn wear_learning_records_a_clean_stint() {
+        let mut st = TunerState::new();
+        wear_baseline_then_change(&mut st);
+        assert_eq!(
+            st.profile_revision(),
+            0,
+            "nothing learned yet, only a pending measurement"
+        );
+
+        // A clean after-stint with a lower front rate completes the A/B measurement.
+        st.ingest(&damage(3.5, 3.5, 7.0, 7.0));
+        st.ingest(&lapdata(10.0, 5, 0)); // wear_laps = 1
+        st.ingest(&damage(4.0, 4.0, 8.0, 8.0));
+        st.ingest(&lapdata(10.0, 6, 0)); // wear_laps = 2
+        st.ingest(&damage(4.5, 4.5, 9.0, 9.0));
+        st.ingest(&lapdata(10.0, 7, 0)); // wear_laps = 3 -> completes
+
+        assert_eq!(
+            st.profile_revision(),
+            1,
+            "a clean stint learns the wear observation"
+        );
+        let gains = st.export_profile().wear_gains;
+        assert!(
+            gains
+                .get("frontToe")
+                .map(|v| !v.is_empty())
+                .unwrap_or(false),
+            "front toe sensitivity recorded: {gains:?}"
+        );
+    }
+
+    #[test]
+    fn wear_learning_skips_an_invalid_stint() {
+        let mut st = TunerState::new();
+        wear_baseline_then_change(&mut st);
+
+        // Same after-stint, but with one invalid lap: its rate must not be learned,
+        // yet display wear still counts every lap driven.
+        st.ingest(&damage(3.5, 3.5, 7.0, 7.0));
+        st.ingest(&lapdata_invalid(10.0, 5, 0)); // wear_laps = 1; stint now tainted
+        st.ingest(&damage(4.0, 4.0, 8.0, 8.0));
+        st.ingest(&lapdata(10.0, 6, 0)); // wear_laps = 2
+        st.ingest(&damage(4.5, 4.5, 9.0, 9.0));
+        st.ingest(&lapdata(10.0, 7, 0)); // wear_laps = 3
+
+        assert_eq!(st.profile_revision(), 0, "an invalid stint learns nothing");
+        assert!(
+            !st.export_profile().wear_gains.contains_key("frontToe"),
+            "no front toe observation from a tainted stint"
+        );
+        let wear = st.snapshot().wear.expect("wear stint present");
+        assert_eq!(wear.laps, 3, "display wear still counts all laps driven");
     }
 }

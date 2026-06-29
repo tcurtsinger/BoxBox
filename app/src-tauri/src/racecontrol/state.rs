@@ -143,6 +143,32 @@ pub struct DriverState {
     pub power_unit_wear: PowerUnitWear,
 }
 
+/// One driver's final standing in a completed qualifying segment, preserved so a
+/// knocked-out driver doesn't vanish from the stacked qualifying classification.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QualiSegmentEntry {
+    pub index: u8,
+    pub name: String,
+    pub name_override: Option<String>,
+    pub team_id: u16,
+    pub race_number: u8,
+    pub position: u8,
+    #[serde(rename = "bestLapMS")]
+    pub best_lap_ms: u32,
+}
+
+/// A completed qualifying segment's final standings (fastest first), keyed by the
+/// raw sessionType (5 = Q1, 6 = Q2, 7 = Q3; sprint-shootout segments fold in by the
+/// same knockout structure). The frontend stacks these to rebuild the full grid:
+/// the newest segment's field on top, then each earlier segment's knockouts. P1.3.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QualiSegment {
+    pub session_type: u8,
+    pub standings: Vec<QualiSegmentEntry>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSnapshot {
@@ -161,6 +187,9 @@ pub struct SessionSnapshot {
     pub incidents: Vec<Incident>,
     pub event_tally: HashMap<String, u32>,
     pub final_classification: Option<FinalClassificationData>,
+    /// Completed qualifying segments for the current weekend (Q1, Q2, ... ascending),
+    /// for the stacked qualifying classification. Empty outside qualifying. P1.3.
+    pub quali_segments: Vec<QualiSegment>,
     pub packet_count: u64,
     pub last_update: f64,
     pub last_packet_at: f64,
@@ -185,9 +214,17 @@ pub struct SessionState {
     last_update: f64,
     last_packet_at: f64,
     next_incident_id: u32,
-    // car index -> manual display name. NOT cleared on session reset: the same
-    // lobby keeps its mapping across quali -> race.
+    // race number -> manual display name. Keyed by RACE NUMBER, not car index,
+    // because F1 re-packs car indices each qualifying segment (and quali -> race),
+    // so an index-keyed override would follow the slot, not the driver. NOT cleared
+    // on session reset: the same lobby keeps its mapping across the weekend.
     name_overrides: HashMap<u8, String>,
+    // Final standings of each completed qualifying segment, keyed by sessionType,
+    // captured before the UID reset wipes drivers (knocked-out drivers leave the
+    // next segment entirely). Survives resets across the weekend; dropped when a new
+    // weekend's qualifying begins on a different track. P1.3.
+    quali_segments: HashMap<u8, Vec<QualiSegmentEntry>>,
+    quali_track_id: Option<i8>,
 }
 
 // Bound the live incident log so an event flood can't grow memory without limit;
@@ -202,6 +239,28 @@ const KNOWN_EVENT_CODES: &[&str] = &[
     "SSTA", "SEND", "FTLP", "RTMT", "DRSE", "DRSD", "TMPT", "CHQF", "RCWN", "PENA", "SPTP", "STLG",
     "LGOT", "DTSV", "SGSV", "FLBK", "BUTN", "RDFL", "OVTK", "SCAR", "COLL",
 ];
+
+// Incident codes a steward may raise by hand (matches the UI's flag options, plus
+// a few obvious manual ones). Anything else normalizes to MANUAL so a caller can't
+// persist an arbitrary code (P3.1).
+const MANUAL_CODES: &[&str] = &["COLL", "PENA", "TLIM", "SCAR", "RTMT", "RDFL", "MANUAL"];
+// Length caps on caller-supplied free text, so a hostile/buggy caller can't store
+// unbounded strings (P3.1). Counted in chars, not bytes.
+const MAX_NOTE_LEN: usize = 500;
+const MAX_OUTCOME_LEN: usize = 200;
+const MAX_LABEL_LEN: usize = 120;
+// Below this, a car index is plausible even before participants are known.
+const MAX_CAR_INDEX: u8 = 100;
+
+// Trim and cap free text to `max` chars (char-safe, never splits a multibyte char).
+fn capped(s: &str, max: usize) -> String {
+    let t = s.trim();
+    if t.chars().count() <= max {
+        t.to_string()
+    } else {
+        t.chars().take(max).collect()
+    }
+}
 
 impl SessionState {
     pub fn new() -> Self {
@@ -245,6 +304,11 @@ impl SessionState {
     }
 
     fn reset_for_session(&mut self, uid: String) {
+        // Preserve the outgoing qualifying segment's final standings before the wipe:
+        // the next segment's packets contain only the survivors, so this is the only
+        // chance to keep knocked-out drivers' times for the stacked qualifying
+        // classification (vault: BoxBox Qualifying Knockout Behaviour). P1.3.
+        self.capture_quali_segment();
         self.session_uid = uid;
         self.session = None;
         self.drivers.clear();
@@ -253,6 +317,60 @@ impl SessionState {
         self.final_classification = None;
         self.num_active_cars = 0;
         self.next_incident_id = 1;
+    }
+
+    // Snapshot the outgoing session's standings into quali_segments if it was a
+    // qualifying segment with a field of drivers. Keyed by sessionType, so each
+    // segment is stored once and a re-run of the same segment overwrites. A different
+    // track means a new weekend, so the prior weekend's segments are dropped first.
+    fn capture_quali_segment(&mut self) {
+        let (stype, track) = match self.session.as_ref() {
+            Some(s) => (s.session_type, s.track_id),
+            None => return,
+        };
+        if session_category_of(Some(stype)) != SessionCategory::Qualifying {
+            return;
+        }
+        let standings: Vec<QualiSegmentEntry> = self
+            .active_drivers()
+            .into_iter()
+            .map(|d| QualiSegmentEntry {
+                index: d.index,
+                name: d.name,
+                name_override: d.name_override,
+                team_id: d.team_id,
+                race_number: d.race_number,
+                position: d.position,
+                best_lap_ms: d.best_lap_ms,
+            })
+            .collect();
+        if standings.is_empty() {
+            return;
+        }
+        if self.quali_track_id.is_some() && self.quali_track_id != Some(track) {
+            self.quali_segments.clear();
+        }
+        self.quali_track_id = Some(track);
+        self.quali_segments.insert(stype, standings);
+    }
+
+    // Captured qualifying segments for the CURRENT track only (so a previous
+    // weekend's segments can't leak into this weekend's report), sorted Q1 -> Q3.
+    fn quali_segments_view(&self) -> Vec<QualiSegment> {
+        let current_track = self.session.as_ref().map(|s| s.track_id);
+        if current_track.is_none() || current_track != self.quali_track_id {
+            return Vec::new();
+        }
+        let mut segs: Vec<QualiSegment> = self
+            .quali_segments
+            .iter()
+            .map(|(&session_type, standings)| QualiSegment {
+                session_type,
+                standings: standings.clone(),
+            })
+            .collect();
+        segs.sort_by_key(|s| s.session_type);
+        segs
     }
 
     fn driver_mut(&mut self, index: u8) -> &mut DriverState {
@@ -498,6 +616,7 @@ impl SessionState {
             .map(|d| d.current_lap_num)
             .max()
             .unwrap_or(0);
+        let car_indices = self.sanitize_car_indices(car_indices);
         let id = self.next_incident_id;
         self.next_incident_id += 1;
         let incident = Incident {
@@ -509,24 +628,50 @@ impl SessionState {
             } else {
                 None
             },
+            // Allowlist the code (case-insensitive); anything unrecognised becomes
+            // MANUAL so a caller can't persist an arbitrary code (P3.1).
             code: code
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
+                .map(|s| s.trim().to_uppercase())
+                .filter(|s| MANUAL_CODES.contains(&s.as_str()))
                 .unwrap_or_else(|| "MANUAL".to_string()),
             label: label
-                .map(|s| s.trim().to_string())
+                .map(|s| capped(&s, MAX_LABEL_LEN))
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "Manual incident".to_string()),
             car_indices,
             detail: HashMap::new(),
             status: IncidentStatus::Flagged,
-            note: note.map(|s| s.trim().to_string()).unwrap_or_default(),
+            note: note.map(|s| capped(&s, MAX_NOTE_LEN)).unwrap_or_default(),
             ruling: None,
         };
         self.incidents.push(incident.clone());
         self.trim_incidents();
         self.last_update = at_ms;
         incident
+    }
+
+    // Keep only plausible, distinct car indices for a manual incident: drop the 255
+    // "no value" sentinel and (once participants are known) any index that isn't a
+    // known driver, deduping while preserving order (P3.1).
+    fn sanitize_car_indices(&self, indices: Vec<u8>) -> Vec<u8> {
+        let known_present = !self.drivers.is_empty();
+        let mut out: Vec<u8> = Vec::new();
+        for i in indices {
+            if i == 255 {
+                continue;
+            }
+            if known_present {
+                if !self.drivers.contains_key(&i) {
+                    continue;
+                }
+            } else if i >= MAX_CAR_INDEX {
+                continue;
+            }
+            if !out.contains(&i) {
+                out.push(i);
+            }
+        }
+        out
     }
 
     fn incident_mut(&mut self, id: &str) -> Option<&mut Incident> {
@@ -542,7 +687,9 @@ impl SessionState {
         outcome: Option<String>,
         at_ms: f64,
     ) -> Result<Option<Incident>, String> {
-        let outcome = outcome.map(|s| s.trim().to_string()).unwrap_or_default();
+        let outcome = outcome
+            .map(|s| capped(&s, MAX_OUTCOME_LEN))
+            .unwrap_or_default();
         if outcome.is_empty() {
             return Err("A penalty needs an outcome.".to_string());
         }
@@ -586,7 +733,7 @@ impl SessionState {
         note: Option<String>,
         at_ms: f64,
     ) -> Option<Incident> {
-        let note = note.map(|s| s.trim().to_string()).unwrap_or_default();
+        let note = note.map(|s| capped(&s, MAX_NOTE_LEN)).unwrap_or_default();
         let i = self.incident_mut(id)?;
         i.note = note;
         let out = i.clone();
@@ -604,15 +751,17 @@ impl SessionState {
         Some(out)
     }
 
-    /// Set or clear a manual display-name override for a car. Persists across
-    /// session resets. Returns None for an invalid index.
+    /// Set or clear a manual display-name override for a driver, keyed by RACE
+    /// NUMBER (stable all weekend) rather than car index, which F1 re-packs each
+    /// qualifying segment. Persists across session resets. Returns None for an
+    /// invalid number (0 or out of range).
     pub fn set_driver_name(
         &mut self,
-        index: u8,
+        race_number: u8,
         name: &str,
         at_ms: f64,
     ) -> Option<(u8, Option<String>)> {
-        if index >= 100 {
+        if race_number == 0 || race_number >= 100 {
             return None;
         }
         let trimmed = name.trim().to_string();
@@ -623,17 +772,21 @@ impl SessionState {
         };
         match &value {
             Some(v) => {
-                self.name_overrides.insert(index, v.clone());
+                self.name_overrides.insert(race_number, v.clone());
             }
             None => {
-                self.name_overrides.remove(&index);
+                self.name_overrides.remove(&race_number);
             }
         }
-        if let Some(d) = self.drivers.get_mut(&index) {
-            d.name_override = value.clone();
+        // Reflect immediately on the currently-loaded car with this number (the
+        // snapshot recomputes from the map by race number anyway).
+        for d in self.drivers.values_mut() {
+            if d.race_number == race_number {
+                d.name_override = value.clone();
+            }
         }
         self.last_update = at_ms;
-        Some((index, value))
+        Some((race_number, value))
     }
 
     /// Active drivers (known participants), sorted for the current session: by best
@@ -647,7 +800,7 @@ impl SessionState {
             .cloned()
             .collect();
         for d in &mut list {
-            d.name_override = self.name_overrides.get(&d.index).cloned();
+            d.name_override = self.name_overrides.get(&d.race_number).cloned();
         }
         let by_position = |a: &DriverState, b: &DriverState| {
             let pa = if a.position == 0 {
@@ -706,6 +859,7 @@ impl SessionState {
             incidents: self.incidents.clone(),
             event_tally: self.event_tally.clone(),
             final_classification: self.final_classification.clone(),
+            quali_segments: self.quali_segments_view(),
             packet_count: self.packet_count,
             last_update: self.last_update,
             last_packet_at: self.last_packet_at,
@@ -762,6 +916,16 @@ mod tests {
             index,
             name: name.into(),
             team_id: team,
+            ..Default::default()
+        }
+    }
+
+    fn participant_num(index: usize, name: &str, team: u16, race_number: u8) -> ParticipantEntry {
+        ParticipantEntry {
+            index,
+            name: name.into(),
+            team_id: team,
+            race_number,
             ..Default::default()
         }
     }
@@ -1006,7 +1170,10 @@ mod tests {
     fn steward_actions_and_name_override() {
         let mut st = SessionState::new();
         st.ingest(&session("A", 15), 0.0);
-        st.ingest(&participants("A", vec![participant(0, "Player", 1)]), 0.0);
+        st.ingest(
+            &participants("A", vec![participant_num(0, "Player", 1, 44)]),
+            0.0,
+        );
         st.ingest(
             &event(
                 "A",
@@ -1049,17 +1216,25 @@ mod tests {
         assert_eq!(manual.status, IncidentStatus::Flagged);
         assert_eq!(st.snapshot().incidents.len(), 2);
 
-        // Name override surfaces in the snapshot and survives a session reset.
-        st.set_driver_name(0, "M. Rossi", 4.0);
+        // A name override is keyed by race number, so it follows the driver across a
+        // session reset even when their car index re-packs to a different slot (P1.3).
+        st.set_driver_name(44, "M. Rossi", 4.0);
         assert_eq!(
             st.snapshot().drivers[0].name_override.as_deref(),
             Some("M. Rossi")
         );
         st.ingest(&session("C", 15), 0.0);
-        st.ingest(&participants("C", vec![participant(0, "Player", 1)]), 0.0);
+        // Same driver (#44), re-packed to a different car index (3).
+        st.ingest(
+            &participants("C", vec![participant_num(3, "Player", 1, 44)]),
+            0.0,
+        );
+        let d = st.snapshot().drivers[0].clone();
+        assert_eq!(d.index, 3, "driver re-packed to a new index");
         assert_eq!(
-            st.snapshot().drivers[0].name_override.as_deref(),
-            Some("M. Rossi")
+            d.name_override.as_deref(),
+            Some("M. Rossi"),
+            "override follows the race number, not the index"
         );
     }
 
@@ -1122,5 +1297,233 @@ mod tests {
             0.0,
         );
         assert!(st.snapshot().event_tally.is_empty(), "spoofed code ignored");
+    }
+
+    #[test]
+    fn qualifying_segments_preserved_across_uid_changes() {
+        let mut st = SessionState::new();
+
+        // Drivers are identified by RACE NUMBER (stable all weekend); the per-car
+        // array index is re-packed to 0..N-1 each segment, so the same driver gets a
+        // different index in Q1 vs Q2 vs Q3 — exactly as the live capture showed. The
+        // stacked classification must reconcile across segments by race number, not
+        // index. P1.3.
+
+        // Q1 (type 5): 4 cars. #81 sets no time and is knocked out.
+        st.ingest(&session("q1", 5), 0.0);
+        st.ingest(
+            &participants(
+                "q1",
+                vec![
+                    participant_num(0, "HAM", 1, 44),
+                    participant_num(1, "VER", 2, 1),
+                    participant_num(2, "LEC", 3, 16),
+                    participant_num(3, "PIA", 4, 81),
+                ],
+            ),
+            0.0,
+        );
+        st.ingest(
+            &laps(
+                "q1",
+                vec![
+                    lap_entry(0, 1, 1, 79_000, 5),
+                    lap_entry(1, 2, 2, 79_500, 5),
+                    lap_entry(2, 3, 3, 80_000, 5),
+                    lap_entry(3, 4, 4, 0, 5), // #81 no time
+                ],
+            ),
+            0.0,
+        );
+
+        // Q2 (type 6, new UID): the 3 survivors, RE-PACKED to fresh indices (HAM was
+        // index 0 in Q1, here index 1). #1 is slowest and is knocked out.
+        st.ingest(&session("q2", 6), 0.0);
+        st.ingest(
+            &participants(
+                "q2",
+                vec![
+                    participant_num(0, "LEC", 3, 16),
+                    participant_num(1, "HAM", 1, 44),
+                    participant_num(2, "VER", 2, 1),
+                ],
+            ),
+            0.0,
+        );
+        st.ingest(
+            &laps(
+                "q2",
+                vec![
+                    lap_entry(0, 2, 3, 78_800, 5), // LEC
+                    lap_entry(1, 1, 1, 78_500, 5), // HAM
+                    lap_entry(2, 3, 2, 79_200, 5), // VER (slowest -> out)
+                ],
+            ),
+            0.0,
+        );
+
+        // Q3 (type 7, new UID): top 2, re-packed again.
+        st.ingest(&session("q3", 7), 0.0);
+        st.ingest(
+            &participants(
+                "q3",
+                vec![
+                    participant_num(0, "HAM", 1, 44),
+                    participant_num(1, "LEC", 3, 16),
+                ],
+            ),
+            0.0,
+        );
+        st.ingest(
+            &laps(
+                "q3",
+                vec![lap_entry(0, 1, 1, 78_100, 5), lap_entry(1, 2, 2, 78_400, 5)],
+            ),
+            0.0,
+        );
+
+        // Transition to the race so Q3 is captured too (same track), giving all three
+        // segments to reconstruct from.
+        st.ingest(&session("race", 15), 0.0);
+
+        let s = st.snapshot();
+        assert_eq!(s.quali_segments.len(), 3, "Q1, Q2, Q3 all captured");
+        let by_type = |t: u8| {
+            s.quali_segments
+                .iter()
+                .find(|q| q.session_type == t)
+                .unwrap()
+        };
+        let nums = |q: &QualiSegment| {
+            q.standings
+                .iter()
+                .map(|e| e.race_number)
+                .collect::<Vec<_>>()
+        };
+
+        // Standings are fastest-first within each segment; the no-time car sorts last.
+        assert_eq!(
+            nums(by_type(5)),
+            [44, 1, 16, 81],
+            "Q1 by best lap, no-time last"
+        );
+        assert_eq!(nums(by_type(6)), [44, 16, 1], "Q2 by best lap");
+        assert_eq!(nums(by_type(7)), [44, 16], "Q3 by best lap");
+
+        // The re-packing is real: HAM (#44) is a different index in Q1 vs Q2.
+        let ham_q1 = by_type(5)
+            .standings
+            .iter()
+            .find(|e| e.race_number == 44)
+            .unwrap();
+        let ham_q2 = by_type(6)
+            .standings
+            .iter()
+            .find(|e| e.race_number == 44)
+            .unwrap();
+        assert_ne!(
+            ham_q1.index, ham_q2.index,
+            "same driver, re-packed index across segments"
+        );
+
+        // Reconstruct knockouts the way the frontend does — by RACE NUMBER, the stable
+        // identity. Matching by index here would be wrong.
+        use std::collections::HashSet;
+        let set = |q: &QualiSegment| {
+            q.standings
+                .iter()
+                .map(|e| e.race_number)
+                .collect::<HashSet<_>>()
+        };
+        let q3 = set(by_type(7));
+        let q2 = set(by_type(6));
+        let q2_knockouts: Vec<u8> = nums(by_type(6))
+            .into_iter()
+            .filter(|n| !q3.contains(n))
+            .collect();
+        let q1_knockouts: Vec<u8> = nums(by_type(5))
+            .into_iter()
+            .filter(|n| !q2.contains(n))
+            .collect();
+        assert_eq!(q2_knockouts, [1], "#1 knocked out in Q2");
+        assert_eq!(q1_knockouts, [81], "#81 knocked out in Q1");
+    }
+
+    #[test]
+    fn quali_segments_hidden_on_a_new_weekend() {
+        let mut st = SessionState::new();
+        // Capture a Q1 on track 13 (the session() helper's track).
+        st.ingest(&session("q1", 5), 0.0);
+        st.ingest(
+            &participants("q1", vec![participant(0, "A", 1), participant(1, "B", 2)]),
+            0.0,
+        );
+        st.ingest(
+            &laps(
+                "q1",
+                vec![lap_entry(0, 1, 1, 79_000, 5), lap_entry(1, 2, 2, 79_500, 5)],
+            ),
+            0.0,
+        );
+        st.ingest(&session("q2", 6), 0.0); // transition captures Q1
+        assert_eq!(st.snapshot().quali_segments.len(), 1);
+
+        // A session on a DIFFERENT track (a new weekend) must not surface the prior
+        // weekend's segments.
+        let mut p1 = session("p1", 2);
+        if let Some(Body::Session(sd)) = p1.data.as_mut() {
+            sd.track_id = 0;
+        }
+        st.ingest(&p1, 0.0);
+        assert!(
+            st.snapshot().quali_segments.is_empty(),
+            "previous weekend's segments are hidden on a new track"
+        );
+    }
+
+    #[test]
+    fn manual_incident_is_validated() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(
+            &participants("A", vec![participant(0, "A", 1), participant(1, "B", 2)]),
+            0.0,
+        );
+
+        // Unknown code -> MANUAL; car list deduped with 255 + unknown (5) dropped;
+        // an over-long note is capped.
+        let inc = st.log_manual_incident(
+            vec![0, 0, 255, 5, 1],
+            Some("evilcode".into()),
+            Some("Contact".into()),
+            Some("x".repeat(1000)),
+            1.0,
+        );
+        assert_eq!(inc.code, "MANUAL", "unknown code normalizes to MANUAL");
+        assert_eq!(
+            inc.car_indices,
+            vec![0, 1],
+            "deduped; 255 + unknown dropped"
+        );
+        assert!(inc.note.chars().count() <= MAX_NOTE_LEN, "note capped");
+
+        // A real code is accepted case-insensitively.
+        let inc2 = st.log_manual_incident(vec![1], Some("coll".into()), None, None, 2.0);
+        assert_eq!(inc2.code, "COLL");
+    }
+
+    #[test]
+    fn approve_outcome_is_capped() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        let inc = st.log_manual_incident(vec![], Some("PENA".into()), None, None, 0.0);
+        let approved = st
+            .approve_incident(&inc.id, Some("y".repeat(1000)), 1.0)
+            .unwrap()
+            .unwrap();
+        assert!(
+            approved.ruling.unwrap().outcome.chars().count() <= MAX_OUTCOME_LEN,
+            "outcome capped"
+        );
     }
 }

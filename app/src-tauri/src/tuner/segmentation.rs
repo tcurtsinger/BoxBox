@@ -242,7 +242,17 @@ const MATCH_TOL_M: f64 = 100.0; // fresh apex within this of a cached one = same
 const GEO_ALPHA: f64 = 0.3; // EMA weight when refining a matched corner's geometry
 
 /// Fold a fresh lap's corners into the per-track map by proximity, not by count.
-pub fn merge_corner_map(existing: Option<&[MappedCorner]>, fresh: &[Corner]) -> Vec<MappedCorner> {
+///
+/// `clean` is the just-finalized lap's validity. An invalid lap (cut/off/spin) may
+/// still *seed* a brand-new corner — so a single wide moment doesn't cost the whole
+/// lap's corner discovery (confirmed harmful on a real capture) — but it must not
+/// *refine* or *confirm* geometry already learned from clean laps. Only a clean lap
+/// EMA-refines a matched corner and bumps its `seen` confidence (P1.4).
+pub fn merge_corner_map(
+    existing: Option<&[MappedCorner]>,
+    fresh: &[Corner],
+    clean: bool,
+) -> Vec<MappedCorner> {
     let existing = match existing {
         Some(e) if !e.is_empty() => e,
         _ => {
@@ -282,12 +292,17 @@ pub fn merge_corner_map(existing: Option<&[MappedCorner]>, fresh: &[Corner]) -> 
         if best >= 0 {
             let i = best as usize;
             taken[i] = true;
-            let e = &mut out[i];
-            e.entry_dist += GEO_ALPHA * (f.entry_dist - e.entry_dist);
-            e.apex_dist += GEO_ALPHA * (f.apex_dist - e.apex_dist);
-            e.exit_dist += GEO_ALPHA * (f.exit_dist - e.exit_dist);
-            e.min_speed += GEO_ALPHA * (f.min_speed - e.min_speed);
-            e.seen += 1;
+            // Only a clean lap refines and confirms an existing corner; an invalid
+            // lap must not EMA-pull known geometry toward a bad trace or inflate its
+            // `seen` confidence (P1.4). It leaves the matched corner untouched.
+            if clean {
+                let e = &mut out[i];
+                e.entry_dist += GEO_ALPHA * (f.entry_dist - e.entry_dist);
+                e.apex_dist += GEO_ALPHA * (f.apex_dist - e.apex_dist);
+                e.exit_dist += GEO_ALPHA * (f.exit_dist - e.exit_dist);
+                e.min_speed += GEO_ALPHA * (f.min_speed - e.min_speed);
+                e.seen += 1;
+            }
         } else {
             out.push(MappedCorner {
                 index: 0,

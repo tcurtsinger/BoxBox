@@ -26,6 +26,58 @@ fn max_cars_for_format(format: u16) -> usize {
     }
 }
 
+/// Exact total datagram size for a known (packetFormat, packetId), or None if the
+/// format or id isn't one we recognise. These are the official EA F1 25 totals
+/// (header included); per-car array lengths differ between the 2025 base format and
+/// the 2026 season-pack format, so the tables differ (CarTelemetry2, id 16, is
+/// 2026-only). `parse_packet` uses this to reject impossible (format, id, size)
+/// datagrams before the body is parsed or the source is pinned (P1.1).
+fn expected_packet_size(format: u16, id: u8) -> Option<usize> {
+    let size: usize = match format {
+        2025 => match id {
+            0 => 1349,
+            1 => 753,
+            2 => 1285,
+            3 => 45,
+            4 => 1284,
+            5 => 1133,
+            6 => 1352,
+            7 => 1239,
+            8 => 1042,
+            9 => 954,
+            10 => 1041,
+            11 => 1460,
+            12 => 231,
+            13 => 273,
+            14 => 101,
+            15 => 1131,
+            _ => return None,
+        },
+        2026 => match id {
+            0 => 1325,
+            1 => 926,
+            2 => 1399,
+            3 => 45,
+            4 => 1470,
+            5 => 1233,
+            6 => 1448,
+            7 => 1445,
+            8 => 1134,
+            9 => 1062,
+            10 => 1133,
+            11 => 1460,
+            12 => 231,
+            13 => 273,
+            14 => 104,
+            15 => 1231,
+            16 => 269,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some(size)
+}
+
 // --- Reader -------------------------------------------------------------------
 // Cursor-based little-endian reader mirroring `reader.ts`. Reads are bounds-safe:
 // a read past the end yields a zero value (and empty string/array) rather than
@@ -1273,6 +1325,16 @@ pub fn parse_packet(buf: &[u8]) -> Option<ParsedPacket> {
     let header = parse_header(&mut rd);
     let id = header.packet_id;
 
+    // Reject impossible (format, id, size) datagrams before parsing the body or
+    // pinning the source (P1.1): an unknown format, an id that format never sends,
+    // or a known packet whose datagram isn't EXACTLY the spec size (too short OR too
+    // long) is malformed or spoofed. Defence in depth above the overran drop; it
+    // also gates the upstream source pinning in the listener.
+    let expected = expected_packet_size(header.packet_format, id)?;
+    if buf.len() != expected {
+        return None;
+    }
+
     let data = match id {
         1 => Some(Body::Session(parse_session(&mut rd, &header))),
         2 => Some(Body::LapData(parse_lap_data(&mut rd, &header))),
@@ -1340,38 +1402,63 @@ mod tests {
     }
 
     #[test]
-    fn truncated_known_packet_drops_body() {
-        // A header-only buffer fed to a body parser must not panic, and must come
-        // back with no body: zero-filled tail fields are not real data (P1.2). The
-        // header still flows, for heartbeat / format detection.
-        let buf = header_bytes(2026, 16);
-        let packet = parse_packet(&buf).expect("header parses");
-        assert!(
-            packet.data.is_none(),
-            "truncated CarTelemetry2 body dropped"
-        );
-        assert_eq!(packet.id, 16);
+    fn rejects_too_short_packet() {
+        // A header-only datagram for a known packet is far too short for its body,
+        // so it is rejected outright (not even flowed as a heartbeat) before it
+        // could pin the source or mutate state (P1.1).
+        assert!(parse_packet(&header_bytes(2026, 16)).is_none());
     }
 
     #[test]
-    fn short_by_one_packet_drops_body() {
-        // 2026 CarTelemetry2 is 269 bytes (29 header + 24*10). One byte short, the
-        // final field overruns, and the whole body is dropped.
-        let mut buf = header_bytes(2026, 16);
-        buf.extend_from_slice(&vec![0u8; 24 * 10 - 1]);
-        assert_eq!(buf.len(), 269 - 1);
-        let packet = parse_packet(&buf).expect("header parses");
-        assert!(packet.data.is_none());
+    fn rejects_wrong_size_packet() {
+        // 2026 CarTelemetry2 is exactly 269 bytes (29 header + 24*10). One byte
+        // short or one byte long is malformed and rejected.
+        let mut short = header_bytes(2026, 16);
+        short.extend_from_slice(&vec![0u8; 24 * 10 - 1]);
+        assert_eq!(short.len(), 269 - 1);
+        assert!(parse_packet(&short).is_none(), "short-by-one rejected");
+
+        let mut long = header_bytes(2026, 16);
+        long.extend_from_slice(&vec![0u8; 24 * 10 + 1]);
+        assert_eq!(long.len(), 269 + 1);
+        assert!(parse_packet(&long).is_none(), "too-long rejected");
     }
 
     #[test]
     fn header_only_pena_does_not_forge_a_penalty() {
-        // The headline P1.2 case: a datagram that is just a header + "PENA" with no
-        // payload must NOT decode into a (zero-filled) drive-through against car 0.
+        // The headline trust case: a datagram that is just a header + "PENA" with no
+        // payload is shorter than the 45-byte Event packet, so it's rejected before
+        // it could decode into a (zero-filled) drive-through against car 0.
         let mut buf = header_bytes(2026, 3);
         buf.extend_from_slice(b"PENA"); // event code, no payload bytes
-        let packet = parse_packet(&buf).expect("header parses");
-        assert!(packet.data.is_none(), "incomplete PENA payload dropped");
+        assert!(parse_packet(&buf).is_none(), "incomplete PENA rejected");
+    }
+
+    #[test]
+    fn rejects_unknown_format_and_id() {
+        assert!(
+            parse_packet(&header_bytes(2024, 1)).is_none(),
+            "unknown format"
+        );
+        assert!(
+            parse_packet(&header_bytes(2026, 200)).is_none(),
+            "unknown id"
+        );
+        assert!(
+            parse_packet(&header_bytes(2025, 16)).is_none(),
+            "no id 16 in 2025"
+        );
+    }
+
+    #[test]
+    fn accepts_exact_size_undecoded_packet_as_header_only() {
+        // A valid but not-yet-decoded packet (Motion, id 0) at its exact size flows
+        // as header-only (data: None) for heartbeat/format — not rejected.
+        let mut buf = header_bytes(2026, 0);
+        buf.resize(1325, 0);
+        let packet = parse_packet(&buf).expect("exact-size Motion accepted");
+        assert_eq!(packet.id, 0);
+        assert!(packet.data.is_none(), "Motion not decoded -> header only");
     }
 
     #[test]
@@ -1410,6 +1497,7 @@ mod tests {
         let mut buf = header_bytes(2026, 3);
         buf.extend_from_slice(b"PENA");
         buf.extend_from_slice(&[4, 7, 3, 9, 5, 12, 1]); // type, infr, veh, other, time, lap, places
+        buf.resize(45, 0); // pad to the exact 45-byte Event size (P1.1)
         let packet = parse_packet(&buf).expect("parses");
         let Some(Body::Event(e)) = packet.data else {
             panic!("expected Event");
@@ -1441,9 +1529,8 @@ mod tests {
         buf.extend_from_slice(&3u16.to_le_bytes()); // techLevel
         buf.push(2); // platform
         buf.push(0); // numColours
-        buf.extend_from_slice(&vec![0u8; 12]); // 4 livery colours
-                                               // pad remaining cars
-        buf.extend_from_slice(&vec![0u8; 4096]);
+        buf.extend_from_slice(&[0u8; 12]); // 4 livery colours
+        buf.resize(1284, 0); // pad to the exact 2025 Participants size (P1.1)
 
         let packet = parse_packet(&buf).expect("parses");
         let Some(Body::Participants(p)) = packet.data else {

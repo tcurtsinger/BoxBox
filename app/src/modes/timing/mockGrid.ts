@@ -97,6 +97,9 @@ export interface DriverRow {
   /** Driver has restricted their telemetry: ERS/fuel arrive zeroed, so show them
    *  as unavailable rather than a misleading 0. */
   restricted: boolean;
+  /** Driver has hidden their online name (showOnlineNames off) and no steward
+   *  override is set, so the shown name is the game's redaction — flag it (P2.6). */
+  namePrivate: boolean;
 }
 
 function sectorsFor(
@@ -150,6 +153,7 @@ export function sampleGrid(): DriverRow[] {
       pen: c.pen ?? 0,
       flag: c.flag ?? null,
       restricted: false,
+      namePrivate: false,
     };
   });
 }

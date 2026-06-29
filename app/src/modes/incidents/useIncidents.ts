@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { useShell } from "../../shell/shell-context";
 import { sampleGrid } from "../timing/mockGrid";
+import { useSharedRaceState } from "../timing/RaceStateContext";
 import { CODE_LABEL, type UIIncident } from "./incident";
 import { makeManualIncident } from "./sampleIncidents";
-import { rosterFrom, toUIIncidents, type IncidentSnapshot, type RosterCar } from "./liveIncidents";
+import { type RosterCar } from "./liveIncidents";
 
 /** Only the real Tauri app has the Rust engine; the plain Vite preview does not. */
 const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-const POLL_MS = 250; // 4 Hz
 
 /** Every action resolves to whether it succeeded, so the caller can keep the
  *  steward's draft and surface an error on failure rather than losing it (P1.5). */
@@ -43,52 +43,18 @@ function sampleRoster(): RosterCar[] {
 
 /**
  * The incident log + steward actions for the Race Control sections. Sample mode
- * reads/writes the shared shell-context array, so decisions persist across
- * section switches; live mode reads the Rust `race_snapshot` incident log and
- * routes actions through the steward commands, re-polling immediately so the UI
- * updates without waiting for the next tick. Returns an empty log before the
- * first live snapshot resolves, or in the non-Tauri preview outside sample mode.
+ * reads/writes the shared shell-context array, so decisions persist across section
+ * switches; live mode reads the incident log + roster from the shared race-state
+ * provider (one poll for all of Race Control, P2.3) and routes actions through the
+ * steward commands, asking the provider to re-poll immediately so the UI updates
+ * without waiting for the next tick.
  */
 export function useIncidents(sample: boolean): IncidentsState {
   const { incidents: sampleIncidents, setIncidents } = useShell();
-  const [live, setLive] = useState<{ incidents: UIIncident[]; roster: RosterCar[] }>({
-    incidents: [],
-    roster: [],
-  });
-  const refresh = useRef<() => Promise<void>>(async () => {});
-
-  useEffect(() => {
-    if (sample || !IN_TAURI) {
-      setLive({ incidents: [], roster: [] });
-      refresh.current = async () => {};
-      return;
-    }
-
-    let active = true;
-    let timer: number | undefined;
-
-    (async () => {
-      const { invoke } = await import("@tauri-apps/api/core");
-      if (!active) return;
-      const poll = async () => {
-        try {
-          const snap = await invoke<IncidentSnapshot>("race_snapshot");
-          if (active) setLive({ incidents: toUIIncidents(snap), roster: rosterFrom(snap.drivers) });
-        } catch {
-          /* transient: a poisoned lock or shutdown — keep the last log */
-        }
-      };
-      refresh.current = poll;
-      await poll();
-      timer = window.setInterval(poll, POLL_MS);
-    })();
-
-    return () => {
-      active = false;
-      if (timer) clearInterval(timer);
-      refresh.current = async () => {};
-    };
-  }, [sample]);
+  // One shared poll backs the whole of Race Control; this hook no longer spins its
+  // own race_snapshot loop (P2.3).
+  const shared = useSharedRaceState();
+  const refresh = shared.refresh;
 
   const actions = useMemo<IncidentActions>(() => {
     if (sample) {
@@ -132,7 +98,7 @@ export function useIncidents(sample: boolean): IncidentsState {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
         await invoke(cmd, args);
-        await refresh.current();
+        await refresh(); // re-poll the shared snapshot now
         return true;
       } catch {
         // Command rejected (blank penalty, lock, shutdown). The caller keeps the
@@ -158,7 +124,7 @@ export function useIncidents(sample: boolean): IncidentsState {
           note: note.trim() || null,
         }),
     };
-  }, [sample, setIncidents]);
+  }, [sample, setIncidents, refresh]);
 
   const sampleView = useMemo(
     () => ({
@@ -171,6 +137,6 @@ export function useIncidents(sample: boolean): IncidentsState {
     [sampleIncidents],
   );
 
-  const view = sample ? sampleView : live;
+  const view = sample ? sampleView : { incidents: shared.incidents, roster: shared.roster };
   return { incidents: view.incidents, roster: view.roster, actions };
 }

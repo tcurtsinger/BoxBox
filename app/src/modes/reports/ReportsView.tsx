@@ -2,6 +2,7 @@ import { useShell } from "../../shell/shell-context";
 import { fmtLap, SAMPLE_SESSION } from "../timing/mockGrid";
 import { useSharedRaceState } from "../timing/RaceStateContext";
 import { useIncidents } from "../incidents/useIncidents";
+import { useRovingGrid } from "../../shell/useRovingGrid";
 import {
   buildClassification,
   markPenalties,
@@ -24,10 +25,22 @@ const CATEGORY_LABEL: Record<string, string> = {
 export function ReportsView() {
   const { feed, setSelectedDriver, selectedDriver } = useShell();
   const sample = feed.sample === true;
-  const { grid, session, finalClassification } = useSharedRaceState();
+  const { grid, session, finalClassification, qualiClassification } = useSharedRaceState();
   const { incidents } = useIncidents(sample);
 
-  if (grid.length === 0 && !finalClassification) {
+  const isQualifying = qualiClassification != null;
+
+  // Prefer the stacked qualifying classification (P1.3) while in qualifying; else the
+  // authoritative Final Classification (packet 8); else the live grid projection,
+  // marked provisional until packet 8 arrives.
+  const isFinal = sample || finalClassification != null;
+  const baseClassification = qualiClassification ?? finalClassification ?? buildClassification(grid);
+  const classification = markPenalties(baseClassification, incidents);
+  // Roving-tabindex grid nav (P3.4); called before the early return below so the
+  // hook order stays stable across renders.
+  const { rowProps } = useRovingGrid(classification.length);
+
+  if (grid.length === 0 && !finalClassification && !qualiClassification) {
     return (
       <div className="report">
         <div className="report-inner">
@@ -37,13 +50,7 @@ export function ReportsView() {
     );
   }
 
-  // Prefer the authoritative Final Classification (packet 8); fall back to the live
-  // grid projection and mark the report provisional until it arrives (P1.4).
-  const isFinal = sample || finalClassification != null;
-  const classification = markPenalties(finalClassification ?? buildClassification(grid), incidents);
-  const baseSummary = buildSummary(grid, incidents);
-  const winner = classification.find((c) => c.pos === 1)?.name ?? baseSummary.winner;
-  const summary = { ...baseSummary, winner };
+  const summary = buildSummary(classification, incidents);
   const decisions = buildDecisions(incidents);
   const timed = classification.map((c) => c.bestMs).filter((ms) => ms > 0);
   const fastestMs = timed.length ? Math.min(...timed) : 0;
@@ -101,8 +108,10 @@ export function ReportsView() {
         </dl>
 
         <section className="report-section">
-          <h3 className="report-section-title">Final classification</h3>
-          <div className="cls" role="table">
+          <h3 className="report-section-title">
+            {isQualifying ? "Qualifying classification" : "Final classification"}
+          </h3>
+          <div className="cls" role="grid" aria-label={isQualifying ? "Qualifying classification" : "Final classification"}>
             <div className="cls-head" role="row">
               <span className="cls-h cls-c-pos" role="columnheader">Pos</span>
               <span className="cls-h" role="columnheader">Driver</span>
@@ -110,38 +119,35 @@ export function ReportsView() {
               <span className="cls-h cls-a-r" role="columnheader">Gap</span>
               <span className="cls-h cls-a-r" role="columnheader">Pits</span>
             </div>
-            {classification.map((c) => {
+            {classification.map((c, i) => {
               const active = selectedDriver === c.no;
               return (
                 <div
                   role="row"
                   key={c.no}
-                  tabIndex={0}
                   aria-selected={active}
                   aria-label={`Position ${c.pos}, car ${c.no}, ${c.name}`}
                   className={`cls-row${active ? " is-active" : ""}`}
-                  onClick={() => setSelectedDriver(active ? null : c.no)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setSelectedDriver(active ? null : c.no);
-                    }
-                  }}
+                  {...rowProps(i, () => setSelectedDriver(active ? null : c.no))}
                 >
-                  <span className="cls-c-pos mono" role="cell">{c.pos}</span>
-                  <span className="cls-c-driver" role="cell">
+                  <span className="cls-c-pos mono" role="gridcell">{c.pos}</span>
+                  <span className="cls-c-driver" role="gridcell">
                     <span className="cls-team" style={{ background: c.teamColor }} aria-hidden="true" />
                     <span className="cls-num mono">{c.no}</span>
                     <span className="cls-name">{c.name}</span>
                     <span className="cls-team-name">{c.teamName}</span>
-                    {c.penalised && <span className="cls-pen">Pen</span>}
-                    {c.status && <span className="cls-status">{c.status}</span>}
+                    {c.penalised && (
+                      <span className="cls-pen">{c.penaltyTimeSec > 0 ? `+${c.penaltyTimeSec}s` : "Pen"}</span>
+                    )}
+                    {c.status && (
+                      <span className={isQualifying ? "cls-out" : "cls-status"}>{c.status}</span>
+                    )}
                   </span>
-                  <span className={`cls-a-r mono${c.bestMs > 0 && c.bestMs === fastestMs ? " cls-fl" : ""}`} role="cell">
+                  <span className={`cls-a-r mono${c.bestMs > 0 && c.bestMs === fastestMs ? " cls-fl" : ""}`} role="gridcell">
                     {fmtLap(c.bestMs)}
                   </span>
-                  <span className="cls-a-r mono cls-gap" role="cell">{gapText(c.gapSec)}</span>
-                  <span className="cls-a-r mono" role="cell">{c.pits}</span>
+                  <span className="cls-a-r mono cls-gap" role="gridcell">{gapText(c.gapSec)}</span>
+                  <span className="cls-a-r mono" role="gridcell">{c.pits}</span>
                 </div>
               );
             })}

@@ -17,8 +17,16 @@ export interface ClassRow {
   pits: number;
   penalised: boolean;
   /** Official result status from Final Classification (e.g. "DNF", "DSQ", "DNS").
-   *  null for a normally-classified car or a provisional (grid) projection. */
+   *  null for a normally-classified car or a provisional (grid) projection. For a
+   *  qualifying-stack row it carries the segment the driver was eliminated in (P1.3). */
   status: string | null;
+  /** Official facts from Final Classification packet 8 (P2.1); neutral (0/[]/null)
+   *  for a provisional grid projection or a qualifying-stack row. */
+  points: number;
+  penaltyTimeSec: number; // total time penalties applied
+  numPenalties: number;
+  tyreStints: string[]; // visual compounds in stint order, e.g. ["S", "M"]
+  resultReason: number | null;
 }
 
 export interface ReportSummary {
@@ -73,17 +81,25 @@ export function buildClassification(grid: DriverRow[]): ClassRow[] {
     pits: d.pits,
     penalised: false,
     status: null,
+    points: 0,
+    penaltyTimeSec: 0,
+    numPenalties: 0,
+    tyreStints: [],
+    resultReason: null,
   }));
 }
 
+/** Winner + fastest lap are drawn from the classification itself, so a Final report
+ *  (packet 8) reports the official fastest lap rather than a live-grid projection,
+ *  matching the row highlighting (P2.1). */
 export function buildSummary(
-  grid: DriverRow[],
+  classification: ClassRow[],
   incidents: UIIncident[],
 ): ReportSummary {
-  const winner = grid.find((d) => d.pos === 1)?.name ?? "—";
+  const winner = classification.find((c) => c.pos === 1)?.name ?? "—";
   // Only cars that actually set a lap are fastest-lap candidates: a reduce over
   // all rows would otherwise pick a bestMs of 0 (no time / DNS) as "fastest".
-  const timed = grid.filter((d) => d.bestMs > 0);
+  const timed = classification.filter((c) => c.bestMs > 0);
   const fl = timed.length ? timed.reduce((a, b) => (b.bestMs < a.bestMs ? b : a)) : null;
   return {
     winner,
@@ -150,10 +166,24 @@ export function buildReportCsv(r: ReportData): string {
   );
   lines.push("");
   lines.push("Classification");
-  lines.push("Pos,No,Driver,Team,Best Lap,Gap,Pits,Result,Penalty");
+  lines.push("Pos,No,Driver,Team,Best Lap,Gap,Pits,Points,Tyres,Result,Pen Time (s),Penalties,Penalised");
   r.classification.forEach((c) =>
     lines.push(
-      [c.pos, c.no, csv(c.name), csv(c.teamName), fmtLap(c.bestMs), gapText(c.gapSec), c.pits, csv(c.status ?? ""), c.penalised ? "Y" : ""].join(","),
+      [
+        c.pos,
+        c.no,
+        csv(c.name),
+        csv(c.teamName),
+        fmtLap(c.bestMs),
+        gapText(c.gapSec),
+        c.pits,
+        c.points,
+        csv(c.tyreStints.join(" ")),
+        csv(c.status ?? ""),
+        c.penaltyTimeSec || "",
+        c.numPenalties || "",
+        c.penalised ? "Y" : "",
+      ].join(","),
     ),
   );
   lines.push("");
@@ -191,7 +221,12 @@ export function buildReportJson(r: ReportData): string {
         bestLap: fmtLap(c.bestMs),
         gapSec: c.gapSec,
         pits: c.pits,
+        points: c.points,
+        tyreStints: c.tyreStints,
         status: c.status,
+        resultReason: c.resultReason,
+        penaltyTimeSec: c.penaltyTimeSec,
+        numPenalties: c.numPenalties,
         penalised: c.penalised,
       })),
       decisions: r.decisions.map((d) => ({
@@ -207,23 +242,18 @@ export function buildReportJson(r: ReportData): string {
   );
 }
 
-/** Export the report as CSV or JSON. In the Tauri app a native save dialog picks
- *  the destination and a Rust command writes it; in the browser preview it falls
- *  back to an anchor download. A cancelled dialog is a no-op. */
+/** Export the report as CSV or JSON. In the Tauri app a single Rust command opens
+ *  the native save dialog AND writes the file, so the webview never handles a
+ *  writable path (P2.4); in the browser preview it falls back to an anchor
+ *  download. A cancelled dialog is a no-op. */
 export async function exportReport(format: ReportFormat, r: ReportData): Promise<void> {
   const content = format === "json" ? buildReportJson(r) : buildReportCsv(r);
   const slug = r.header.track.toLowerCase().replace(/\s+/g, "-") || "session";
   const filename = `boxbox-report-${slug}.${format}`;
 
   if (IN_TAURI) {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const path = await save({
-      defaultPath: filename,
-      filters: [{ name: format.toUpperCase(), extensions: [format] }],
-    });
-    if (!path) return; // cancelled
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("write_text_file", { path, contents: content });
+    await invoke("export_report", { format, contents: content, defaultName: filename });
     return;
   }
 

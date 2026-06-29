@@ -1,5 +1,7 @@
 import { useShell } from "../../shell/shell-context";
 import { useSharedRaceState } from "./RaceStateContext";
+import { useRovingGrid, type RovingRowProps } from "../../shell/useRovingGrid";
+import { LockIcon } from "../../shell/icons";
 import {
   fmtLap,
   fmtSec,
@@ -23,6 +25,7 @@ export function TimingTower() {
   const { feed, setFeed, selectedDriver, setSelectedDriver } = useShell();
   const sample = feed.sample === true;
   const { grid, session } = useSharedRaceState();
+  const { rowProps } = useRovingGrid(grid.length);
 
   return (
     <section className="tt" aria-label="Live timing tower">
@@ -48,7 +51,7 @@ export function TimingTower() {
       </header>
 
       <div className="tt-scroll">
-        <div className="tt-table" role="table">
+        <div className="tt-table" role="grid" aria-label="Live timing grid">
           <div className="tt-head" role="row">
             <span className="tt-h tt-a-c" role="columnheader">Pos</span>
             <span className="tt-h tt-a-c" role="columnheader" aria-label="Positions gained or lost">±</span>
@@ -69,14 +72,14 @@ export function TimingTower() {
             {grid.length === 0 ? (
               <div className="tt-waiting" role="status">Waiting for the grid…</div>
             ) : (
-              grid.map((row) => (
+              grid.map((row, i) => (
                 <Row
                   key={row.no}
                   d={row}
                   selected={selectedDriver === row.no}
-                  onSelect={() =>
-                    setSelectedDriver(selectedDriver === row.no ? null : row.no)
-                  }
+                  rowProps={rowProps(i, () =>
+                    setSelectedDriver(selectedDriver === row.no ? null : row.no),
+                  )}
                 />
               ))
             )}
@@ -90,45 +93,48 @@ export function TimingTower() {
 function Row({
   d,
   selected,
-  onSelect,
+  rowProps,
 }: {
   d: DriverRow;
   selected: boolean;
-  onSelect: () => void;
+  rowProps: RovingRowProps;
 }) {
   const leader = d.pos === 1;
   return (
     <div
       role="row"
-      tabIndex={0}
       aria-selected={selected}
       aria-label={`Position ${d.pos}, car ${d.no}, ${d.name}${leader ? ", race leader" : ""}`}
       className={`tt-row${selected ? " is-selected" : ""}${leader ? " is-leader" : ""}`}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
+      {...rowProps}
     >
-      <span className="tt-c-pos mono tt-a-c" role="cell">{d.pos}</span>
+      <span className="tt-c-pos mono tt-a-c" role="gridcell">{d.pos}</span>
 
-      <span className="tt-c-change tt-a-c mono" role="cell">
+      <span className="tt-c-change tt-a-c mono" role="gridcell">
         <Change n={d.change} />
       </span>
 
-      <span className="tt-c-driver" role="cell">
+      <span className="tt-c-driver" role="gridcell">
         <span className="tt-team" style={{ background: d.teamColor }} aria-hidden="true" />
         <span className="tt-num-badge mono">{d.no}</span>
         <span className="tt-name">{d.name}</span>
+        {d.namePrivate && (
+          <span
+            className="tt-private"
+            role="img"
+            aria-label="Name hidden by driver"
+            title="Name hidden by driver"
+          >
+            <LockIcon size={11} />
+          </span>
+        )}
       </span>
 
-      <span className="tt-c-status" role="cell">
+      <span className="tt-c-status" role="gridcell">
         <Status d={d} />
       </span>
 
-      <span className="tt-c-int tt-a-r mono" role="cell">
+      <span className="tt-c-int tt-a-r mono" role="gridcell">
         {d.pit ? (
           <span className="tt-pit">PIT</span>
         ) : leader ? (
@@ -138,46 +144,58 @@ function Row({
         )}
       </span>
 
-      <span className={`tt-c-gap tt-a-r${leader ? " tt-leader" : " mono"}`} role="cell">
+      <span className={`tt-c-gap tt-a-r${leader ? " tt-leader" : " mono"}`} role="gridcell">
         {leader ? "LEADER" : fmtSec(d.gapSec ?? 0)}
       </span>
 
-      <span className={`tt-c-last tt-a-r mono lap-${d.lastClass}`} role="cell">
+      <span className={`tt-c-last tt-a-r mono lap-${d.lastClass}`} role="gridcell">
         {fmtLap(d.lastMs)}
       </span>
 
-      <span className={`tt-c-best tt-a-r mono lap-${d.bestClass === "session" ? "session" : "dim"}`} role="cell">
+      <span className={`tt-c-best tt-a-r mono lap-${d.bestClass === "session" ? "session" : "dim"}`} role="gridcell">
         {fmtLap(d.bestMs)}
       </span>
 
-      <span className="tt-c-sectors tt-a-c" role="cell">
+      <span className="tt-c-sectors tt-a-c" role="gridcell">
         <Sectors states={d.sectors} />
       </span>
 
-      <span className="tt-c-ers" role="cell">
+      <span className="tt-c-ers" role="gridcell">
         {d.restricted ? (
-          <span className="tt-restricted mono" title="Telemetry restricted by driver">—</span>
+          <span
+            className="tt-restricted mono"
+            aria-label="ERS unavailable — telemetry restricted by driver"
+            title="Telemetry restricted by driver"
+          >
+            —
+          </span>
         ) : (
           <Ers pct={d.batt} boost={d.boost} />
         )}
       </span>
 
-      <span className="tt-c-tyre tt-a-c" role="cell">
+      <span className="tt-c-tyre tt-a-c" role="gridcell">
         <span className={`tyre-letter tyre-${d.tyre} mono`} title={COMPOUND_LABEL[d.tyre]}>
           {d.tyre}
         </span>
         <span className="tyre-age mono">{d.age}L</span>
       </span>
 
-      <span className={`tt-c-fuel tt-a-r mono${!d.restricted && d.fuel < 0 ? " fuel-low" : ""}`} role="cell">
+      <span className={`tt-c-fuel tt-a-r mono${!d.restricted && d.fuel < 0 ? " fuel-low" : ""}`} role="gridcell">
         {d.restricted ? (
-          <span className="tt-restricted" title="Telemetry restricted by driver">—</span>
+          <span
+            className="tt-restricted"
+            aria-label="Fuel unavailable — telemetry restricted by driver"
+            title="Telemetry restricted by driver"
+          >
+            —
+          </span>
         ) : (
           fmtFuel(d.fuel)
         )}
       </span>
 
-      <span className="tt-c-pits tt-a-c" role="cell">
+      <span className="tt-c-pits tt-a-c" role="gridcell">
         <span className="tt-pit-badge mono">{d.pits}</span>
       </span>
     </div>

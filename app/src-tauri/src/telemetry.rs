@@ -1,9 +1,11 @@
 //! The telemetry backend: a UDP listener that receives the game's F1 packets,
-//! decodes them (`packets::parse_packet`), and emits each one to the frontend as
-//! a `telemetry:packet` event carrying the full `{ id, header, data }` shape. The
-//! Tuner/Race-Control domain engines that consume these land in a later stage.
+//! decodes them (`packets::parse_packet`), feeds the Tuner + Race Control engines,
+//! and emits a minimal `telemetry:packet` heartbeat to the frontend (id + format +
+//! session time) so the UI can drive the live/reconnecting status. The full state
+//! reaches the UI via the `tuner_snapshot` / `race_snapshot` commands, so the whole
+//! parsed packet is deliberately NOT pushed over IPC every frame (P2.5).
 
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -16,6 +18,17 @@ use crate::persist::{ProfileState, ProfileStore};
 use crate::racecontrol::state::Incident;
 use crate::racecontrol::{SessionSnapshot, SessionState};
 use crate::tuner::{Snapshot, TunerState};
+
+/// The minimal per-packet heartbeat pushed to the webview: just enough to flip the
+/// feed status live and show the format/id, NOT the full parsed packet (names,
+/// setups, telemetry) the webview doesn't need every frame (P2.5).
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Heartbeat {
+    id: u8,
+    format: u16,
+    session_time: f32,
+}
 
 /// Tauri-managed Tuner engine: the live `TunerState` the listener thread feeds and
 /// the commands read. Held behind an `Arc<Mutex>` so the worker thread and the
@@ -55,6 +68,8 @@ fn now_ms() -> f64 {
 pub struct Listener {
     port: u16,
     stop: Arc<AtomicBool>,
+    /// Set by the reset command to re-open UDP source selection without restarting.
+    reset: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -91,36 +106,62 @@ fn spawn_listener(
 
     let stop = Arc::new(AtomicBool::new(false));
     let stop_worker = stop.clone();
+    let reset = Arc::new(AtomicBool::new(false));
+    let reset_worker = reset.clone();
     let handle = std::thread::spawn(move || {
         let mut buf = [0u8; 2048];
         // The F1 feed comes from exactly one host (the game PC or console). Lock
-        // onto the first source we hear a valid packet from and ignore datagrams
-        // from anyone else, so a stray or spoofed LAN sender can't inject fake
-        // incidents or poison Tuner learning. A port change restarts the listener
-        // and re-pins.
-        let mut source: Option<SocketAddr> = None;
+        // onto the first host we hear a COMPLETE, valid packet from and ignore
+        // datagrams from any other host, so a stray or spoofed LAN sender can't
+        // inject fake incidents or poison Tuner learning. We pin by HOST (ip), not
+        // the full socket address, so a game restart that changes the ephemeral
+        // source port doesn't strand the feed (P1.2).
+        let mut source: Option<IpAddr> = None;
         while !stop_worker.load(Ordering::Relaxed) {
+            // A reset request re-opens source selection (e.g. after moving the feed
+            // to a different sending PC) without restarting the listener.
+            if reset_worker.swap(false, Ordering::Relaxed) {
+                source = None;
+            }
             match socket.recv_from(&mut buf) {
                 Ok((n, addr)) => {
-                    if matches!(source, Some(pinned) if pinned != addr) {
-                        continue; // datagram from an unexpected source — ignore
+                    let host = addr.ip();
+                    // Ignore anything from a host other than the pinned source.
+                    if matches!(source, Some(pinned) if pinned != host) {
+                        continue;
                     }
-                    if let Some(packet) = parse_packet(&buf[..n]) {
-                        if source.is_none() {
-                            source = Some(addr);
+                    let Some(packet) = parse_packet(&buf[..n]) else {
+                        continue;
+                    };
+                    // Pin only on a COMPLETE, decoded packet: parse_packet has
+                    // already enforced the exact size/format/id (P1.1), and
+                    // requiring a decoded body means a valid-but-unhandled packet
+                    // (data: None) can't claim the feed before the real game does.
+                    if source.is_none() {
+                        if packet.data.is_none() {
+                            continue;
                         }
-                        let _ = app.emit("telemetry:packet", &packet);
-                        // Feed both engines. A poisoned lock just means a prior
-                        // panic elsewhere; skip the frame rather than propagate.
-                        if let Ok(mut t) = tuner.lock() {
-                            t.ingest(&packet);
-                            // Persist only when this frame actually learned
-                            // something (revision-gated; usually a no-op).
-                            profile.save_if_changed(&t);
-                        }
-                        if let Ok(mut r) = race.lock() {
-                            r.ingest(&packet, now_ms());
-                        }
+                        source = Some(host);
+                    }
+                    // Minimal heartbeat only — not the whole packet (P2.5).
+                    let _ = app.emit(
+                        "telemetry:packet",
+                        &Heartbeat {
+                            id: packet.id,
+                            format: packet.header.packet_format,
+                            session_time: packet.header.session_time,
+                        },
+                    );
+                    // Feed both engines. A poisoned lock just means a prior
+                    // panic elsewhere; skip the frame rather than propagate.
+                    if let Ok(mut t) = tuner.lock() {
+                        t.ingest(&packet);
+                        // Persist only when this frame actually learned
+                        // something (revision-gated; usually a no-op).
+                        profile.save_if_changed(&t);
+                    }
+                    if let Ok(mut r) = race.lock() {
+                        r.ingest(&packet, now_ms());
                     }
                 }
                 // Read timeout: idle tick, loop back to re-check the stop flag.
@@ -136,6 +177,7 @@ fn spawn_listener(
     Ok(Listener {
         port,
         stop,
+        reset,
         handle: Some(handle),
     })
 }
@@ -173,6 +215,18 @@ pub fn start_telemetry(
 #[tauri::command]
 pub fn stop_telemetry(state: tauri::State<'_, TelemetryState>) -> Result<(), String> {
     *state.0.lock().map_err(|e| e.to_string())? = None;
+    Ok(())
+}
+
+/// Re-open UDP source selection: the listener drops its pinned host and locks onto
+/// the next host to send a complete valid packet. Lets the operator recover if a
+/// stray sender claimed the feed, or move the feed to a different sending PC,
+/// without restarting the listener (P1.2). A no-op if no listener is running.
+#[tauri::command]
+pub fn reset_telemetry_source(state: tauri::State<'_, TelemetryState>) -> Result<(), String> {
+    if let Some(listener) = state.0.lock().map_err(|e| e.to_string())?.as_ref() {
+        listener.reset.store(true, Ordering::Relaxed);
+    }
     Ok(())
 }
 
@@ -299,16 +353,17 @@ pub fn log_manual_incident(
         .log_manual_incident(car_indices, code, label, note, now_ms()))
 }
 
-/// Steward: set or clear a manual display-name override for a car.
+/// Steward: set or clear a manual display-name override, keyed by car race number
+/// (stable across the weekend; car indices re-pack each qualifying segment).
 #[tauri::command]
 pub fn set_driver_name(
     race: tauri::State<'_, RaceStore>,
-    index: u8,
+    race_number: u8,
     name: String,
 ) -> Result<Option<(u8, Option<String>)>, String> {
     Ok(race
         .0
         .lock()
         .map_err(|e| e.to_string())?
-        .set_driver_name(index, &name, now_ms()))
+        .set_driver_name(race_number, &name, now_ms()))
 }

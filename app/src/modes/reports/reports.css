@@ -256,6 +256,21 @@
   text-transform: uppercase;
   line-height: 1.7;
 }
+/* The qualifying segment a driver was knocked out in (Q1 / Q2). Caution, not the
+   danger red of a DNF/DSQ — elimination is the expected order, not a failure. */
+.cls-out {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  background: var(--data-caution-tint);
+  color: var(--data-caution);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.7;
+}
 .cls-a-r.mono {
   font-size: 12.5px;
   color: var(--ink);

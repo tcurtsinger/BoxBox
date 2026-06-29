@@ -21,12 +21,14 @@ export function FlagDialog({
   open: boolean;
   onClose: () => void;
   roster: RosterCar[];
-  onFlag: (cars: RosterCar[], code: string, note: string) => void;
+  onFlag: (cars: RosterCar[], code: string, note: string) => Promise<boolean>;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [selected, setSelected] = useState<number[]>([]); // car indices
   const [code, setCode] = useState<string>("COLL");
   const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -35,6 +37,8 @@ export function FlagDialog({
       setSelected([]);
       setCode("COLL");
       setNote("");
+      setBusy(false);
+      setFailed(false);
       el.showModal();
     } else if (!open && el.open) {
       el.close();
@@ -47,11 +51,19 @@ export function FlagDialog({
     );
   }
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (selected.length === 0) return;
-    onFlag(roster.filter((c) => selected.includes(c.index)), code, note);
-    onClose();
+    setBusy(true);
+    const ok = await onFlag(roster.filter((c) => selected.includes(c.index)), code, note);
+    setBusy(false);
+    if (ok) {
+      onClose();
+    } else {
+      // Keep the dialog open with the cars + note intact so the steward can retry,
+      // rather than silently losing the manual incident (P1.5).
+      setFailed(true);
+    }
   }
 
   return (
@@ -117,11 +129,17 @@ export function FlagDialog({
           />
         </div>
 
+        {failed && (
+          <p className="flag-error" role="alert">
+            Couldn’t add the incident — please try again.
+          </p>
+        )}
+
         <footer className="dialog-foot">
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className="btn btn-primary" disabled={selected.length === 0}>
+          <button type="submit" className="btn btn-primary" disabled={selected.length === 0 || busy}>
             Add to feed
           </button>
         </footer>

@@ -9,6 +9,7 @@
  */
 import type { DriverRow, BestState, Compound, FlagKey } from "./mockGrid";
 import type { ClassRow } from "../reports/reportsData";
+import type { RawIncident } from "../incidents/liveIncidents";
 
 /** The per-car fields we read from the Rust `DriverState`. */
 export interface LiveDriver {
@@ -40,14 +41,37 @@ export interface LiveDriver {
 }
 
 /** The authoritative end-of-session result (Final Classification, packet 8). The
- *  fields the report reads; identity is joined from `drivers` by car index. */
+ *  fields the report reads; identity is joined from `drivers` by car index. All of
+ *  packet 8's official facts are carried so the Final report doesn't drop them (P2.1). */
 export interface FinalClassificationEntry {
   index: number;
   position: number;
   numPitStops: number;
   resultStatus: number;
+  resultReason: number;
+  points: number;
   bestLapTimeInMs: number;
   totalRaceTime: number;
+  penaltiesTime: number; // total time penalties applied, seconds
+  numPenalties: number;
+  numTyreStints: number;
+  tyreStintsVisual: number[];
+}
+
+/** One driver's final standing in a completed qualifying segment (Rust P1.3). */
+export interface QualiSegmentEntry {
+  index: number;
+  name: string;
+  nameOverride: string | null;
+  teamId: number;
+  raceNumber: number;
+  position: number;
+  bestLapMS: number;
+}
+
+export interface QualiSegment {
+  sessionType: number; // 5 = Q1, 6 = Q2, 7 = Q3 (sprint shootouts fold in)
+  standings: QualiSegmentEntry[];
 }
 
 export interface RaceSnapshot {
@@ -57,6 +81,8 @@ export interface RaceSnapshot {
   numActiveCars: number;
   drivers: LiveDriver[];
   finalClassification: { numCars: number; classification: FinalClassificationEntry[] } | null;
+  qualiSegments: QualiSegment[];
+  incidents: RawIncident[];
 }
 
 // EA F1 constructor ids. Display-only; the livery colour carries the real
@@ -100,6 +126,12 @@ const COMPOUND_BY_VISUAL: Record<number, Compound> = { 16: "S", 17: "M", 18: "H"
 
 function compound(visual: number): Compound {
   return COMPOUND_BY_VISUAL[visual] ?? "M";
+}
+
+// A stint's visual compound as a letter, or "?" for an unknown id (unlike the live
+// `compound`, which defaults to M — a stint list must not invent a compound).
+function stintCompound(visual: number): string {
+  return COMPOUND_BY_VISUAL[visual] ?? "?";
 }
 
 // vehicleFIAFlags: -1 unknown, 0 none, 1 green, 2 blue, 3 yellow, 4 red.
@@ -162,6 +194,10 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
       // Private telemetry arrives zeroed for spectators; flag it so the tower
       // shows ERS/fuel as unavailable instead of a misleading 0.
       restricted: !d.telemetryPublic,
+      // The driver hid their online name and there's no steward override, so the
+      // shown name is the game's redaction — surface a lock rather than passing it
+      // off as their real name (P2.6).
+      namePrivate: !d.showOnlineNames && d.nameOverride == null,
     };
   });
 }
@@ -222,8 +258,96 @@ export function toFinalClassification(snap: RaceSnapshot): ClassRow[] | null {
             ? null
             : c.totalRaceTime - winnerTime,
         pits: c.numPitStops,
-        penalised: false,
+        // Official penalty straight from packet 8 (time or count), independent of the
+        // steward's own decisions, which markPenalties ORs in on top (P2.1).
+        penalised: c.penaltiesTime > 0 || c.numPenalties > 0,
         status: RESULT_STATUS[c.resultStatus] ?? null,
+        points: c.points,
+        penaltyTimeSec: c.penaltiesTime,
+        numPenalties: c.numPenalties,
+        tyreStints: c.tyreStintsVisual.slice(0, c.numTyreStints).map(stintCompound),
+        resultReason: c.resultReason,
       };
     });
+}
+
+const QUALI_SEGMENT_LABEL: Record<number, string> = { 5: "Q1", 6: "Q2", 7: "Q3" };
+
+/**
+ * The full qualifying classification, stacked across segments so knocked-out
+ * drivers don't vanish (P1.3): the latest segment's field on top (Q3 finishers,
+ * or the live segment), then each earlier segment's knockouts (drivers in it but
+ * absent from the next), each in their segment-final order. Returns null outside
+ * qualifying or before any segment exists. The `status` carries the segment a
+ * driver was eliminated in (e.g. "Q1"); null for those who reached the top group.
+ */
+export function toQualifyingClassification(snap: RaceSnapshot): ClassRow[] | null {
+  // Only meaningful while qualifying is the live session; once the race starts the
+  // report shows the race result, even though the segments stay available (P1.3).
+  if (snap.sessionCategory !== "qualifying") return null;
+  // Each group is one segment's standings, oldest first; the live grid is the
+  // current (newest) segment when qualifying is in progress.
+  const groups: { type: number | null; standings: QualiSegmentEntry[] }[] = snap.qualiSegments.map(
+    (s) => ({ type: s.sessionType, standings: s.standings }),
+  );
+  if (snap.drivers.length > 0) {
+    groups.push({
+      type: null, // the live segment is the top group; its label isn't needed
+      standings: snap.drivers.map((d) => ({
+        index: d.index,
+        name: d.name,
+        nameOverride: d.nameOverride,
+        teamId: d.teamId,
+        raceNumber: d.raceNumber,
+        position: d.position,
+        bestLapMS: d.bestLapMS,
+      })),
+    });
+  }
+  if (groups.length === 0) return null;
+
+  const rowOf = (e: QualiSegmentEntry, status: string | null): ClassRow => ({
+    pos: 0, // assigned after stacking
+    no: e.raceNumber,
+    name: e.nameOverride ?? e.name,
+    teamName: teamName(e.teamId),
+    teamColor: "oklch(0.62 0.02 250)", // quali segments don't carry livery; neutral
+    bestMs: e.bestLapMS,
+    gapSec: null,
+    pits: 0,
+    penalised: false,
+    status,
+    points: 0,
+    penaltyTimeSec: 0,
+    numPenalties: 0,
+    tyreStints: [],
+    resultReason: null,
+  });
+
+  // The newest group (Q3 / the live segment) are the top finishers (no elimination
+  // badge). Then walk older segments, appending each one's knockouts.
+  //
+  // Match cars across segments by RACE NUMBER, not car index: F1 re-packs the
+  // per-car array indices into 0..N-1 each qualifying segment (confirmed on a real
+  // capture — the same driver is a different index in Q2 vs Q3), so the index is not
+  // a stable identity across segments; the car number is. P1.3.
+  const rows: ClassRow[] = [];
+  let advancing = new Set<number>();
+  for (let i = groups.length - 1; i >= 0; i--) {
+    const seg = groups[i];
+    const newest = i === groups.length - 1;
+    const members = newest
+      ? seg.standings
+      : seg.standings.filter((e) => !advancing.has(e.raceNumber));
+    const label = newest ? null : (seg.type != null ? QUALI_SEGMENT_LABEL[seg.type] ?? null : null);
+    for (const e of members) rows.push(rowOf(e, label));
+    advancing = new Set(seg.standings.map((e) => e.raceNumber));
+  }
+  rows.forEach((r, i) => (r.pos = i + 1));
+  // Gap is to pole (the fastest lap across all segments); null for pole and no-time.
+  const poleMs = rows.reduce((m, r) => (r.bestMs > 0 && (m === 0 || r.bestMs < m) ? r.bestMs : m), 0);
+  for (const r of rows) {
+    r.gapSec = r.bestMs > 0 && poleMs > 0 && r.bestMs !== poleMs ? (r.bestMs - poleMs) / 1000 : null;
+  }
+  return rows;
 }

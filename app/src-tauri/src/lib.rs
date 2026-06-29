@@ -40,6 +40,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             telemetry::start_telemetry,
             telemetry::stop_telemetry,
+            telemetry::reset_telemetry_source,
             telemetry::tuner_snapshot,
             telemetry::set_balance_preference,
             telemetry::apply_feedback,
@@ -51,7 +52,7 @@ pub fn run() {
             telemetry::reopen_incident,
             telemetry::log_manual_incident,
             telemetry::set_driver_name,
-            export::write_text_file
+            export::export_report
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

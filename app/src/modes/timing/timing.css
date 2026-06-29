@@ -235,6 +235,13 @@
   color: var(--faint);
   font-size: 11px;
 }
+/* Lock beside a driver who hid their online name (P2.6). */
+.tt-private {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--faint);
+}
 /* Tinted-outline pills: hue text + faint hue fill + hue border. Reads cleanly
    on the dark surface and keeps text contrast well above 4.5:1. */
 .chip {

@@ -1,0 +1,14 @@
+[package]
+name = "quali-probe"
+version = "0.1.0"
+edition = "2021"
+description = "One-off UDP probe to learn how F1 25 represents a qualifying session (Q1/Q2/Q3) over the wire, so the Race Control report can preserve eliminated cars (BoxBox audit P1.4)."
+
+# No dependencies — std only, so it builds in seconds and pulls in nothing.
+
+[[bin]]
+name = "quali-probe"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 2

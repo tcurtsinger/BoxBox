@@ -60,7 +60,12 @@ export function TunerConsole() {
 
   const onPref = (v: number) => {
     setPref(v);
-    if (!sample) void setBalancePreference(v);
+    if (sample) return;
+    // Reflect the value the engine actually applied (it clamps to -1..+1) rather
+    // than leaving the optimistic local value, mirroring the feedback path (P2.7).
+    void setBalancePreference(v).then((p) => {
+      if (p != null) setPref(p > 0.001 ? 1 : p < -0.001 ? -1 : 0);
+    });
   };
   const onFeedback = (thumb: number) => {
     if (sample) return;

@@ -43,8 +43,18 @@ export function IncidentsFeed() {
   );
 }
 
-function FeedItem({ inc, onSend }: { inc: UIIncident; onSend: () => void }) {
+function FeedItem({ inc, onSend }: { inc: UIIncident; onSend: () => Promise<boolean> }) {
   const { selectedDriver, setSelectedDriver } = useShell();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  // Await the flag and surface a failure inline, so a rejected command doesn't
+  // leave the steward believing the incident went to review (P1.5).
+  const send = async () => {
+    setBusy(true);
+    const ok = await onSend();
+    setBusy(false);
+    setFailed(!ok);
+  };
   const decided = isDecided(inc.status);
   const penalty = inc.status === "approved";
   const decision = inc.outcome || inc.note;
@@ -59,7 +69,12 @@ function FeedItem({ inc, onSend }: { inc: UIIncident; onSend: () => void }) {
           <span className="feed-type">{inc.label}</span>
           {inc.source === "manual" && <span className="feed-flagged">Manual</span>}
           {inc.status === "logged" && (
-            <button type="button" className="feed-send" onClick={onSend}>
+            <button
+              type="button"
+              className="feed-send"
+              onClick={() => void send()}
+              disabled={busy}
+            >
               Send to review
             </button>
           )}
@@ -88,6 +103,11 @@ function FeedItem({ inc, onSend }: { inc: UIIncident; onSend: () => void }) {
         </div>
         {inc.detail && <p className="feed-detail">{inc.detail}</p>}
         {decided && decision && <p className="feed-note">Note: {decision}</p>}
+        {failed && (
+          <p className="feed-error" role="alert">
+            Couldn’t send to review — please try again.
+          </p>
+        )}
       </div>
     </article>
   );

@@ -198,6 +198,18 @@
   line-height: 1.45;
   color: var(--faint);
 }
+/* A failed steward action (flag send / manual flag) surfaces inline, not silent. */
+.feed-error {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--data-danger);
+}
+.flag-error {
+  margin: 0 0 var(--space-md);
+  font-size: 12.5px;
+  color: var(--data-danger);
+}
 
 /* ---- Flag dialog specifics (extends shell.css .dialog) ------------------ */
 .dialog-wide {

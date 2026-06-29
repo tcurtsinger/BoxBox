@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useShell } from "../../shell/shell-context";
 import { useSharedRaceState } from "../timing/RaceStateContext";
 import { buildDriverDetail } from "./driverDetail";
-import { CloseIcon } from "../../shell/icons";
+import { CloseIcon, LockIcon } from "../../shell/icons";
 import "./driver.css";
 
 /** Right sidebar with the selected driver's telemetry. Renders nothing when no
@@ -26,9 +26,22 @@ export function DriverPanel() {
           <span className="dp-pos-no mono">P{row.pos}</span>
         </span>
         <div className="dp-id">
-          <h2 className="dp-name">{row.name}</h2>
+          <h2 className="dp-name">
+            {row.name}
+            {row.namePrivate && (
+              <span
+                className="dp-private"
+                role="img"
+                aria-label="Name hidden by driver"
+                title="Name hidden by driver"
+              >
+                <LockIcon size={13} />
+              </span>
+            )}
+          </h2>
           <p className="dp-meta">
             {row.teamName} · <span className="mono">#{row.no}</span>
+            {row.restricted && <span className="dp-restricted"> · Telemetry restricted</span>}
           </p>
         </div>
         <button

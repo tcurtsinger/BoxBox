@@ -85,8 +85,11 @@ export function buildDriverDetail(row: DriverRow): DriverDetail {
     { label: "Gap to leader", value: row.pos === 1 ? "LEADER" : fmtSec(row.gapSec ?? 0) },
     { label: "Pit stops", value: String(row.pits) },
     { label: "Tyre age", value: `${row.age} laps` },
-    { label: "Fuel", value: `${fmtFuel(row.fuel)} lap` },
-    { label: "ERS charge", value: `${Math.round(row.batt)}%` },
+    // Fuel + ERS are the telemetry-restricted fields: when the driver keeps their
+    // telemetry private they arrive zeroed, so show "Restricted" rather than a
+    // misleading 0 (P2.6).
+    { label: "Fuel", value: row.restricted ? "Restricted" : `${fmtFuel(row.fuel)} lap` },
+    { label: "ERS charge", value: row.restricted ? "Restricted" : `${Math.round(row.batt)}%` },
   ];
 
   return { stats, corners, damage, laps };
