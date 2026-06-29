@@ -3,7 +3,7 @@ import { useShell, type RaceSection } from "../shell/shell-context";
 import { SectionRail } from "../shell/SectionRail";
 import { NoFeed } from "../shell/NoFeed";
 import { ModePlaceholder } from "../shell/ModePlaceholder";
-import { ReconnectingBanner } from "../shell/ReconnectingBanner";
+import { StandbyBanner } from "../shell/StandbyBanner";
 import { TimingSection } from "./timing/TimingSection";
 import { ReviewQueue } from "./review/ReviewQueue";
 import { IncidentsFeed } from "./incidents/IncidentsFeed";
@@ -52,9 +52,9 @@ const SECTION_META: Record<
 /** Race Control mode: section rail + content area (density tuned tighter). */
 export function RaceControlView() {
   const { feed, raceSection, setFeed } = useShell();
-  // A brief stall (reconnecting) keeps the last live surface up under a banner; we
+  // A paused feed (standby) keeps the last live surface up under a banner; we
   // only fall back to the no-feed setup screen once the feed is truly gone (P2.1).
-  const hasFeed = feed.state === "live" || feed.state === "reconnecting";
+  const hasFeed = feed.state === "live" || feed.state === "standby";
   const meta = SECTION_META[raceSection];
   const built = BUILT[raceSection];
 
@@ -63,7 +63,7 @@ export function RaceControlView() {
       <div className="view-rc">
         <SectionRail />
         <div className="rc-content">
-        {feed.state === "reconnecting" && <ReconnectingBanner />}
+        {feed.state === "standby" && <StandbyBanner />}
         {hasFeed && built ? (
           built()
         ) : (

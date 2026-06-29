@@ -1,7 +1,7 @@
 //! The telemetry backend: a UDP listener that receives the game's F1 packets,
 //! decodes them (`packets::parse_packet`), feeds the Tuner + Race Control engines,
 //! and emits a minimal `telemetry:packet` heartbeat to the frontend (id + format +
-//! session time) so the UI can drive the live/reconnecting status. The full state
+//! session time) so the UI can drive the live/standby status. The full state
 //! reaches the UI via the `tuner_snapshot` / `race_snapshot` commands, so the whole
 //! parsed packet is deliberately NOT pushed over IPC every frame (P2.5).
 

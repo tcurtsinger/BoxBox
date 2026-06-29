@@ -77,7 +77,11 @@
   font-weight: 600;
   color: var(--muted);
 }
-.feed-dot {
+/* Scoped to the incident row so it doesn't collide with the titlebar feed dot
+   (.feed .feed-dot), which is centred against a single line of uppercase text.
+   Here the row is a grid aligned to the top, so the dot is nudged down to the
+   first text line. */
+.feed-item .feed-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;

@@ -3,7 +3,7 @@ import { useShell, type FeedState } from "./shell-context";
 const LABEL: Record<FeedState, string> = {
   "no-feed": "No feed",
   connecting: "Connecting",
-  reconnecting: "Reconnecting",
+  standby: "Standby",
   live: "Live",
 };
 

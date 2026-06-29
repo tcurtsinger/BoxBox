@@ -19,6 +19,7 @@ textarea {
 /* Titlebar (also the frameless window's drag chrome)                        */
 /* ======================================================================== */
 .titlebar {
+  position: relative;
   display: flex;
   align-items: stretch;
   height: 52px;
@@ -31,6 +32,12 @@ textarea {
   display: flex;
   align-items: stretch;
   gap: var(--space-lg);
+}
+/* Groups the mode tabs and the Settings tab so they abut with the same
+   inter-tab spacing, rather than inheriting the wider .tb-left gap. */
+.tb-nav {
+  display: flex;
+  align-items: stretch;
 }
 .brand-mark {
   display: flex;
@@ -91,22 +98,33 @@ textarea {
 
 /* ---- Feed status -------------------------------------------------------- */
 .feed {
+  /* Dead-centre of the whole bar, independent of the side contents.
+     Non-interactive, so let drags pass through to the titlebar beneath. */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
   display: inline-flex;
-  align-self: center;
   align-items: center;
   gap: var(--space-sm);
-  margin-right: var(--space-md);
   font-size: var(--text-label);
   font-weight: 600;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   white-space: nowrap;
 }
-.feed-dot {
+/* Scoped to the titlebar status component so the incident-row dot
+   (.feed-item .feed-dot) can't reach it. */
+.feed .feed-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex: none;
+  /* Optical centring: the uppercase labels have no descenders, so their visual
+     centre sits above the line-box centre. Nudge the dot up to match. */
+  position: relative;
+  top: -1px;
 }
 .feed-no-feed {
   color: var(--faint);
@@ -115,11 +133,11 @@ textarea {
   background: var(--faint);
 }
 .feed-connecting,
-.feed-reconnecting {
+.feed-standby {
   color: var(--data-caution);
 }
 .feed-connecting .feed-dot,
-.feed-reconnecting .feed-dot {
+.feed-standby .feed-dot {
   background: var(--data-caution);
   animation: feed-blink 1.2s var(--ease-out) infinite;
 }
@@ -184,13 +202,6 @@ textarea {
 .iconbtn:hover {
   background: var(--surface-raised);
   color: var(--ink);
-}
-.tb-divider {
-  align-self: center;
-  width: 1px;
-  height: 20px;
-  margin: 0 var(--space-sm) 0 var(--space-md);
-  background: var(--border);
 }
 .wincontrols {
   display: flex;
@@ -303,8 +314,8 @@ textarea {
   overflow: hidden;
 }
 
-/* Reconnecting banner: floats below the 52px title bar so the stale live
-   surfaces stay put during a brief feed stall (P2.1). */
+/* Standby banner: floats below the 52px title bar so the stale live
+   surfaces stay put while the feed is paused (P2.1). */
 .feed-banner {
   position: fixed;
   top: 64px;

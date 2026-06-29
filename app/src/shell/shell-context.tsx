@@ -10,7 +10,7 @@ import { SEED_INCIDENTS } from "../modes/incidents/sampleIncidents";
 
 export type Mode = "tuner" | "race-control";
 
-export type FeedState = "no-feed" | "connecting" | "reconnecting" | "live";
+export type FeedState = "no-feed" | "connecting" | "standby" | "live";
 
 export interface Feed {
   state: FeedState;

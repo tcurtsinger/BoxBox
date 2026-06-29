@@ -1,16 +1,16 @@
 import { useShell } from "../shell/shell-context";
 import { NoFeed } from "../shell/NoFeed";
-import { ReconnectingBanner } from "../shell/ReconnectingBanner";
+import { StandbyBanner } from "../shell/StandbyBanner";
 import { TunerConsole } from "./tuner/TunerConsole";
 
 /** Tuner mode: a single glanceable column of setup advice. */
 export function TunerView() {
   const { feed, setFeed } = useShell();
-  // Keep the last advice up during a brief stall, under a banner (P2.1).
-  if (feed.state === "live" || feed.state === "reconnecting") {
+  // Keep the last advice up while the feed is paused, under a banner (P2.1).
+  if (feed.state === "live" || feed.state === "standby") {
     return (
       <>
-        {feed.state === "reconnecting" && <ReconnectingBanner />}
+        {feed.state === "standby" && <StandbyBanner />}
         <TunerConsole />
       </>
     );
