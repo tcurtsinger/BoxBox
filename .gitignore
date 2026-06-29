@@ -1,5 +1,4 @@
-# Root-level ignores for the BoxBox monorepo.
-# Each product (Race Control/, Tuner/) also carries its own .gitignore.
+# Root-level ignores for the BoxBox app.
 
 # Dependencies
 node_modules/
@@ -7,6 +6,7 @@ node_modules/
 # Build output
 dist/
 build/
+target/
 *.tsbuildinfo
 
 # Logs and probe scratch
@@ -15,6 +15,10 @@ build/
 
 # Per-driver Tuner profiles (runtime data, not source)
 profiles/
+
+# Tooling caches / local agent config
+.claude/
+.impeccable/
 
 # Environment / secrets
 .env

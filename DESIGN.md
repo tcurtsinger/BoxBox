@@ -1,4 +1,4 @@
-<!-- SEED: composed from the brief before the Tauri app exists. Re-run /impeccable document in scan mode once there's rendered code, to capture the real tokens and components and generate/refresh the sidecar. Tokens below are normative for the build. -->
+<!-- Design system for the BoxBox app (app/). The tokens below are normative for the build; app/src implements them. Re-run /impeccable document in scan mode to refresh from the rendered UI. -->
 ---
 name: BoxBox
 description: A dark, instrument-grade telemetry app for F1 sim-racing leagues — one shell, two modes (Tuner, Race Control).
