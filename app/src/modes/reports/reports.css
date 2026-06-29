@@ -33,6 +33,11 @@
   font-size: 13px;
   color: var(--muted);
 }
+.report-actions {
+  display: flex;
+  gap: var(--space-sm);
+  flex: none;
+}
 
 /* ---- Summary fact strip ------------------------------------------------- */
 .report-summary {

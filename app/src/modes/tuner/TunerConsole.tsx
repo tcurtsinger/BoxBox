@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Segmented } from "../../shell/Segmented";
 import { useShell } from "../../shell/shell-context";
 import { useTunerSnapshot, setBalancePreference, applyFeedback } from "./useTunerSnapshot";
@@ -42,6 +42,21 @@ export function TunerConsole() {
   const sample = feed.sample === true;
   const snap = useTunerSnapshot(sample);
   const [pref, setPref] = useState(0);
+  const seeded = useRef(false);
+
+  // Reflect the engine's restored/learned balance preference in the coarse
+  // control once, when the first live snapshot arrives (the continuous value
+  // maps to the nearest bucket by sign). Sample mode and later clicks/thumbs are
+  // left to drive it from there.
+  useEffect(() => {
+    seeded.current = false;
+  }, [sample]);
+  useEffect(() => {
+    if (sample || !snap || seeded.current) return;
+    const p = snap.balancePreference;
+    setPref(p > 0.001 ? 1 : p < -0.001 ? -1 : 0);
+    seeded.current = true;
+  }, [sample, snap]);
 
   const onPref = (v: number) => {
     setPref(v);

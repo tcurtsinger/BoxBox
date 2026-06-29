@@ -6,6 +6,7 @@
 pub mod diagnosis;
 pub mod estimator;
 pub mod labels;
+pub mod profile;
 pub mod runstats;
 pub mod segmentation;
 pub mod state;
@@ -14,4 +15,5 @@ pub mod trim;
 pub mod wear;
 pub mod wear_estimator;
 
+pub use profile::TunerProfile;
 pub use state::{Snapshot, TunerState};

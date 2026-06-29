@@ -5,13 +5,13 @@
 
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::suggest::Confidence;
 
 /// The wear-A/B levers (a subset of WearParam): the toe and ARB suggestions whose
 /// "lower = less wear" prior this loop validates. Camber is excluded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum WearLever {
     FrontToe,
@@ -94,5 +94,43 @@ impl WearEstimator {
 
     pub fn as_map(&self) -> HashMap<WearLever, LearnedWear> {
         self.levers.keys().map(|&k| (k, self.get(k))).collect()
+    }
+
+    /// The raw per-lever signed sensitivities, for persistence. Mean/confidence/
+    /// agreement are recomputed on restore, so the stored arrays are the single
+    /// source of truth (mirrors `wearEstimator.ts`).
+    pub fn serialize(&self) -> HashMap<WearLever, Vec<f64>> {
+        self.levers.iter().map(|(k, g)| (*k, g.sens.clone())).collect()
+    }
+
+    /// Replace the learned sensitivities from a persisted profile.
+    pub fn restore(&mut self, data: &HashMap<WearLever, Vec<f64>>) {
+        self.levers.clear();
+        for (k, sens) in data {
+            if !sens.is_empty() {
+                self.levers.insert(*k, WearState { sens: sens.clone() });
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serialize_restore_round_trip() {
+        let mut w = WearEstimator::default();
+        // Lowering front toe by 1 dropped the front axle rate 0.5%/lap (prior holds).
+        assert!(w.record(WearLever::FrontToe, 1.0, 2.0, 1.5));
+        let before = w.get(WearLever::FrontToe);
+        assert_eq!(before.observations, 1);
+
+        let mut restored = WearEstimator::default();
+        restored.restore(&w.serialize());
+        let after = restored.get(WearLever::FrontToe);
+        assert_eq!(after.observations, before.observations);
+        assert_eq!(after.agrees, before.agrees);
+        assert!((after.sensitivity.unwrap() - before.sensitivity.unwrap()).abs() < 1e-9);
     }
 }

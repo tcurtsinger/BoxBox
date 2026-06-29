@@ -12,6 +12,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 use crate::packets::parse_packet;
+use crate::persist::{ProfileState, ProfileStore};
 use crate::racecontrol::state::Incident;
 use crate::racecontrol::{SessionSnapshot, SessionState};
 use crate::tuner::{Snapshot, TunerState};
@@ -81,6 +82,7 @@ fn spawn_listener(
     port: u16,
     tuner: Arc<Mutex<TunerState>>,
     race: Arc<Mutex<SessionState>>,
+    profile: Arc<ProfileStore>,
 ) -> Result<Listener, String> {
     let socket =
         UdpSocket::bind(("0.0.0.0", port)).map_err(|e| format!("bind UDP {port}: {e}"))?;
@@ -101,6 +103,9 @@ fn spawn_listener(
                         // panic elsewhere; skip the frame rather than propagate.
                         if let Ok(mut t) = tuner.lock() {
                             t.ingest(&packet);
+                            // Persist only when this frame actually learned
+                            // something (revision-gated; usually a no-op).
+                            profile.save_if_changed(&t);
                         }
                         if let Ok(mut r) = race.lock() {
                             r.ingest(&packet, now_ms());
@@ -130,6 +135,7 @@ pub fn start_telemetry(
     state: tauri::State<'_, TelemetryState>,
     tuner: tauri::State<'_, TunerStore>,
     race: tauri::State<'_, RaceStore>,
+    profile: tauri::State<'_, ProfileState>,
     app: AppHandle,
     port: u16,
 ) -> Result<(), String> {
@@ -138,7 +144,7 @@ pub fn start_telemetry(
         return Ok(());
     }
     *slot = None; // drop -> stops & joins the old listener, freeing the port
-    *slot = Some(spawn_listener(app, port, tuner.0.clone(), race.0.clone())?);
+    *slot = Some(spawn_listener(app, port, tuner.0.clone(), race.0.clone(), profile.0.clone())?);
     Ok(())
 }
 
@@ -157,15 +163,29 @@ pub fn tuner_snapshot(tuner: tauri::State<'_, TunerStore>) -> Result<Snapshot, S
 
 /// Set the driver balance preference (-1 loose .. +1 stable). Returns the applied value.
 #[tauri::command]
-pub fn set_balance_preference(tuner: tauri::State<'_, TunerStore>, value: f64) -> Result<f64, String> {
-    Ok(tuner.0.lock().map_err(|e| e.to_string())?.set_balance_preference(value))
+pub fn set_balance_preference(
+    tuner: tauri::State<'_, TunerStore>,
+    profile: tauri::State<'_, ProfileState>,
+    value: f64,
+) -> Result<f64, String> {
+    let mut t = tuner.0.lock().map_err(|e| e.to_string())?;
+    let applied = t.set_balance_preference(value);
+    profile.0.save_if_changed(&t);
+    Ok(applied)
 }
 
 /// Apply thumbs feedback on the last setup change (>=0 up, <0 down). Returns the
 /// resulting balance preference.
 #[tauri::command]
-pub fn apply_feedback(tuner: tauri::State<'_, TunerStore>, thumb: f64) -> Result<f64, String> {
-    Ok(tuner.0.lock().map_err(|e| e.to_string())?.apply_feedback(thumb))
+pub fn apply_feedback(
+    tuner: tauri::State<'_, TunerStore>,
+    profile: tauri::State<'_, ProfileState>,
+    thumb: f64,
+) -> Result<f64, String> {
+    let mut t = tuner.0.lock().map_err(|e| e.to_string())?;
+    let pref = t.apply_feedback(thumb);
+    profile.0.save_if_changed(&t);
+    Ok(pref)
 }
 
 // --- Race Control --------------------------------------------------------------

@@ -243,6 +243,10 @@ pub struct TunerState {
     surface_temp: Option<TyreReading>,
     wear_estimator: WearEstimator,
     wear_pending: Option<WearPending>,
+
+    // Bumped whenever the persisted profile changes (balance preference or a newly
+    // recorded gain/wear observation), so the Tauri layer can save only on change.
+    profile_rev: u64,
 }
 
 impl TunerState {
@@ -258,8 +262,41 @@ impl TunerState {
 
     /// Set the driver balance preference, clamped to -1..+1. Returns the applied value.
     pub fn set_balance_preference(&mut self, p: f64) -> f64 {
-        self.balance_preference = if p.is_finite() { p.clamp(-1.0, 1.0) } else { 0.0 };
+        let v = if p.is_finite() { p.clamp(-1.0, 1.0) } else { 0.0 };
+        if v != self.balance_preference {
+            self.balance_preference = v;
+            self.profile_rev += 1;
+        }
         self.balance_preference
+    }
+
+    /// The persisted-profile revision: bumped on every change worth saving. The
+    /// Tauri layer compares it to the last-written value to save only on change.
+    pub fn profile_revision(&self) -> u64 {
+        self.profile_rev
+    }
+
+    /// The driver profile to persist (balance preference + the loops' raw learned
+    /// observations). Mirrors the old server's TunerProfile.
+    pub fn export_profile(&self) -> super::profile::TunerProfile {
+        super::profile::TunerProfile {
+            version: super::profile::PROFILE_VERSION,
+            balance_preference: self.balance_preference,
+            gains: self.estimator.serialize(),
+            wear_gains: self.wear_estimator.serialize(),
+        }
+    }
+
+    /// Restore a persisted profile at startup. Does NOT bump the revision: the
+    /// loaded state is the on-disk baseline, not an unsaved change.
+    pub fn import_profile(&mut self, p: &super::profile::TunerProfile) {
+        self.balance_preference = if p.balance_preference.is_finite() {
+            p.balance_preference.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        self.estimator.restore(&p.gains);
+        self.wear_estimator.restore(&p.wear_gains);
     }
 
     /// Apply thumbs feedback on the last change: a thumbs-up nudges the preference
@@ -502,7 +539,9 @@ impl TunerState {
         if samples < MIN_WINDOW_SAMPLES {
             return;
         }
-        self.estimator.record(p.lever, p.delta_clicks, p.channel_before, after);
+        if self.estimator.record(p.lever, p.delta_clicks, p.channel_before, after) {
+            self.profile_rev += 1;
+        }
         self.pending = None;
     }
 
@@ -597,7 +636,9 @@ impl TunerState {
         }
         let Some(rate) = wear_rate(baseline, wear, self.wear_laps) else { return };
         let after = if wp.front { (rate.fl + rate.fr) / 2.0 } else { (rate.rl + rate.rr) / 2.0 };
-        self.wear_estimator.record(wp.lever, wp.delta_clicks, wp.rate_before, after);
+        if self.wear_estimator.record(wp.lever, wp.delta_clicks, wp.rate_before, after) {
+            self.profile_rev += 1;
+        }
         self.wear_pending = None;
     }
 

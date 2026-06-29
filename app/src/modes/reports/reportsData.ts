@@ -105,19 +105,27 @@ function csv(value: string | number): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** Build the report CSV and trigger a download. (Browser path; a Tauri
- *  save-file dialog replaces the anchor when the backend lands.) */
-export function exportReportCsv(
-  header: ReportHeader,
-  classification: ClassRow[],
-  decisions: Decision[],
-): void {
+export interface ReportData {
+  header: ReportHeader;
+  summary: ReportSummary;
+  classification: ClassRow[];
+  decisions: Decision[];
+}
+
+export type ReportFormat = "csv" | "json";
+
+/** Only the real Tauri app can open a native save dialog + write to disk. */
+const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/** The report as CSV: a session header line, the classification table, then the
+ *  stewarding decisions. */
+export function buildReportCsv(r: ReportData): string {
   const lines: string[] = [];
-  lines.push(["BoxBox Race Report", header.name, header.track, `${header.totalLaps} laps`].map(csv).join(","));
+  lines.push(["BoxBox Race Report", r.header.name, r.header.track, `${r.header.totalLaps} laps`].map(csv).join(","));
   lines.push("");
   lines.push("Classification");
   lines.push("Pos,No,Driver,Team,Best Lap,Gap,Pits,Penalty");
-  classification.forEach((c) =>
+  r.classification.forEach((c) =>
     lines.push(
       [c.pos, c.no, csv(c.name), csv(c.teamName), fmtLap(c.bestMs), gapText(c.gapSec), c.pits, c.penalised ? "Y" : ""].join(","),
     ),
@@ -125,17 +133,75 @@ export function exportReportCsv(
   lines.push("");
   lines.push("Stewarding Decisions");
   lines.push("Lap,Type,Cars,Verdict,Note");
-  decisions.forEach((d) =>
+  r.decisions.forEach((d) =>
     lines.push(
       [d.lap ?? "", csv(d.label), csv(d.cars.join("; ")), d.verdict === "penalty" ? "Penalty" : "No action", csv(d.note)].join(","),
     ),
   );
+  return lines.join("\n");
+}
 
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+/** The report as structured JSON — the same facts, machine-readable. */
+export function buildReportJson(r: ReportData): string {
+  return JSON.stringify(
+    {
+      session: { name: r.header.name, track: r.header.track, totalLaps: r.header.totalLaps },
+      summary: {
+        winner: r.summary.winner,
+        fastestLap: { driver: r.summary.fastestLapName, time: r.summary.fastestLapTime },
+        incidents: r.summary.incidentCount,
+        penalties: r.summary.penaltyCount,
+      },
+      classification: r.classification.map((c) => ({
+        pos: c.pos,
+        no: c.no,
+        driver: c.name,
+        team: c.teamName,
+        bestLap: fmtLap(c.bestMs),
+        gapSec: c.gapSec,
+        pits: c.pits,
+        penalised: c.penalised,
+      })),
+      decisions: r.decisions.map((d) => ({
+        lap: d.lap,
+        type: d.label,
+        cars: d.cars,
+        verdict: d.verdict,
+        note: d.note,
+      })),
+    },
+    null,
+    2,
+  );
+}
+
+/** Export the report as CSV or JSON. In the Tauri app a native save dialog picks
+ *  the destination and a Rust command writes it; in the browser preview it falls
+ *  back to an anchor download. A cancelled dialog is a no-op. */
+export async function exportReport(format: ReportFormat, r: ReportData): Promise<void> {
+  const content = format === "json" ? buildReportJson(r) : buildReportCsv(r);
+  const slug = r.header.track.toLowerCase().replace(/\s+/g, "-") || "session";
+  const filename = `boxbox-report-${slug}.${format}`;
+
+  if (IN_TAURI) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const path = await save({
+      defaultPath: filename,
+      filters: [{ name: format.toUpperCase(), extensions: [format] }],
+    });
+    if (!path) return; // cancelled
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("write_text_file", { path, contents: content });
+    return;
+  }
+
+  // Browser fallback (preview / web): anchor download.
+  const mime = format === "json" ? "application/json" : "text/csv;charset=utf-8";
+  const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `boxbox-report-${header.track.toLowerCase().replace(/\s+/g, "-")}.csv`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();

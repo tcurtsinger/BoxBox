@@ -134,4 +134,45 @@ impl GainEstimator {
     pub fn as_map(&self) -> HashMap<SuggestKey, LearnedGain> {
         self.gains.keys().map(|&k| (k, self.get(k))).collect()
     }
+
+    /// The raw per-lever observation magnitudes, for persistence. The mean and
+    /// confidence are recomputed on restore, so the stored arrays are the single
+    /// source of truth (mirrors `estimator.ts`).
+    pub fn serialize(&self) -> HashMap<SuggestKey, Vec<f64>> {
+        self.gains.iter().map(|(k, g)| (*k, g.mags.clone())).collect()
+    }
+
+    /// Replace the learned gains from a persisted profile (empty arrays dropped).
+    pub fn restore(&mut self, data: &HashMap<SuggestKey, Vec<f64>>) {
+        self.gains.clear();
+        for (k, mags) in data {
+            if !mags.is_empty() {
+                self.gains.insert(*k, GainState { mags: mags.clone() });
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serialize_restore_round_trip() {
+        let mut e = GainEstimator::default();
+        // Two accepted front-wing measurements (sign -1); the revert reproduces the
+        // same sensitivity, so confidence reaches "measured".
+        assert!(e.record(SuggestKey::FrontWing, 2.0, 0.03, 0.01));
+        assert!(e.record(SuggestKey::FrontWing, -2.0, 0.01, 0.03));
+        let before = e.get(SuggestKey::FrontWing);
+        assert_eq!(before.observations, 2);
+        assert_eq!(before.confidence, Confidence::Measured);
+
+        let mut restored = GainEstimator::default();
+        restored.restore(&e.serialize());
+        let after = restored.get(SuggestKey::FrontWing);
+        assert_eq!(after.observations, before.observations);
+        assert_eq!(after.confidence, before.confidence);
+        assert!((after.magnitude.unwrap() - before.magnitude.unwrap()).abs() < 1e-9);
+    }
 }

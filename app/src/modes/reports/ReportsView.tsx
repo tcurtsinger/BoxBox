@@ -6,8 +6,9 @@ import {
   buildClassification,
   buildSummary,
   buildDecisions,
-  exportReportCsv,
+  exportReport,
   gapText,
+  type ReportData,
   type ReportHeader,
 } from "./reportsData";
 import "./reports.css";
@@ -46,6 +47,7 @@ export function ReportsView() {
         track: session.track,
         totalLaps: session.totalLaps,
       };
+  const report: ReportData = { header, summary, classification, decisions };
 
   return (
     <div className="report">
@@ -57,13 +59,22 @@ export function ReportsView() {
               {header.name} · {header.track} · {header.totalLaps || "—"} laps
             </p>
           </div>
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            onClick={() => exportReportCsv(header, classification, decisions)}
-          >
-            Export CSV
-          </button>
+          <div className="report-actions">
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => void exportReport("csv", report)}
+            >
+              Export CSV
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => void exportReport("json", report)}
+            >
+              Export JSON
+            </button>
+          </div>
         </header>
 
         <dl className="report-summary">
