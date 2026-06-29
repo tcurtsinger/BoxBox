@@ -2,6 +2,7 @@
   "name": "boxbox-app",
   "private": true,
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "type": "module",
   "description": "BoxBox unified desktop app (Tuner + Race Control) — Tauri 2 + React.",
   "scripts": {

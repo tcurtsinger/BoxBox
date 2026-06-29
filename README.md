@@ -16,7 +16,17 @@ the F1 packets, and runs both domain engines — Race Control's multi-car observ
 state and the Tuner's single-car learning loop. The React frontend
 ([`app/src/`](app/src/)) renders both modes from one shell.
 
-## Run it
+> **Status:** early test build. Expect rough edges.
+
+## Download
+
+Grab the latest Windows installer from the
+[**Releases**](https://github.com/tcurtsinger/BoxBox/releases) page — download
+the `…_x64-setup.exe`, run it, and launch BoxBox from the Start Menu. Windows
+SmartScreen may warn that the app is unsigned; choose **More info → Run anyway**.
+Run BoxBox on the same PC you play on so it can see the game's UDP feed.
+
+## Run it (from source)
 
 ```sh
 cd app
@@ -34,5 +44,8 @@ feed is detected automatically. Gates: `npm run typecheck` and `npm run build` i
   probe for inspecting how F1 emits a qualifying session over the wire.
 
 Design system in [`DESIGN.md`](DESIGN.md), product brief in [`PRODUCT.md`](PRODUCT.md).
-Working notes and project state live in the Obsidian vault at
-`Projects/Personal/BoxBox`.
+
+## License
+
+[Apache-2.0](LICENSE). BoxBox is an independent, unofficial tool and is not
+affiliated with or endorsed by Formula 1, the FIA, or EA / Codemasters.
