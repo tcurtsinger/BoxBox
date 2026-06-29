@@ -3,10 +3,12 @@ import { useShell, type RaceSection } from "../shell/shell-context";
 import { SectionRail } from "../shell/SectionRail";
 import { NoFeed } from "../shell/NoFeed";
 import { ModePlaceholder } from "../shell/ModePlaceholder";
+import { ReconnectingBanner } from "../shell/ReconnectingBanner";
 import { TimingSection } from "./timing/TimingSection";
 import { ReviewQueue } from "./review/ReviewQueue";
 import { IncidentsFeed } from "./incidents/IncidentsFeed";
 import { ReportsView } from "./reports/ReportsView";
+import { RaceStateProvider } from "./timing/RaceStateContext";
 
 // Sections with a real, built interface that fills the content area; the rest
 // show a placeholder when live and the shared no-feed state otherwise.
@@ -50,19 +52,23 @@ const SECTION_META: Record<
 /** Race Control mode: section rail + content area (density tuned tighter). */
 export function RaceControlView() {
   const { feed, raceSection, setFeed } = useShell();
-  const live = feed.state === "live";
+  // A brief stall (reconnecting) keeps the last live surface up under a banner; we
+  // only fall back to the no-feed setup screen once the feed is truly gone (P2.1).
+  const hasFeed = feed.state === "live" || feed.state === "reconnecting";
   const meta = SECTION_META[raceSection];
   const built = BUILT[raceSection];
 
   return (
-    <div className="view-rc">
-      <SectionRail />
-      <div className="rc-content">
-        {live && built ? (
+    <RaceStateProvider>
+      <div className="view-rc">
+        <SectionRail />
+        <div className="rc-content">
+        {feed.state === "reconnecting" && <ReconnectingBanner />}
+        {hasFeed && built ? (
           built()
         ) : (
           <div className="rc-center">
-            {live ? (
+            {hasFeed ? (
               <ModePlaceholder
                 kicker="Race Control"
                 title={meta.title}
@@ -87,7 +93,8 @@ export function RaceControlView() {
             )}
           </div>
         )}
+        </div>
       </div>
-    </div>
+    </RaceStateProvider>
   );
 }

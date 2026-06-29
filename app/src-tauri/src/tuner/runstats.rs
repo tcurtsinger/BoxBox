@@ -30,7 +30,12 @@ pub struct RunStats {
 }
 
 /// Lap-level stats from a completed lap's trace and the known corner windows.
-pub fn lap_stats(trace: &[TraceSample], corners: &[MappedCorner], lap_time_ms: u32, valid: bool) -> LapStats {
+pub fn lap_stats(
+    trace: &[TraceSample],
+    corners: &[MappedCorner],
+    lap_time_ms: u32,
+    valid: bool,
+) -> LapStats {
     let mut top = 0.0_f64;
     for s in trace {
         if s.speed > top {
@@ -55,7 +60,12 @@ pub fn lap_stats(trace: &[TraceSample], corners: &[MappedCorner], lap_time_ms: u
     } else {
         Some(apexes.iter().sum::<f64>() / apexes.len() as f64)
     };
-    LapStats { lap_time_ms, valid, top_speed: top, apex_speed }
+    LapStats {
+        lap_time_ms,
+        valid,
+        top_speed: top,
+        apex_speed,
+    }
 }
 
 pub fn new_run(front_wing: u8, rear_wing: u8) -> RunStats {

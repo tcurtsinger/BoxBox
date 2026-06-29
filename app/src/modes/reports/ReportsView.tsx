@@ -1,9 +1,10 @@
 import { useShell } from "../../shell/shell-context";
 import { fmtLap, SAMPLE_SESSION } from "../timing/mockGrid";
-import { useRaceState } from "../timing/useRaceState";
+import { useSharedRaceState } from "../timing/RaceStateContext";
 import { useIncidents } from "../incidents/useIncidents";
 import {
   buildClassification,
+  markPenalties,
   buildSummary,
   buildDecisions,
   exportReport,
@@ -23,10 +24,10 @@ const CATEGORY_LABEL: Record<string, string> = {
 export function ReportsView() {
   const { feed, setSelectedDriver, selectedDriver } = useShell();
   const sample = feed.sample === true;
-  const { grid, session } = useRaceState(sample);
+  const { grid, session, finalClassification } = useSharedRaceState();
   const { incidents } = useIncidents(sample);
 
-  if (grid.length === 0) {
+  if (grid.length === 0 && !finalClassification) {
     return (
       <div className="report">
         <div className="report-inner">
@@ -36,10 +37,16 @@ export function ReportsView() {
     );
   }
 
-  const classification = buildClassification(grid, incidents);
-  const summary = buildSummary(grid, incidents);
+  // Prefer the authoritative Final Classification (packet 8); fall back to the live
+  // grid projection and mark the report provisional until it arrives (P1.4).
+  const isFinal = sample || finalClassification != null;
+  const classification = markPenalties(finalClassification ?? buildClassification(grid), incidents);
+  const baseSummary = buildSummary(grid, incidents);
+  const winner = classification.find((c) => c.pos === 1)?.name ?? baseSummary.winner;
+  const summary = { ...baseSummary, winner };
   const decisions = buildDecisions(incidents);
-  const fastestMs = Math.min(...grid.map((d) => d.bestMs));
+  const timed = classification.map((c) => c.bestMs).filter((ms) => ms > 0);
+  const fastestMs = timed.length ? Math.min(...timed) : 0;
   const header: ReportHeader = sample
     ? { name: SAMPLE_SESSION.name, track: SAMPLE_SESSION.track, totalLaps: SAMPLE_SESSION.totalLaps }
     : {
@@ -47,14 +54,19 @@ export function ReportsView() {
         track: session.track,
         totalLaps: session.totalLaps,
       };
-  const report: ReportData = { header, summary, classification, decisions };
+  const report: ReportData = { header, summary, classification, decisions, final: isFinal };
 
   return (
     <div className="report">
       <div className="report-inner">
         <header className="report-head">
           <div>
-            <h2 className="report-title">Race report</h2>
+            <div className="report-title-row">
+              <h2 className="report-title">Race report</h2>
+              <span className={`report-status ${isFinal ? "is-final" : "is-provisional"}`}>
+                {isFinal ? "Final" : "Provisional"}
+              </span>
+            </div>
             <p className="report-session">
               {header.name} · {header.track} · {header.totalLaps || "—"} laps
             </p>
@@ -101,12 +113,20 @@ export function ReportsView() {
             {classification.map((c) => {
               const active = selectedDriver === c.no;
               return (
-                <button
-                  type="button"
+                <div
                   role="row"
                   key={c.no}
+                  tabIndex={0}
+                  aria-selected={active}
+                  aria-label={`Position ${c.pos}, car ${c.no}, ${c.name}`}
                   className={`cls-row${active ? " is-active" : ""}`}
                   onClick={() => setSelectedDriver(active ? null : c.no)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelectedDriver(active ? null : c.no);
+                    }
+                  }}
                 >
                   <span className="cls-c-pos mono" role="cell">{c.pos}</span>
                   <span className="cls-c-driver" role="cell">
@@ -115,13 +135,14 @@ export function ReportsView() {
                     <span className="cls-name">{c.name}</span>
                     <span className="cls-team-name">{c.teamName}</span>
                     {c.penalised && <span className="cls-pen">Pen</span>}
+                    {c.status && <span className="cls-status">{c.status}</span>}
                   </span>
-                  <span className={`cls-a-r mono${c.bestMs === fastestMs ? " cls-fl" : ""}`} role="cell">
+                  <span className={`cls-a-r mono${c.bestMs > 0 && c.bestMs === fastestMs ? " cls-fl" : ""}`} role="cell">
                     {fmtLap(c.bestMs)}
                   </span>
                   <span className="cls-a-r mono cls-gap" role="cell">{gapText(c.gapSec)}</span>
                   <span className="cls-a-r mono" role="cell">{c.pits}</span>
-                </button>
+                </div>
               );
             })}
           </div>

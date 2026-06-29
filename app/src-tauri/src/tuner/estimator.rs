@@ -101,7 +101,13 @@ pub struct GainEstimator {
 impl GainEstimator {
     /// Record one completed before/after measurement of a single lever. Returns
     /// true if accepted (moved the channel measurably, in the expected direction).
-    pub fn record(&mut self, lever: SuggestKey, delta_clicks: f64, channel_before: f64, channel_after: f64) -> bool {
+    pub fn record(
+        &mut self,
+        lever: SuggestKey,
+        delta_clicks: f64,
+        channel_before: f64,
+        channel_after: f64,
+    ) -> bool {
         if delta_clicks == 0.0 {
             return false;
         }
@@ -121,7 +127,11 @@ impl GainEstimator {
 
     pub fn get(&self, lever: SuggestKey) -> LearnedGain {
         match self.gains.get(&lever) {
-            None => LearnedGain { magnitude: None, observations: 0, confidence: Confidence::Prior },
+            None => LearnedGain {
+                magnitude: None,
+                observations: 0,
+                confidence: Confidence::Prior,
+            },
             Some(g) => LearnedGain {
                 magnitude: Some(mean(&g.mags)),
                 observations: g.mags.len() as u32,
@@ -139,7 +149,10 @@ impl GainEstimator {
     /// confidence are recomputed on restore, so the stored arrays are the single
     /// source of truth (mirrors `estimator.ts`).
     pub fn serialize(&self) -> HashMap<SuggestKey, Vec<f64>> {
-        self.gains.iter().map(|(k, g)| (*k, g.mags.clone())).collect()
+        self.gains
+            .iter()
+            .map(|(k, g)| (*k, g.mags.clone()))
+            .collect()
     }
 
     /// Replace the learned gains from a persisted profile (empty arrays dropped).

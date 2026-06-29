@@ -40,7 +40,8 @@ impl ProfileStore {
         if let Some(profile) = read_profile(&self.path) {
             state.import_profile(&profile);
         }
-        self.last_saved.store(state.profile_revision(), Ordering::Relaxed);
+        self.last_saved
+            .store(state.profile_revision(), Ordering::Relaxed);
     }
 
     /// Write the profile if the engine's learned state changed since the last
@@ -69,8 +70,7 @@ fn write_profile(path: &PathBuf, profile: &TunerProfile) -> std::io::Result<()> 
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let json = serde_json::to_vec_pretty(profile)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_vec_pretty(profile).map_err(std::io::Error::other)?;
     // Write to a sibling temp file then rename, so a crash mid-write can't corrupt
     // an existing profile (atomic replace on the same volume).
     let tmp = path.with_extension("json.tmp");

@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useShell } from "../../shell/shell-context";
-import { useRaceState } from "../timing/useRaceState";
+import { useSharedRaceState } from "../timing/RaceStateContext";
 import { buildDriverDetail } from "./driverDetail";
 import { CloseIcon } from "../../shell/icons";
 import "./driver.css";
@@ -8,8 +8,8 @@ import "./driver.css";
 /** Right sidebar with the selected driver's telemetry. Renders nothing when no
  *  driver is selected (the tower then has the full width). */
 export function DriverPanel() {
-  const { feed, selectedDriver, setSelectedDriver } = useShell();
-  const { grid } = useRaceState(feed.sample === true);
+  const { selectedDriver, setSelectedDriver } = useShell();
+  const { grid } = useSharedRaceState();
   const row = useMemo(
     () => grid.find((d) => d.no === selectedDriver) ?? null,
     [grid, selectedDriver],

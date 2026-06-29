@@ -25,6 +25,36 @@ pub enum SuggestKey {
     BrakeBias,
 }
 
+impl SuggestKey {
+    /// The stable string key used in the persisted profile. Matches the camelCase
+    /// serde name so existing on-disk profiles keep loading (P3.4).
+    pub fn key(self) -> &'static str {
+        match self {
+            SuggestKey::FrontWing => "frontWing",
+            SuggestKey::RearWing => "rearWing",
+            SuggestKey::OnThrottle => "onThrottle",
+            SuggestKey::OffThrottle => "offThrottle",
+            SuggestKey::FrontAntiRollBar => "frontAntiRollBar",
+            SuggestKey::RearAntiRollBar => "rearAntiRollBar",
+            SuggestKey::BrakeBias => "brakeBias",
+        }
+    }
+
+    /// Parse a persisted key, or None if this build doesn't know the lever.
+    pub fn from_key(s: &str) -> Option<Self> {
+        Some(match s {
+            "frontWing" => SuggestKey::FrontWing,
+            "rearWing" => SuggestKey::RearWing,
+            "onThrottle" => SuggestKey::OnThrottle,
+            "offThrottle" => SuggestKey::OffThrottle,
+            "frontAntiRollBar" => SuggestKey::FrontAntiRollBar,
+            "rearAntiRollBar" => SuggestKey::RearAntiRollBar,
+            "brakeBias" => SuggestKey::BrakeBias,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Confidence {
@@ -89,16 +119,48 @@ fn gains_table() -> [LeverGain; 8] {
     use SuggestKey::*;
     [
         // Mid-corner understeer (signed: + understeer, - oversteer):
-        LeverGain { key: FrontWing, axis: Mid, per_rad: 60.0 },
-        LeverGain { key: RearWing, axis: Mid, per_rad: -20.0 },
-        LeverGain { key: FrontAntiRollBar, axis: Mid, per_rad: -30.0 },
-        LeverGain { key: OffThrottle, axis: Mid, per_rad: -25.0 },
+        LeverGain {
+            key: FrontWing,
+            axis: Mid,
+            per_rad: 60.0,
+        },
+        LeverGain {
+            key: RearWing,
+            axis: Mid,
+            per_rad: -20.0,
+        },
+        LeverGain {
+            key: FrontAntiRollBar,
+            axis: Mid,
+            per_rad: -30.0,
+        },
+        LeverGain {
+            key: OffThrottle,
+            axis: Mid,
+            per_rad: -25.0,
+        },
         // Power-oversteer on exit (traction, >= 0):
-        LeverGain { key: OnThrottle, axis: Traction, per_rad: 40.0 },
-        LeverGain { key: RearAntiRollBar, axis: Traction, per_rad: -30.0 },
-        LeverGain { key: RearWing, axis: Traction, per_rad: 25.0 },
+        LeverGain {
+            key: OnThrottle,
+            axis: Traction,
+            per_rad: 40.0,
+        },
+        LeverGain {
+            key: RearAntiRollBar,
+            axis: Traction,
+            per_rad: -30.0,
+        },
+        LeverGain {
+            key: RearWing,
+            axis: Traction,
+            per_rad: 25.0,
+        },
         // Entry (signed: + understeer-on-entry vs mid, - looser-on-entry):
-        LeverGain { key: BrakeBias, axis: Entry, per_rad: -60.0 },
+        LeverGain {
+            key: BrakeBias,
+            axis: Entry,
+            per_rad: -60.0,
+        },
     ]
 }
 
@@ -151,7 +213,7 @@ fn weighted_phase(
         let Some((slip_balance, samples, throttle)) = select(d) else {
             continue;
         };
-        if power_gate && !(throttle > POWER_THROTTLE) {
+        if power_gate && throttle <= POWER_THROTTLE {
             continue;
         }
         sum += slip_balance * samples as f64;
@@ -308,7 +370,10 @@ pub fn suggest_setup(
         if d == 0 {
             continue;
         }
-        let confidence = gains.get(&a.key).map(|g| g.confidence).unwrap_or(Confidence::Prior);
+        let confidence = gains
+            .get(&a.key)
+            .map(|g| g.confidence)
+            .unwrap_or(Confidence::Prior);
         suggestions.push(SetupSuggestion {
             key: a.key,
             delta: d,
@@ -317,7 +382,7 @@ pub fn suggest_setup(
         });
     }
     // Order by absolute magnitude so the dominant lever reads first (stable).
-    suggestions.sort_by(|a, b| b.delta.abs().cmp(&a.delta.abs()));
+    suggestions.sort_by_key(|s| std::cmp::Reverse(s.delta.abs()));
 
     Some(SetupAdvice {
         headline: headline_for(mid_excess, traction_excess),

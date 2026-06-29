@@ -19,7 +19,7 @@ pub struct TraceSample {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Corner {
-    pub index: u32,     // 1-based, in lap order
+    pub index: u32,      // 1-based, in lap order
     pub entry_dist: f64, // metres: preceding speed maximum (braking / turn-in)
     pub apex_dist: f64,  // metres: speed minimum
     pub exit_dist: f64,  // metres: following speed maximum (back at speed)
@@ -97,23 +97,35 @@ struct Extreme {
 fn find_extrema(sm: &[f64]) -> Vec<Extreme> {
     const EPS: f64 = 0.1; // km/h
     let n = sm.len();
-    let mut turns = vec![Extreme { i: 0, kind: ExtremeKind::Max }];
+    let mut turns = vec![Extreme {
+        i: 0,
+        kind: ExtremeKind::Max,
+    }];
     let mut dir = 0i32; // 1 rising, -1 falling
     for i in 1..n {
         let delta = sm[i] - sm[i - 1];
         if delta > EPS {
             if dir == -1 {
-                turns.push(Extreme { i: i - 1, kind: ExtremeKind::Min });
+                turns.push(Extreme {
+                    i: i - 1,
+                    kind: ExtremeKind::Min,
+                });
             }
             dir = 1;
         } else if delta < -EPS {
             if dir == 1 {
-                turns.push(Extreme { i: i - 1, kind: ExtremeKind::Max });
+                turns.push(Extreme {
+                    i: i - 1,
+                    kind: ExtremeKind::Max,
+                });
             }
             dir = -1;
         }
     }
-    turns.push(Extreme { i: n - 1, kind: ExtremeKind::Max });
+    turns.push(Extreme {
+        i: n - 1,
+        kind: ExtremeKind::Max,
+    });
     turns
 }
 
@@ -139,13 +151,11 @@ pub fn segment_lap(trace: &[TraceSample]) -> Vec<Corner> {
                 break;
             }
         }
-        let mut right_max: Option<Extreme> = None;
-        for j in (k + 1)..extrema.len() {
-            if extrema[j].kind == ExtremeKind::Max {
-                right_max = Some(extrema[j]);
-                break;
-            }
-        }
+        let right_max: Option<Extreme> = extrema
+            .iter()
+            .skip(k + 1)
+            .find(|ex| ex.kind == ExtremeKind::Max)
+            .copied();
         let (Some(left_max), Some(right_max)) = (left_max, right_max) else {
             continue; // corner runs off the start/finish; skip for now
         };
@@ -207,7 +217,10 @@ pub fn current_corner(corners: &[MappedCorner], lap_distance: f64) -> Option<Cur
         } else {
             CornerPhase::Exit
         };
-        return Some(CurrentCorner { index: c.index, phase });
+        return Some(CurrentCorner {
+            index: c.index,
+            phase,
+        });
     }
     None
 }

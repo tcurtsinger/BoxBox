@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { sampleGrid, SAMPLE_SESSION, type DriverRow } from "./mockGrid";
-import { toDriverRows, sessionInfo, type RaceSnapshot, type SessionInfo } from "./liveGrid";
+import {
+  toDriverRows,
+  sessionInfo,
+  toFinalClassification,
+  type RaceSnapshot,
+  type SessionInfo,
+} from "./liveGrid";
+import type { ClassRow } from "../reports/reportsData";
 
 /** Only the real Tauri app has the Rust engine; the plain Vite preview does not. */
 const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -9,6 +16,9 @@ const POLL_MS = 250; // 4 Hz
 export interface RaceState {
   grid: DriverRow[];
   session: SessionInfo;
+  /** Authoritative final classification (packet 8) once the session ends; null
+   *  while the session is live (the report stays provisional until then). */
+  finalClassification: ClassRow[] | null;
 }
 
 const SAMPLE_INFO: SessionInfo = {
@@ -25,16 +35,18 @@ const SAMPLE_INFO: SessionInfo = {
  */
 export function useRaceState(sample: boolean): RaceState {
   const [state, setState] = useState<RaceState>(() =>
-    sample ? { grid: sampleGrid(), session: SAMPLE_INFO } : { grid: [], session: { track: "—", lap: 0, totalLaps: 0 } },
+    sample
+      ? { grid: sampleGrid(), session: SAMPLE_INFO, finalClassification: null }
+      : { grid: [], session: { track: "—", lap: 0, totalLaps: 0 }, finalClassification: null },
   );
 
   useEffect(() => {
     if (sample) {
-      setState({ grid: sampleGrid(), session: SAMPLE_INFO });
+      setState({ grid: sampleGrid(), session: SAMPLE_INFO, finalClassification: null });
       return;
     }
     if (!IN_TAURI) {
-      setState({ grid: [], session: { track: "—", lap: 0, totalLaps: 0 } });
+      setState({ grid: [], session: { track: "—", lap: 0, totalLaps: 0 }, finalClassification: null });
       return;
     }
 
@@ -47,7 +59,12 @@ export function useRaceState(sample: boolean): RaceState {
       const poll = async () => {
         try {
           const snap = await invoke<RaceSnapshot>("race_snapshot");
-          if (active) setState({ grid: toDriverRows(snap), session: sessionInfo(snap) });
+          if (active)
+            setState({
+              grid: toDriverRows(snap),
+              session: sessionInfo(snap),
+              finalClassification: toFinalClassification(snap),
+            });
         } catch {
           /* transient: a poisoned lock or shutdown — keep the last grid */
         }

@@ -302,8 +302,51 @@ textarea {
   flex-direction: column;
   overflow: hidden;
 }
+
+/* Reconnecting banner: floats below the 52px title bar so the stale live
+   surfaces stay put during a brief feed stall (P2.1). */
+.feed-banner {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px 14px;
+  border: 1px solid var(--data-caution);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--data-caution);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
+}
+.feed-banner-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: feed-banner-pulse 1.2s var(--ease-out) infinite;
+}
+@keyframes feed-banner-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .feed-banner-dot {
+    animation: none;
+  }
+}
 /* Timing section: tower fills, driver sidebar sits to its right (when open). */
 .rc-split {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;

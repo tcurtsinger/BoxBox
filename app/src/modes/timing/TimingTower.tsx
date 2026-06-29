@@ -1,5 +1,5 @@
 import { useShell } from "../../shell/shell-context";
-import { useRaceState } from "./useRaceState";
+import { useSharedRaceState } from "./RaceStateContext";
 import {
   fmtLap,
   fmtSec,
@@ -22,7 +22,7 @@ const COMPOUND_LABEL: Record<Compound, string> = {
 export function TimingTower() {
   const { feed, setFeed, selectedDriver, setSelectedDriver } = useShell();
   const sample = feed.sample === true;
-  const { grid, session } = useRaceState(sample);
+  const { grid, session } = useSharedRaceState();
 
   return (
     <section className="tt" aria-label="Live timing tower">
@@ -65,7 +65,7 @@ export function TimingTower() {
             <span className="tt-h tt-a-c" role="columnheader">Pits</span>
           </div>
 
-          <div className="tt-body">
+          <div className="tt-body" role="rowgroup">
             {grid.length === 0 ? (
               <div className="tt-waiting" role="status">Waiting for the grid…</div>
             ) : (
@@ -98,12 +98,19 @@ function Row({
 }) {
   const leader = d.pos === 1;
   return (
-    <button
-      type="button"
+    <div
       role="row"
+      tabIndex={0}
       aria-selected={selected}
+      aria-label={`Position ${d.pos}, car ${d.no}, ${d.name}${leader ? ", race leader" : ""}`}
       className={`tt-row${selected ? " is-selected" : ""}${leader ? " is-leader" : ""}`}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
     >
       <span className="tt-c-pos mono tt-a-c" role="cell">{d.pos}</span>
 
@@ -148,7 +155,11 @@ function Row({
       </span>
 
       <span className="tt-c-ers" role="cell">
-        <Ers pct={d.batt} boost={d.boost} />
+        {d.restricted ? (
+          <span className="tt-restricted mono" title="Telemetry restricted by driver">—</span>
+        ) : (
+          <Ers pct={d.batt} boost={d.boost} />
+        )}
       </span>
 
       <span className="tt-c-tyre tt-a-c" role="cell">
@@ -158,14 +169,18 @@ function Row({
         <span className="tyre-age mono">{d.age}L</span>
       </span>
 
-      <span className={`tt-c-fuel tt-a-r mono${d.fuel < 0 ? " fuel-low" : ""}`} role="cell">
-        {fmtFuel(d.fuel)}
+      <span className={`tt-c-fuel tt-a-r mono${!d.restricted && d.fuel < 0 ? " fuel-low" : ""}`} role="cell">
+        {d.restricted ? (
+          <span className="tt-restricted" title="Telemetry restricted by driver">—</span>
+        ) : (
+          fmtFuel(d.fuel)
+        )}
       </span>
 
       <span className="tt-c-pits tt-a-c" role="cell">
         <span className="tt-pit-badge mono">{d.pits}</span>
       </span>
-    </button>
+    </div>
   );
 }
 

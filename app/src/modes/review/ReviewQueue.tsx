@@ -4,11 +4,21 @@ import { useIncidents } from "../incidents/useIncidents";
 import { toneForCode, type CarRef, type UIIncident } from "../incidents/incident";
 import "./review.css";
 
+/** Immutably drop a key from a string-keyed record (for per-incident maps). */
+function without<T>(m: Record<string, T>, id: string): Record<string, T> {
+  if (!(id in m)) return m;
+  const next = { ...m };
+  delete next[id];
+  return next;
+}
+
 export function ReviewQueue() {
   const { feed } = useShell();
   const sample = feed.sample === true;
   const { incidents, actions } = useIncidents(sample);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const pending = useMemo(
     () => incidents.filter((i) => i.status === "flagged"),
@@ -19,15 +29,24 @@ export function ReviewQueue() {
     [incidents],
   );
 
-  function record(id: string, penalty: boolean) {
+  async function record(id: string, penalty: boolean) {
     const note = (drafts[id] ?? "").trim();
-    if (penalty) actions.approve(id, note);
-    else actions.dismiss(id, note);
-    setDrafts((d) => {
-      const next = { ...d };
-      delete next[id];
-      return next;
-    });
+    // A penalty must carry an outcome for the record (P1.5) — block here too, not
+    // just by disabling the button.
+    if (penalty && !note) {
+      setErrors((e) => ({ ...e, [id]: "A penalty needs an outcome." }));
+      return;
+    }
+    setErrors((e) => without(e, id));
+    setBusy((b) => ({ ...b, [id]: true }));
+    const ok = penalty ? await actions.approve(id, note) : await actions.dismiss(id, note);
+    setBusy((b) => without(b, id));
+    if (ok) {
+      // Only clear the draft once the command actually succeeded.
+      setDrafts((d) => without(d, id));
+    } else {
+      setErrors((e) => ({ ...e, [id]: "Couldn’t record — please try again." }));
+    }
   }
 
   return (
@@ -53,8 +72,13 @@ export function ReviewQueue() {
                 key={inc.id}
                 inc={inc}
                 draft={drafts[inc.id] ?? ""}
-                onDraft={(v) => setDrafts((d) => ({ ...d, [inc.id]: v }))}
-                onRecord={(penalty) => record(inc.id, penalty)}
+                busy={busy[inc.id] ?? false}
+                error={errors[inc.id]}
+                onDraft={(v) => {
+                  setDrafts((d) => ({ ...d, [inc.id]: v }));
+                  setErrors((e) => without(e, inc.id));
+                }}
+                onRecord={(penalty) => void record(inc.id, penalty)}
               />
             ))}
           </div>
@@ -106,14 +130,19 @@ function Cars({ cars }: { cars: CarRef[] }) {
 function PendingCard({
   inc,
   draft,
+  busy,
+  error,
   onDraft,
   onRecord,
 }: {
   inc: UIIncident;
   draft: string;
+  busy: boolean;
+  error?: string;
   onDraft: (v: string) => void;
   onRecord: (penalty: boolean) => void;
 }) {
+  const canPenalise = draft.trim().length > 0;
   return (
     <article className="rev-card">
       <header className="rev-head">
@@ -134,13 +163,31 @@ function PendingCard({
         onChange={(e) => onDraft(e.target.value)}
         placeholder="Outcome for the record — e.g. 5s, forced wide at T9"
         aria-label="Decision note"
+        disabled={busy}
       />
 
+      {error && (
+        <p className="rev-error" role="alert">
+          {error}
+        </p>
+      )}
+
       <div className="rev-actions">
-        <button type="button" className="btn btn-primary" onClick={() => onRecord(true)}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => onRecord(true)}
+          disabled={busy || !canPenalise}
+          title={canPenalise ? undefined : "Enter an outcome to record a penalty"}
+        >
           Record penalty
         </button>
-        <button type="button" className="btn btn-ghost" onClick={() => onRecord(false)}>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => onRecord(false)}
+          disabled={busy}
+        >
           No action
         </button>
       </div>

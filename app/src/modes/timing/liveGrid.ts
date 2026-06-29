@@ -8,6 +8,7 @@
  * name is a best-effort id→name map (the EA constructor ids, refined by capture).
  */
 import type { DriverRow, BestState, Compound, FlagKey } from "./mockGrid";
+import type { ClassRow } from "../reports/reportsData";
 
 /** The per-car fields we read from the Rust `DriverState`. */
 export interface LiveDriver {
@@ -33,7 +34,20 @@ export interface LiveDriver {
   ersDeployMode: number;
   fiaFlags: number;
   overtakeActive: boolean;
+  telemetryPublic: boolean;
+  showOnlineNames: boolean;
   liveryColours: { r: number; g: number; b: number }[];
+}
+
+/** The authoritative end-of-session result (Final Classification, packet 8). The
+ *  fields the report reads; identity is joined from `drivers` by car index. */
+export interface FinalClassificationEntry {
+  index: number;
+  position: number;
+  numPitStops: number;
+  resultStatus: number;
+  bestLapTimeInMs: number;
+  totalRaceTime: number;
 }
 
 export interface RaceSnapshot {
@@ -42,11 +56,12 @@ export interface RaceSnapshot {
   sessionCategory: string;
   numActiveCars: number;
   drivers: LiveDriver[];
+  finalClassification: { numCars: number; classification: FinalClassificationEntry[] } | null;
 }
 
-// Standard EA F1 constructor ids. Display-only and approximate (the season pack
-// can renumber these); the livery colour carries the real identity, so a missed
-// name just falls back to "Team N".
+// EA F1 constructor ids. Display-only; the livery colour carries the real
+// identity, so a missed name just falls back to "Team N". The 0..9 block is the
+// base-game grid; 476..486 is the 2026 Season Pack grid (P3.3).
 const TEAM_NAMES: Record<number, string> = {
   0: "Mercedes",
   1: "Ferrari",
@@ -58,6 +73,17 @@ const TEAM_NAMES: Record<number, string> = {
   7: "Haas",
   8: "McLaren",
   9: "Sauber",
+  476: "Mercedes",
+  477: "Ferrari",
+  478: "Red Bull",
+  479: "Williams",
+  480: "Aston Martin",
+  481: "Alpine",
+  482: "RB",
+  483: "Haas",
+  484: "McLaren",
+  485: "Audi",
+  486: "Cadillac",
 };
 
 function teamName(id: number): string {
@@ -133,6 +159,9 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
       pitLap: 0,
       pen: d.penaltiesSec,
       flag: flag(d.fiaFlags),
+      // Private telemetry arrives zeroed for spectators; flag it so the tower
+      // shows ERS/fuel as unavailable instead of a misleading 0.
+      restricted: !d.telemetryPublic,
     };
   });
 }
@@ -154,4 +183,47 @@ export function sessionInfo(snap: RaceSnapshot): SessionInfo {
     totalLaps: snap.session?.totalLaps ?? 0,
     category: snap.sessionCategory,
   };
+}
+
+// m_resultStatus: 0 invalid, 1 inactive, 2 active, 3 finished, 4 DNF, 5 DSQ,
+// 6 not classified, 7 retired. Only the non-finished states get a report badge.
+const RESULT_STATUS: Record<number, string> = { 4: "DNF", 5: "DSQ", 6: "NC", 7: "RET" };
+
+/**
+ * The authoritative final classification (packet 8) as report rows, joined to
+ * driver identity by car index. Returns null until the packet arrives, so the
+ * report can stay marked provisional and fall back to the live grid projection.
+ */
+export function toFinalClassification(snap: RaceSnapshot): ClassRow[] | null {
+  const fc = snap.finalClassification;
+  if (!fc || fc.classification.length === 0) return null;
+  const rows = fc.classification.filter((c) => c.position > 0);
+  if (rows.length === 0) return null;
+
+  const byIndex = new Map(snap.drivers.map((d) => [d.index, d]));
+  const winnerTime = rows.find((c) => c.position === 1)?.totalRaceTime ?? 0;
+
+  return rows
+    .slice()
+    .sort((a, b) => a.position - b.position)
+    .map((c) => {
+      const d = byIndex.get(c.index);
+      const finished = c.resultStatus === 3;
+      return {
+        pos: c.position,
+        no: d?.raceNumber ?? c.index,
+        name: d ? (d.nameOverride ?? d.name) : `Car ${c.index}`,
+        teamName: d ? teamName(d.teamId) : "—",
+        teamColor: d ? teamColor(d.liveryColours) : "oklch(0.62 0.02 250)",
+        bestMs: c.bestLapTimeInMs,
+        // Gap to the winner from total race time, for classified finishers only.
+        gapSec:
+          c.position === 1 || !finished || winnerTime <= 0
+            ? null
+            : c.totalRaceTime - winnerTime,
+        pits: c.numPitStops,
+        penalised: false,
+        status: RESULT_STATUS[c.resultStatus] ?? null,
+      };
+    });
 }

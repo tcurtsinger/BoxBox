@@ -110,7 +110,7 @@ export interface TunerSnapshot {
   track: string;
   session: string;
   setupReceived: boolean;
-  equalPerf: boolean;
+  equalPerf: boolean | null; // null = unknown (not yet reported / 2025 pre-session)
   balancePreference: number; // -1 loose .. +1 stable
   // Nullable where the live engine has nothing yet: balance until a corner is
   // driven, setup until the in-game setup screen is read, the rest off-session or

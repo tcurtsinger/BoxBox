@@ -47,7 +47,11 @@ pub struct TrimAdvice {
 }
 
 pub fn build_trim_advice(front_wing: u8, rear_wing: u8, all_runs: &[RunStats]) -> TrimAdvice {
-    let mut runs: Vec<RunStats> = all_runs.iter().copied().filter(|r| r.best_lap_ms.is_some()).collect();
+    let mut runs: Vec<RunStats> = all_runs
+        .iter()
+        .copied()
+        .filter(|r| r.best_lap_ms.is_some())
+        .collect();
     // Most downforce first (front+rear descending).
     runs.sort_by(|a, b| {
         let da = b.front_wing as i32 + b.rear_wing as i32;
@@ -69,7 +73,10 @@ pub fn build_trim_advice(front_wing: u8, rear_wing: u8, all_runs: &[RunStats]) -
     let fw = front_wing as i32;
     let rw = rear_wing as i32;
     TrimAdvice {
-        current: TrimCurrent { front_wing, rear_wing },
+        current: TrimCurrent {
+            front_wing,
+            rear_wing,
+        },
         variants: vec![
             TrimVariant {
                 label: TrimDirection::MoreTopSpeed,

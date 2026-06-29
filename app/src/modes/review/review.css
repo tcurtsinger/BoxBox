@@ -186,6 +186,17 @@
 .rev-actions .btn {
   flex: 1;
 }
+.rev-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* Inline failure: a command was rejected (e.g. blank penalty) or failed; the
+   steward's draft is kept and this explains why. */
+.rev-error {
+  margin: 0 0 var(--space-md);
+  font-size: 12px;
+  color: var(--data-danger);
+}
 
 /* ---- Decided log -------------------------------------------------------- */
 .review-decided {

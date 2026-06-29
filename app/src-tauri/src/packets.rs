@@ -30,16 +30,24 @@ fn max_cars_for_format(format: u16) -> usize {
 // Cursor-based little-endian reader mirroring `reader.ts`. Reads are bounds-safe:
 // a read past the end yields a zero value (and empty string/array) rather than
 // panicking, so a truncated or malformed datagram can never crash the listener
-// thread. Reading fields in declaration order lets each parser mirror the C
-// struct from the EA spec exactly.
+// thread. Such a read also trips the `overran` flag, which the dispatcher reads
+// to drop a truncated known packet's body rather than let zero-filled tail fields
+// masquerade as real data. Reading fields in declaration order lets each parser
+// mirror the C struct from the EA spec exactly.
 struct Reader<'a> {
     buf: &'a [u8],
     pos: usize,
+    /// Set once any read or skip has run past the end of the buffer.
+    overran: bool,
 }
 
 impl<'a> Reader<'a> {
     fn new(buf: &'a [u8]) -> Self {
-        Self { buf, pos: 0 }
+        Self {
+            buf,
+            pos: 0,
+            overran: false,
+        }
     }
 
     fn remaining(&self) -> usize {
@@ -49,9 +57,13 @@ impl<'a> Reader<'a> {
     /// Take `n` bytes, advancing the cursor. Returns `None` (and parks the cursor
     /// at end) if fewer than `n` bytes remain.
     fn take(&mut self, n: usize) -> Option<&'a [u8]> {
-        let end = self.pos.checked_add(n)?;
+        let Some(end) = self.pos.checked_add(n) else {
+            self.overran = true;
+            return None;
+        };
         if end > self.buf.len() {
             self.pos = self.buf.len();
+            self.overran = true;
             return None;
         }
         let s = &self.buf[self.pos..end];
@@ -91,7 +103,11 @@ impl<'a> Reader<'a> {
     }
 
     fn skip(&mut self, n: usize) {
-        self.pos = self.pos.saturating_add(n).min(self.buf.len());
+        let end = self.pos.saturating_add(n);
+        if end > self.buf.len() {
+            self.overran = true;
+        }
+        self.pos = end.min(self.buf.len());
     }
 
     /// Fixed-length, null-terminated UTF-8 string. Advances by the full length.
@@ -159,6 +175,26 @@ fn parse_header(rd: &mut Reader) -> PacketHeader {
 
 // --- Session (id 1) -----------------------------------------------------------
 
+/// One active-aero activation zone, as a fraction (0..1) of the lap.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AeroZone {
+    pub zone_start: f32,
+    pub zone_end: f32,
+}
+
+/// One DRS activation zone (same shape as `AeroZone`, kept distinct to match the
+/// spec's two struct names and the snapshot field).
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DrsZone {
+    pub zone_start: f32,
+    pub zone_end: f32,
+}
+
+const MAX_AERO_ZONES: usize = 8; // cs_maxActiveAeroZonesPerLap
+const MAX_DRS_ZONES: usize = 4; // cs_maxDRSZonesPerLap
+
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionData {
@@ -179,6 +215,12 @@ pub struct SessionData {
     pub num_marshal_zones: u8,
     pub safety_car_status: u8,
     pub equal_car_performance: Option<u8>,
+    /// 2026 Season Pack active-aero / DRS activation zones. `track_status` is None
+    /// and the zone lists empty for the 2025 format (or a tail-truncated packet).
+    pub active_aero_track_status: Option<u8>,
+    pub active_aero_zones_full: Vec<AeroZone>,
+    pub active_aero_zones_partial: Vec<AeroZone>,
+    pub drs_zones: Vec<DrsZone>,
 }
 
 fn parse_session(rd: &mut Reader, header: &PacketHeader) -> SessionData {
@@ -201,12 +243,31 @@ fn parse_session(rd: &mut Reader, header: &PacketHeader) -> SessionData {
     rd.skip(21 * 5); // MarshalZone[21] = { f32 zoneStart, i8 zoneFlag }
     let safety_car_status = rd.u8();
 
-    // equalCarPerformance lives 554 bytes further on in the 2026 layout, past the
-    // fixed-size weather-forecast array and the assist/identifier block.
+    // Tail fields. equalCarPerformance sits 554 bytes past safetyCarStatus in both
+    // the 2025 and 2026 layouts (every 2026 addition lands further on), so it's
+    // read for both formats. The 2026 pack then carries the active-aero / DRS
+    // activation zones. The whole tail is optional: a session truncated here still
+    // delivers the critical early fields (track, type, laps) above.
     let mut equal_car_performance = None;
-    if header.packet_format >= 2026 && rd.remaining() >= 555 {
-        rd.skip(554);
+    let mut active_aero_track_status = None;
+    let mut active_aero_zones_full = Vec::new();
+    let mut active_aero_zones_partial = Vec::new();
+    let mut drs_zones = Vec::new();
+    if rd.remaining() >= 555 {
+        rd.skip(554); // networkGame .. numRedFlagPeriods
         equal_car_performance = Some(rd.u8());
+
+        // 2026 only: skip the gameplay-settings block (recoveryMode ..
+        // sector3LapDistanceStart = 44 bytes), then the activation-zone tail.
+        const AERO_TAIL_BYTES: usize =
+            44 + 1 + (1 + MAX_AERO_ZONES * 8) * 2 + 1 + MAX_DRS_ZONES * 8;
+        if header.packet_format >= 2026 && rd.remaining() >= AERO_TAIL_BYTES {
+            rd.skip(44);
+            active_aero_track_status = Some(rd.u8());
+            active_aero_zones_full = read_aero_zones(rd, MAX_AERO_ZONES);
+            active_aero_zones_partial = read_aero_zones(rd, MAX_AERO_ZONES);
+            drs_zones = read_drs_zones(rd, MAX_DRS_ZONES);
+        }
     }
 
     SessionData {
@@ -227,7 +288,35 @@ fn parse_session(rd: &mut Reader, header: &PacketHeader) -> SessionData {
         num_marshal_zones,
         safety_car_status,
         equal_car_performance,
+        active_aero_track_status,
+        active_aero_zones_full,
+        active_aero_zones_partial,
+        drs_zones,
     }
+}
+
+/// Read the count byte then the fixed array of `max` `AeroZone`s, keeping the
+/// first `num` (the remainder is unused padding in the packet).
+fn read_aero_zones(rd: &mut Reader, max: usize) -> Vec<AeroZone> {
+    let num = rd.u8() as usize;
+    let zones: Vec<AeroZone> = (0..max)
+        .map(|_| AeroZone {
+            zone_start: rd.f32(),
+            zone_end: rd.f32(),
+        })
+        .collect();
+    zones.into_iter().take(num.min(max)).collect()
+}
+
+fn read_drs_zones(rd: &mut Reader, max: usize) -> Vec<DrsZone> {
+    let num = rd.u8() as usize;
+    let zones: Vec<DrsZone> = (0..max)
+        .map(|_| DrsZone {
+            zone_start: rd.f32(),
+            zone_end: rd.f32(),
+        })
+        .collect();
+    zones.into_iter().take(num.min(max)).collect()
 }
 
 // --- Participants (id 4) ------------------------------------------------------
@@ -1202,6 +1291,13 @@ pub fn parse_packet(buf: &[u8]) -> Option<ParsedPacket> {
         _ => None,
     };
 
+    // A known packet that read past its end was truncated: its trailing fields are
+    // zero-filled placeholders, not real data (e.g. a header-plus-`PENA` datagram
+    // would otherwise become a drive-through against car 0). Drop the body so a
+    // short datagram can't mutate state — the header still flows, for heartbeat
+    // and format detection.
+    let data = if rd.overran { None } else { data };
+
     Some(ParsedPacket { id, header, data })
 }
 
@@ -1244,17 +1340,38 @@ mod tests {
     }
 
     #[test]
-    fn reader_is_bounds_safe() {
-        // A header-only buffer fed to a body parser must yield zeros, not panic.
+    fn truncated_known_packet_drops_body() {
+        // A header-only buffer fed to a body parser must not panic, and must come
+        // back with no body: zero-filled tail fields are not real data (P1.2). The
+        // header still flows, for heartbeat / format detection.
         let buf = header_bytes(2026, 16);
         let packet = parse_packet(&buf).expect("header parses");
-        match packet.data {
-            Some(Body::CarTelemetry2(d)) => {
-                assert_eq!(d.cars.len(), 24); // 2026 -> 24 cars
-                assert_eq!(d.cars[0].active_aero_mode, 0); // read past end -> 0
-            }
-            _ => panic!("expected CarTelemetry2 body"),
-        }
+        assert!(
+            packet.data.is_none(),
+            "truncated CarTelemetry2 body dropped"
+        );
+        assert_eq!(packet.id, 16);
+    }
+
+    #[test]
+    fn short_by_one_packet_drops_body() {
+        // 2026 CarTelemetry2 is 269 bytes (29 header + 24*10). One byte short, the
+        // final field overruns, and the whole body is dropped.
+        let mut buf = header_bytes(2026, 16);
+        buf.extend_from_slice(&vec![0u8; 24 * 10 - 1]);
+        assert_eq!(buf.len(), 269 - 1);
+        let packet = parse_packet(&buf).expect("header parses");
+        assert!(packet.data.is_none());
+    }
+
+    #[test]
+    fn header_only_pena_does_not_forge_a_penalty() {
+        // The headline P1.2 case: a datagram that is just a header + "PENA" with no
+        // payload must NOT decode into a (zero-filled) drive-through against car 0.
+        let mut buf = header_bytes(2026, 3);
+        buf.extend_from_slice(b"PENA"); // event code, no payload bytes
+        let packet = parse_packet(&buf).expect("header parses");
+        assert!(packet.data.is_none(), "incomplete PENA payload dropped");
     }
 
     #[test]
@@ -1314,8 +1431,8 @@ mod tests {
         // which sits right after the three id fields + myTeam/raceNumber/nat.
         let mut buf = header_bytes(2025, 4);
         buf.push(1); // numActiveCars
-        // car 0: aiControlled, driverId(u8), networkId(u8), teamId(u8), myTeam,
-        // raceNumber, nationality, name[32]...
+                     // car 0: aiControlled, driverId(u8), networkId(u8), teamId(u8), myTeam,
+                     // raceNumber, nationality, name[32]...
         buf.extend_from_slice(&[0, 10, 20, 30, 1, 44, 5]);
         let mut name = vec![0u8; 32];
         name[..5].copy_from_slice(b"VETTL");
@@ -1325,7 +1442,7 @@ mod tests {
         buf.push(2); // platform
         buf.push(0); // numColours
         buf.extend_from_slice(&vec![0u8; 12]); // 4 livery colours
-        // pad remaining cars
+                                               // pad remaining cars
         buf.extend_from_slice(&vec![0u8; 4096]);
 
         let packet = parse_packet(&buf).expect("parses");
@@ -1339,5 +1456,68 @@ mod tests {
         assert_eq!(c0.team_id, 30);
         assert_eq!(c0.race_number, 44);
         assert_eq!(c0.name, "VETTL");
+        // Privacy flags parse (P2.9): car 0 published, the padded cars restricted.
+        assert!(c0.telemetry_public);
+        assert!(c0.show_online_names);
+        assert!(!p.participants[1].telemetry_public);
+        assert!(!p.participants[1].show_online_names);
+    }
+
+    #[test]
+    fn session_decodes_equal_perf_and_aero_zones() {
+        // Build a full 2026 Session (926 bytes) and confirm equalCarPerformance and
+        // the active-aero / DRS activation zones decode at the right offsets.
+        let mut buf = header_bytes(2026, 1);
+        let mut body = vec![0u8; 897];
+        let put_f32 = |b: &mut [u8], off: usize, v: f32| {
+            b[off..off + 4].copy_from_slice(&v.to_le_bytes());
+        };
+        body[679] = 1; // equalCarPerformance = On
+        body[724] = 0; // activeAeroTrackStatus = Full
+        body[725] = 2; // numActiveAeroZonesFull
+        put_f32(&mut body, 726, 0.10);
+        put_f32(&mut body, 730, 0.20);
+        put_f32(&mut body, 734, 0.50);
+        put_f32(&mut body, 738, 0.60);
+        body[790] = 1; // numActiveAeroZonesPartial
+        put_f32(&mut body, 791, 0.30);
+        put_f32(&mut body, 795, 0.40);
+        body[855] = 1; // numDRSZones
+        put_f32(&mut body, 856, 0.70);
+        put_f32(&mut body, 860, 0.80);
+        buf.extend_from_slice(&body);
+        assert_eq!(buf.len(), 926);
+
+        let packet = parse_packet(&buf).expect("parses");
+        let Some(Body::Session(s)) = packet.data else {
+            panic!("expected Session");
+        };
+        assert_eq!(s.equal_car_performance, Some(1));
+        assert_eq!(s.active_aero_track_status, Some(0));
+        assert_eq!(s.active_aero_zones_full.len(), 2);
+        assert_eq!(s.active_aero_zones_full[1].zone_start, 0.50);
+        assert_eq!(s.active_aero_zones_full[1].zone_end, 0.60);
+        assert_eq!(s.active_aero_zones_partial.len(), 1);
+        assert_eq!(s.active_aero_zones_partial[0].zone_start, 0.30);
+        assert_eq!(s.drs_zones.len(), 1);
+        assert_eq!(s.drs_zones[0].zone_end, 0.80);
+    }
+
+    #[test]
+    fn session_2025_reads_equal_perf_without_aero() {
+        // 2025 Session (753 bytes) carries equalCarPerformance at the same offset
+        // but no aero/DRS tail.
+        let mut buf = header_bytes(2025, 1);
+        let mut body = vec![0u8; 724];
+        body[679] = 1; // equalCarPerformance = On
+        buf.extend_from_slice(&body);
+        assert_eq!(buf.len(), 753);
+        let packet = parse_packet(&buf).expect("parses");
+        let Some(Body::Session(s)) = packet.data else {
+            panic!("expected Session");
+        };
+        assert_eq!(s.equal_car_performance, Some(1));
+        assert!(s.active_aero_track_status.is_none());
+        assert!(s.drs_zones.is_empty());
     }
 }

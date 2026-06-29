@@ -147,6 +147,10 @@
 .tt-row:hover {
   background: var(--surface);
 }
+.tt-row:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
 .tt-row.is-leader {
   background: color-mix(in oklch, var(--data-good) 5%, transparent);
 }
@@ -224,6 +228,12 @@
 }
 .tt-empty {
   color: var(--faint);
+}
+/* Restricted telemetry: the driver hid ERS/fuel, so the cell reads as
+   unavailable rather than a misleading 0. */
+.tt-restricted {
+  color: var(--faint);
+  font-size: 11px;
 }
 /* Tinted-outline pills: hue text + faint hue fill + hue border. Reads cleanly
    on the dark surface and keeps text contrast well above 4.5:1. */

@@ -20,6 +20,29 @@ pub enum WearLever {
     RearAntiRollBar,
 }
 
+impl WearLever {
+    /// The stable string key used in the persisted profile (camelCase serde name).
+    pub fn key(self) -> &'static str {
+        match self {
+            WearLever::FrontToe => "frontToe",
+            WearLever::RearToe => "rearToe",
+            WearLever::FrontAntiRollBar => "frontAntiRollBar",
+            WearLever::RearAntiRollBar => "rearAntiRollBar",
+        }
+    }
+
+    /// Parse a persisted key, or None if this build doesn't know the lever.
+    pub fn from_key(s: &str) -> Option<Self> {
+        Some(match s {
+            "frontToe" => WearLever::FrontToe,
+            "rearToe" => WearLever::RearToe,
+            "frontAntiRollBar" => WearLever::FrontAntiRollBar,
+            "rearAntiRollBar" => WearLever::RearAntiRollBar,
+            _ => return None,
+        })
+    }
+}
+
 const WEAR_NOISE: f64 = 0.15; // %/lap; a change must move the axle rate at least this much
 
 #[allow(dead_code)] // `sensitivity`/`observations` kept for parity / inspection
@@ -64,7 +87,13 @@ impl WearEstimator {
     /// Record one before/after axle wear-rate measurement for a lever. Returns
     /// true if accepted (the change moved the rate measurably). Sign is kept: a
     /// positive sensitivity means lowering the lever lowered wear (prior holds).
-    pub fn record(&mut self, lever: WearLever, delta_clicks: f64, rate_before: f64, rate_after: f64) -> bool {
+    pub fn record(
+        &mut self,
+        lever: WearLever,
+        delta_clicks: f64,
+        rate_before: f64,
+        rate_after: f64,
+    ) -> bool {
         if delta_clicks == 0.0 {
             return false;
         }
@@ -88,7 +117,12 @@ impl WearEstimator {
                     agrees: Some(m > 0.0),
                 }
             }
-            _ => LearnedWear { sensitivity: None, observations: 0, confidence: Confidence::Prior, agrees: None },
+            _ => LearnedWear {
+                sensitivity: None,
+                observations: 0,
+                confidence: Confidence::Prior,
+                agrees: None,
+            },
         }
     }
 
@@ -100,7 +134,10 @@ impl WearEstimator {
     /// agreement are recomputed on restore, so the stored arrays are the single
     /// source of truth (mirrors `wearEstimator.ts`).
     pub fn serialize(&self) -> HashMap<WearLever, Vec<f64>> {
-        self.levers.iter().map(|(k, g)| (*k, g.sens.clone())).collect()
+        self.levers
+            .iter()
+            .map(|(k, g)| (*k, g.sens.clone()))
+            .collect()
     }
 
     /// Replace the learned sensitivities from a persisted profile.

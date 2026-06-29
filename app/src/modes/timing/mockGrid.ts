@@ -94,6 +94,9 @@ export interface DriverRow {
   pitLap: number;
   pen: number;
   flag: FlagKey | null;
+  /** Driver has restricted their telemetry: ERS/fuel arrive zeroed, so show them
+   *  as unavailable rather than a misleading 0. */
+  restricted: boolean;
 }
 
 function sectorsFor(
@@ -146,6 +149,7 @@ export function sampleGrid(): DriverRow[] {
       pitLap: c.pitLap,
       pen: c.pen ?? 0,
       flag: c.flag ?? null,
+      restricted: false,
     };
   });
 }

@@ -12,6 +12,19 @@
   background: var(--bg);
 }
 
+/* At narrow widths the tower can't spare 340px, so the detail becomes an overlay
+   drawer rather than squeezing the instrument off-screen (P2.8). */
+@media (max-width: 1200px) {
+  .dp {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    box-shadow: -8px 0 24px rgb(0 0 0 / 0.35);
+  }
+}
+
 /* ---- Header ------------------------------------------------------------- */
 .dp-head {
   display: flex;

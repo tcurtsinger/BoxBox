@@ -9,19 +9,21 @@ import { rosterFrom, toUIIncidents, type IncidentSnapshot, type RosterCar } from
 const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const POLL_MS = 250; // 4 Hz
 
+/** Every action resolves to whether it succeeded, so the caller can keep the
+ *  steward's draft and surface an error on failure rather than losing it (P1.5). */
 export interface IncidentActions {
   /** Promote a logged feed item into the review queue. */
-  flag(id: string): void;
-  /** Record a penalty with a free-text outcome. */
-  approve(id: string, outcome: string): void;
+  flag(id: string): Promise<boolean>;
+  /** Record a penalty with a free-text outcome (rejected if blank). */
+  approve(id: string, outcome: string): Promise<boolean>;
   /** Record no action (optionally with a note). */
-  dismiss(id: string, note?: string): void;
+  dismiss(id: string, note?: string): Promise<boolean>;
   /** Send a decided incident back to the review queue (undo). */
-  reopen(id: string): void;
+  reopen(id: string): Promise<boolean>;
   /** Set or clear a steward note. */
-  setNote(id: string, note: string): void;
+  setNote(id: string, note: string): Promise<boolean>;
   /** Raise a manual incident — lands flagged in the review queue. */
-  logManual(cars: RosterCar[], code: string, note: string): void;
+  logManual(cars: RosterCar[], code: string, note: string): Promise<boolean>;
 }
 
 export interface IncidentsState {
@@ -93,45 +95,65 @@ export function useIncidents(sample: boolean): IncidentsState {
       const update = (id: string, fn: (i: UIIncident) => UIIncident) =>
         setIncidents((cur) => cur.map((i) => (i.id === id ? fn(i) : i)));
       return {
-        flag: (id) => update(id, (i) => ({ ...i, status: "flagged" })),
-        approve: (id, outcome) =>
-          update(id, (i) => ({ ...i, status: "approved", outcome: outcome.trim() || null })),
-        dismiss: (id, note) =>
-          update(id, (i) => ({ ...i, status: "dismissed", note: (note ?? i.note).trim() })),
-        reopen: (id) => update(id, (i) => ({ ...i, status: "flagged", outcome: null })),
-        setNote: (id, note) => update(id, (i) => ({ ...i, note: note.trim() })),
-        logManual: (cars, code, note) =>
+        flag: async (id) => {
+          update(id, (i) => ({ ...i, status: "flagged" }));
+          return true;
+        },
+        approve: async (id, outcome) => {
+          const o = outcome.trim();
+          if (!o) return false; // a penalty needs an outcome (parity with backend)
+          update(id, (i) => ({ ...i, status: "approved", outcome: o }));
+          return true;
+        },
+        dismiss: async (id, note) => {
+          update(id, (i) => ({ ...i, status: "dismissed", note: (note ?? i.note).trim() }));
+          return true;
+        },
+        reopen: async (id) => {
+          update(id, (i) => ({ ...i, status: "flagged", outcome: null }));
+          return true;
+        },
+        setNote: async (id, note) => {
+          update(id, (i) => ({ ...i, note: note.trim() }));
+          return true;
+        },
+        logManual: async (cars, code, note) => {
           setIncidents((cur) => [
             makeManualIncident(code, cars.map((c) => ({ no: c.no, name: c.name })), note),
             ...cur,
-          ]),
+          ]);
+          return true;
+        },
       };
     }
 
-    const run = async (cmd: string, args: Record<string, unknown>) => {
-      if (!IN_TAURI) return;
+    const run = async (cmd: string, args: Record<string, unknown>): Promise<boolean> => {
+      if (!IN_TAURI) return false;
       try {
         const { invoke } = await import("@tauri-apps/api/core");
         await invoke(cmd, args);
         await refresh.current();
+        return true;
       } catch {
-        /* command failed (lock/shutdown) — the next poll reconciles */
+        // Command rejected (blank penalty, lock, shutdown). The caller keeps the
+        // draft and shows an error; the next poll reconciles state.
+        return false;
       }
     };
     return {
-      flag: (id) => void run("flag_for_review", { id }),
-      approve: (id, outcome) => void run("approve_incident", { id, outcome: outcome.trim() || null }),
-      dismiss: (id, note) =>
-        void (async () => {
-          const n = (note ?? "").trim();
-          if (n) await run("set_incident_note", { id, note: n });
-          await run("dismiss_incident", { id });
-        })(),
-      reopen: (id) => void run("reopen_incident", { id }),
-      setNote: (id, note) => void run("set_incident_note", { id, note: note.trim() || null }),
+      flag: (id) => run("flag_for_review", { id }),
+      approve: (id, outcome) => run("approve_incident", { id, outcome: outcome.trim() || null }),
+      dismiss: async (id, note) => {
+        const n = (note ?? "").trim();
+        if (n && !(await run("set_incident_note", { id, note: n }))) return false;
+        return run("dismiss_incident", { id });
+      },
+      reopen: (id) => run("reopen_incident", { id }),
+      setNote: (id, note) => run("set_incident_note", { id, note: note.trim() || null }),
       logManual: (cars, code, note) =>
-        void run("log_manual_incident", {
+        run("log_manual_incident", {
           carIndices: cars.map((c) => c.index),
+          code, // P3.2: preserve the steward's selected code, not just the label
           label: CODE_LABEL[code] ?? code,
           note: note.trim() || null,
         }),

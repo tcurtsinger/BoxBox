@@ -33,7 +33,10 @@ export function useTelemetry() {
       try {
         await invoke("start_telemetry", { port: connection.port });
       } catch (err) {
+        // Bind failed (port in use, permissions): surface it as no-feed instead
+        // of leaving a stale status the heartbeat will never correct (P2.1).
         console.error("start_telemetry failed", err);
+        if (!cancelled) setFeed({ state: "no-feed" });
         return;
       }
       if (cancelled) return;

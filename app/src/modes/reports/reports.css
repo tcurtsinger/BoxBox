@@ -22,11 +22,34 @@
   gap: var(--space-md);
   margin-bottom: var(--space-xl);
 }
+.report-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
 .report-title {
   margin: 0;
   font-size: var(--text-headline);
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+/* Whether the classification is the official Final result (packet 8) or still a
+   live projection. The distinction is the whole point of the report's authority. */
+.report-status {
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.report-status.is-final {
+  color: var(--data-positive, var(--data-session));
+}
+.report-status.is-provisional {
+  color: var(--data-caution);
+  background: var(--data-caution-tint);
 }
 .report-session {
   margin: 2px 0 0;
@@ -161,6 +184,10 @@
 .cls-row:hover {
   background: var(--surface);
 }
+.cls-row:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
 .cls-row.is-active {
   background: color-mix(in oklch, var(--primary) 10%, transparent);
 }
@@ -210,6 +237,19 @@
   border-radius: var(--radius-sm);
   background: var(--data-caution-tint);
   color: var(--data-caution);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.7;
+}
+/* Official result status from Final Classification (DNF / DSQ / RET / NC). */
+.cls-status {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  color: var(--data-danger);
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.04em;

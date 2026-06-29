@@ -40,12 +40,22 @@ impl TyreReading {
     }
 }
 
-const CORNERS: [TyreCorner; 4] = [TyreCorner::Fl, TyreCorner::Fr, TyreCorner::Rl, TyreCorner::Rr];
+const CORNERS: [TyreCorner; 4] = [
+    TyreCorner::Fl,
+    TyreCorner::Fr,
+    TyreCorner::Rl,
+    TyreCorner::Rr,
+];
 
 /// Map a wheel-order [RL, RR, FL, FR] array to a named reading.
 pub fn tyres_from_packet<T: Copy + Into<f64>>(a: &[T]) -> TyreReading {
     let g = |i: usize| a.get(i).map(|&v| v.into()).unwrap_or(0.0);
-    TyreReading { rl: g(0), rr: g(1), fl: g(2), fr: g(3) }
+    TyreReading {
+        rl: g(0),
+        rr: g(1),
+        fl: g(2),
+        fr: g(3),
+    }
 }
 
 /// Per-corner exponential moving average, for smoothing noisy temps.
@@ -189,11 +199,17 @@ fn with_gain(s: WearSuggestion, gains: &HashMap<WearLever, LearnedWear>) -> Opti
     if g.confidence == Confidence::Measured && g.agrees == Some(false) {
         return None;
     }
-    Some(WearSuggestion { confidence: g.confidence, ..s })
+    Some(WearSuggestion {
+        confidence: g.confidence,
+        ..s
+    })
 }
 
 /// Advice from a wear stint and the loop's learned gains, or None if no signal.
-pub fn build_wear_advice(stint: &WearStint, gains: &HashMap<WearLever, LearnedWear>) -> Option<WearAdvice> {
+pub fn build_wear_advice(
+    stint: &WearStint,
+    gains: &HashMap<WearLever, LearnedWear>,
+) -> Option<WearAdvice> {
     let r = stint.rate?;
     if stint.laps < MIN_WEAR_LAPS {
         return None;
@@ -219,17 +235,40 @@ pub fn build_wear_advice(stint: &WearStint, gains: &HashMap<WearLever, LearnedWe
     let ratio = format!("{:.1}", hi / lo);
     let base: Vec<WearSuggestion> = if front_faster {
         vec![
-            WearSuggestion { param: WearParam::FrontToe, direction: WearDirection::Lower, reason: "less front toe runs the fronts cooler".into(), confidence: Confidence::Prior },
-            WearSuggestion { param: WearParam::FrontAntiRollBar, direction: WearDirection::Lower, reason: "a softer front bar eases front load".into(), confidence: Confidence::Prior },
+            WearSuggestion {
+                param: WearParam::FrontToe,
+                direction: WearDirection::Lower,
+                reason: "less front toe runs the fronts cooler".into(),
+                confidence: Confidence::Prior,
+            },
+            WearSuggestion {
+                param: WearParam::FrontAntiRollBar,
+                direction: WearDirection::Lower,
+                reason: "a softer front bar eases front load".into(),
+                confidence: Confidence::Prior,
+            },
         ]
     } else {
         vec![
-            WearSuggestion { param: WearParam::RearToe, direction: WearDirection::Lower, reason: "less rear toe runs the rears cooler".into(), confidence: Confidence::Prior },
-            WearSuggestion { param: WearParam::RearAntiRollBar, direction: WearDirection::Lower, reason: "a softer rear bar eases rear load".into(), confidence: Confidence::Prior },
+            WearSuggestion {
+                param: WearParam::RearToe,
+                direction: WearDirection::Lower,
+                reason: "less rear toe runs the rears cooler".into(),
+                confidence: Confidence::Prior,
+            },
+            WearSuggestion {
+                param: WearParam::RearAntiRollBar,
+                direction: WearDirection::Lower,
+                reason: "a softer rear bar eases rear load".into(),
+                confidence: Confidence::Prior,
+            },
         ]
     };
 
-    let mut suggestions: Vec<WearSuggestion> = base.into_iter().filter_map(|s| with_gain(s, gains)).collect();
+    let mut suggestions: Vec<WearSuggestion> = base
+        .into_iter()
+        .filter_map(|s| with_gain(s, gains))
+        .collect();
 
     // Temp corroboration: if the overworked axle's core runs hot vs its surface,
     // it is genuinely overloaded, so less (negative) camber spreads the load.

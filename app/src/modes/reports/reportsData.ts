@@ -16,6 +16,9 @@ export interface ClassRow {
   gapSec: number | null; // null = winner
   pits: number;
   penalised: boolean;
+  /** Official result status from Final Classification (e.g. "DNF", "DSQ", "DNS").
+   *  null for a normally-classified car or a provisional (grid) projection. */
+  status: string | null;
 }
 
 export interface ReportSummary {
@@ -49,11 +52,16 @@ function penaltyCars(incidents: UIIncident[]): Set<number> {
   return set;
 }
 
-export function buildClassification(
-  grid: DriverRow[],
-  incidents: UIIncident[],
-): ClassRow[] {
+/** Flag any classification row whose car carries an approved penalty. Applies to
+ *  both the provisional (grid) and the official (packet 8) classification. */
+export function markPenalties(rows: ClassRow[], incidents: UIIncident[]): ClassRow[] {
   const pen = penaltyCars(incidents);
+  return rows.map((r) => (pen.has(r.no) ? { ...r, penalised: true } : r));
+}
+
+/** The provisional classification from the live timing grid — a projection of the
+ *  running order, not the official result (which arrives in Final Classification). */
+export function buildClassification(grid: DriverRow[]): ClassRow[] {
   return grid.map((d) => ({
     pos: d.pos,
     no: d.no,
@@ -63,7 +71,8 @@ export function buildClassification(
     bestMs: d.bestMs,
     gapSec: d.gapSec,
     pits: d.pits,
-    penalised: pen.has(d.no),
+    penalised: false,
+    status: null,
   }));
 }
 
@@ -72,11 +81,14 @@ export function buildSummary(
   incidents: UIIncident[],
 ): ReportSummary {
   const winner = grid.find((d) => d.pos === 1)?.name ?? "—";
-  const fl = grid.reduce((a, b) => (b.bestMs < a.bestMs ? b : a), grid[0]);
+  // Only cars that actually set a lap are fastest-lap candidates: a reduce over
+  // all rows would otherwise pick a bestMs of 0 (no time / DNS) as "fastest".
+  const timed = grid.filter((d) => d.bestMs > 0);
+  const fl = timed.length ? timed.reduce((a, b) => (b.bestMs < a.bestMs ? b : a)) : null;
   return {
     winner,
-    fastestLapName: fl.name,
-    fastestLapTime: fmtLap(fl.bestMs),
+    fastestLapName: fl?.name ?? "—",
+    fastestLapTime: fl ? fmtLap(fl.bestMs) : "—",
     incidentCount: incidents.length,
     penaltyCount: incidents.filter((i) => i.status === "approved").length,
   };
@@ -101,7 +113,13 @@ export function gapText(gapSec: number | null): string {
 }
 
 function csv(value: string | number): string {
-  const s = String(value);
+  let s = String(value);
+  // Neutralize spreadsheet formula injection: a cell starting with = + - @ (or a
+  // control char) can execute as a formula when opened in Excel/Sheets, so a
+  // driver name or steward note like "=cmd|..." is defused with a leading quote.
+  if (/^[=+\-@\t\r]/.test(s)) {
+    s = `'${s}`;
+  }
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
@@ -110,6 +128,10 @@ export interface ReportData {
   summary: ReportSummary;
   classification: ClassRow[];
   decisions: Decision[];
+  /** True once the classification is the official Final result (packet 8); a
+   *  provisional projection otherwise. Stamped into the export so a saved file
+   *  isn't mistaken for the official result. */
+  final: boolean;
 }
 
 export type ReportFormat = "csv" | "json";
@@ -121,13 +143,17 @@ const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in windo
  *  stewarding decisions. */
 export function buildReportCsv(r: ReportData): string {
   const lines: string[] = [];
-  lines.push(["BoxBox Race Report", r.header.name, r.header.track, `${r.header.totalLaps} laps`].map(csv).join(","));
+  lines.push(
+    ["BoxBox Race Report", r.final ? "Final" : "Provisional", r.header.name, r.header.track, `${r.header.totalLaps} laps`]
+      .map(csv)
+      .join(","),
+  );
   lines.push("");
   lines.push("Classification");
-  lines.push("Pos,No,Driver,Team,Best Lap,Gap,Pits,Penalty");
+  lines.push("Pos,No,Driver,Team,Best Lap,Gap,Pits,Result,Penalty");
   r.classification.forEach((c) =>
     lines.push(
-      [c.pos, c.no, csv(c.name), csv(c.teamName), fmtLap(c.bestMs), gapText(c.gapSec), c.pits, c.penalised ? "Y" : ""].join(","),
+      [c.pos, c.no, csv(c.name), csv(c.teamName), fmtLap(c.bestMs), gapText(c.gapSec), c.pits, csv(c.status ?? ""), c.penalised ? "Y" : ""].join(","),
     ),
   );
   lines.push("");
@@ -145,7 +171,12 @@ export function buildReportCsv(r: ReportData): string {
 export function buildReportJson(r: ReportData): string {
   return JSON.stringify(
     {
-      session: { name: r.header.name, track: r.header.track, totalLaps: r.header.totalLaps },
+      session: {
+        name: r.header.name,
+        track: r.header.track,
+        totalLaps: r.header.totalLaps,
+        result: r.final ? "final" : "provisional",
+      },
       summary: {
         winner: r.summary.winner,
         fastestLap: { driver: r.summary.fastestLapName, time: r.summary.fastestLapTime },
@@ -160,6 +191,7 @@ export function buildReportJson(r: ReportData): string {
         bestLap: fmtLap(c.bestMs),
         gapSec: c.gapSec,
         pits: c.pits,
+        status: c.status,
         penalised: c.penalised,
       })),
       decisions: r.decisions.map((d) => ({

@@ -52,15 +52,17 @@ export function useTunerSnapshot(sample: boolean): TunerSnapshot | null {
   return snap;
 }
 
-/** Fire-and-forget Tuner commands (no-ops in the preview / sample mode). */
-export async function setBalancePreference(value: number): Promise<void> {
-  if (!IN_TAURI) return;
+/** Tuner commands. Each returns the engine's resulting balance preference (or
+ *  null in the preview / sample mode, where there is no engine) so the UI can
+ *  reflect what the engine actually applied. */
+export async function setBalancePreference(value: number): Promise<number | null> {
+  if (!IN_TAURI) return null;
   const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("set_balance_preference", { value });
+  return invoke<number>("set_balance_preference", { value });
 }
 
-export async function applyFeedback(thumb: number): Promise<void> {
-  if (!IN_TAURI) return;
+export async function applyFeedback(thumb: number): Promise<number | null> {
+  if (!IN_TAURI) return null;
   const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("apply_feedback", { thumb });
+  return invoke<number>("apply_feedback", { thumb });
 }

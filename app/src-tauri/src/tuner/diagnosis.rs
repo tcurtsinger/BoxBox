@@ -87,10 +87,33 @@ impl PhaseTriple {
             CornerPhase::Exit => &mut self.exit,
         }
     }
+
+    /// Add another triple's sums into this one. Used to commit a clean lap's
+    /// staged samples into the durable buckets in one step.
+    pub fn merge_from(&mut self, other: &PhaseTriple) {
+        merge_acc(&mut self.entry, &other.entry);
+        merge_acc(&mut self.mid, &other.mid);
+        merge_acc(&mut self.exit, &other.exit);
+    }
+}
+
+/// Add one phase accumulator's sums into another.
+fn merge_acc(dst: &mut PhaseAcc, src: &PhaseAcc) {
+    dst.n += src.n;
+    dst.sum_slip_balance += src.sum_slip_balance;
+    dst.sum_understeer_angle += src.sum_understeer_angle;
+    dst.sum_throttle += src.sum_throttle;
+    dst.sum_brake += src.sum_brake;
 }
 
 /// Fold one in-corner frame into the matching phase accumulator (mutates).
-pub fn fold_sample(acc: &mut PhaseAcc, slip_balance: f64, understeer_angle: f64, throttle: f64, brake: f64) {
+pub fn fold_sample(
+    acc: &mut PhaseAcc,
+    slip_balance: f64,
+    understeer_angle: f64,
+    throttle: f64,
+    brake: f64,
+) {
     acc.n += 1;
     acc.sum_slip_balance += slip_balance;
     acc.sum_understeer_angle += understeer_angle;

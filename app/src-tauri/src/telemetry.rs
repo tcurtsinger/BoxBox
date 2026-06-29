@@ -3,7 +3,7 @@
 //! a `telemetry:packet` event carrying the full `{ id, header, data }` shape. The
 //! Tuner/Race-Control domain engines that consume these land in a later stage.
 
-use std::net::UdpSocket;
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -84,8 +84,7 @@ fn spawn_listener(
     race: Arc<Mutex<SessionState>>,
     profile: Arc<ProfileStore>,
 ) -> Result<Listener, String> {
-    let socket =
-        UdpSocket::bind(("0.0.0.0", port)).map_err(|e| format!("bind UDP {port}: {e}"))?;
+    let socket = UdpSocket::bind(("0.0.0.0", port)).map_err(|e| format!("bind UDP {port}: {e}"))?;
     socket
         .set_read_timeout(Some(Duration::from_millis(400)))
         .map_err(|e| e.to_string())?;
@@ -94,10 +93,22 @@ fn spawn_listener(
     let stop_worker = stop.clone();
     let handle = std::thread::spawn(move || {
         let mut buf = [0u8; 2048];
+        // The F1 feed comes from exactly one host (the game PC or console). Lock
+        // onto the first source we hear a valid packet from and ignore datagrams
+        // from anyone else, so a stray or spoofed LAN sender can't inject fake
+        // incidents or poison Tuner learning. A port change restarts the listener
+        // and re-pins.
+        let mut source: Option<SocketAddr> = None;
         while !stop_worker.load(Ordering::Relaxed) {
             match socket.recv_from(&mut buf) {
-                Ok((n, _addr)) => {
+                Ok((n, addr)) => {
+                    if matches!(source, Some(pinned) if pinned != addr) {
+                        continue; // datagram from an unexpected source — ignore
+                    }
                     if let Some(packet) = parse_packet(&buf[..n]) {
+                        if source.is_none() {
+                            source = Some(addr);
+                        }
                         let _ = app.emit("telemetry:packet", &packet);
                         // Feed both engines. A poisoned lock just means a prior
                         // panic elsewhere; skip the frame rather than propagate.
@@ -143,8 +154,18 @@ pub fn start_telemetry(
     if slot.as_ref().is_some_and(|l| l.port == port) {
         return Ok(());
     }
-    *slot = None; // drop -> stops & joins the old listener, freeing the port
-    *slot = Some(spawn_listener(app, port, tuner.0.clone(), race.0.clone(), profile.0.clone())?);
+    // Bind the new listener first; only replace (and so drop) the old one on
+    // success, so a failed bind leaves the existing listener running rather than
+    // killing the feed (P2.1). A port change is always to a different port, so the
+    // two never contend for the same bind.
+    let listener = spawn_listener(
+        app,
+        port,
+        tuner.0.clone(),
+        race.0.clone(),
+        profile.0.clone(),
+    )?;
+    *slot = Some(listener); // drops & joins the previous listener
     Ok(())
 }
 
@@ -198,8 +219,15 @@ pub fn race_snapshot(race: tauri::State<'_, RaceStore>) -> Result<SessionSnapsho
 
 /// Steward: promote a logged feed item into the review queue.
 #[tauri::command]
-pub fn flag_for_review(race: tauri::State<'_, RaceStore>, id: String) -> Result<Option<Incident>, String> {
-    Ok(race.0.lock().map_err(|e| e.to_string())?.flag_for_review(&id, now_ms()))
+pub fn flag_for_review(
+    race: tauri::State<'_, RaceStore>,
+    id: String,
+) -> Result<Option<Incident>, String> {
+    Ok(race
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .flag_for_review(&id, now_ms()))
 }
 
 /// Steward: approve an incident with a free-text outcome.
@@ -209,13 +237,23 @@ pub fn approve_incident(
     id: String,
     outcome: Option<String>,
 ) -> Result<Option<Incident>, String> {
-    Ok(race.0.lock().map_err(|e| e.to_string())?.approve_incident(&id, outcome, now_ms()))
+    race.0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .approve_incident(&id, outcome, now_ms())
 }
 
 /// Steward: dismiss an incident (no action taken).
 #[tauri::command]
-pub fn dismiss_incident(race: tauri::State<'_, RaceStore>, id: String) -> Result<Option<Incident>, String> {
-    Ok(race.0.lock().map_err(|e| e.to_string())?.dismiss_incident(&id, now_ms()))
+pub fn dismiss_incident(
+    race: tauri::State<'_, RaceStore>,
+    id: String,
+) -> Result<Option<Incident>, String> {
+    Ok(race
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .dismiss_incident(&id, now_ms()))
 }
 
 /// Steward: set or clear a note on any incident.
@@ -225,13 +263,24 @@ pub fn set_incident_note(
     id: String,
     note: Option<String>,
 ) -> Result<Option<Incident>, String> {
-    Ok(race.0.lock().map_err(|e| e.to_string())?.set_incident_note(&id, note, now_ms()))
+    Ok(race
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .set_incident_note(&id, note, now_ms()))
 }
 
 /// Steward: reopen a decided incident back to the review queue.
 #[tauri::command]
-pub fn reopen_incident(race: tauri::State<'_, RaceStore>, id: String) -> Result<Option<Incident>, String> {
-    Ok(race.0.lock().map_err(|e| e.to_string())?.reopen_incident(&id, now_ms()))
+pub fn reopen_incident(
+    race: tauri::State<'_, RaceStore>,
+    id: String,
+) -> Result<Option<Incident>, String> {
+    Ok(race
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .reopen_incident(&id, now_ms()))
 }
 
 /// Steward: log an incident by hand.
@@ -239,10 +288,15 @@ pub fn reopen_incident(race: tauri::State<'_, RaceStore>, id: String) -> Result<
 pub fn log_manual_incident(
     race: tauri::State<'_, RaceStore>,
     car_indices: Vec<u8>,
+    code: Option<String>,
     label: Option<String>,
     note: Option<String>,
 ) -> Result<Incident, String> {
-    Ok(race.0.lock().map_err(|e| e.to_string())?.log_manual_incident(car_indices, label, note, now_ms()))
+    Ok(race
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .log_manual_incident(car_indices, code, label, note, now_ms()))
 }
 
 /// Steward: set or clear a manual display-name override for a car.
@@ -252,5 +306,9 @@ pub fn set_driver_name(
     index: u8,
     name: String,
 ) -> Result<Option<(u8, Option<String>)>, String> {
-    Ok(race.0.lock().map_err(|e| e.to_string())?.set_driver_name(index, &name, now_ms()))
+    Ok(race
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .set_driver_name(index, &name, now_ms()))
 }

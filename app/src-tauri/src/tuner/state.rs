@@ -160,7 +160,12 @@ fn wear_axle_is_front(lever: WearLever) -> bool {
 fn setup_looks_real(s: Option<&CarSetupEntry>) -> bool {
     match s {
         None => false,
-        Some(s) => s.brake_bias > 0 || s.front_wing > 0 || s.front_left_tyre_pressure > 5.0 || s.fuel_load > 0.0,
+        Some(s) => {
+            s.brake_bias > 0
+                || s.front_wing > 0
+                || s.front_left_tyre_pressure > 5.0
+                || s.fuel_load > 0.0
+        }
     }
 }
 
@@ -220,6 +225,10 @@ pub struct TunerState {
     current_lap_num: i32,
     lap_invalidated: bool,
     lap_trace: Vec<TraceSample>,
+    // This lap's corner-diagnosis samples, staged per corner id. Committed into
+    // `corner_diag` / `window_diag` only when the lap finalizes clean (P1.3), so a
+    // cut/spin/off-track lap can't shape advice or learned gains.
+    lap_diag: HashMap<u32, PhaseTriple>,
     t_speed: Option<f64>,
     t_throttle: f64,
     t_brake: f64,
@@ -262,7 +271,11 @@ impl TunerState {
 
     /// Set the driver balance preference, clamped to -1..+1. Returns the applied value.
     pub fn set_balance_preference(&mut self, p: f64) -> f64 {
-        let v = if p.is_finite() { p.clamp(-1.0, 1.0) } else { 0.0 };
+        let v = if p.is_finite() {
+            p.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
         if v != self.balance_preference {
             self.balance_preference = v;
             self.profile_rev += 1;
@@ -279,12 +292,11 @@ impl TunerState {
     /// The driver profile to persist (balance preference + the loops' raw learned
     /// observations). Mirrors the old server's TunerProfile.
     pub fn export_profile(&self) -> super::profile::TunerProfile {
-        super::profile::TunerProfile {
-            version: super::profile::PROFILE_VERSION,
-            balance_preference: self.balance_preference,
-            gains: self.estimator.serialize(),
-            wear_gains: self.wear_estimator.serialize(),
-        }
+        super::profile::TunerProfile::from_state(
+            self.balance_preference,
+            &self.estimator.serialize(),
+            &self.wear_estimator.serialize(),
+        )
     }
 
     /// Restore a persisted profile at startup. Does NOT bump the revision: the
@@ -295,8 +307,8 @@ impl TunerState {
         } else {
             0.0
         };
-        self.estimator.restore(&p.gains);
-        self.wear_estimator.restore(&p.wear_gains);
+        self.estimator.restore(&p.gains_typed());
+        self.wear_estimator.restore(&p.wear_typed());
     }
 
     /// Apply thumbs feedback on the last change: a thumbs-up nudges the preference
@@ -306,15 +318,31 @@ impl TunerState {
         let Some(lc) = self.last_change.clone() else {
             return self.balance_preference;
         };
-        let up = if thumb >= 0.0 { 1.0 } else { -1.0 };
-        let toward = if lc.direction == BalanceDirection::Looser { -1.0 } else { 1.0 };
-        let next = self.set_balance_preference(self.balance_preference + up * toward * FEEDBACK_STEP);
+        // Only a clear thumbs-up (+) or thumbs-down (-) is acted on; 0 or NaN is a
+        // no-op so a stray call can't silently consume the pending change (P2.5).
+        let up = if thumb > 0.0 {
+            1.0
+        } else if thumb < 0.0 {
+            -1.0
+        } else {
+            return self.balance_preference;
+        };
+        let toward = if lc.direction == BalanceDirection::Looser {
+            -1.0
+        } else {
+            1.0
+        };
+        let next =
+            self.set_balance_preference(self.balance_preference + up * toward * FEEDBACK_STEP);
         self.last_change = None;
         next
     }
 
     pub fn ingest(&mut self, pkt: &ParsedPacket) {
         let h = &pkt.header;
+        if !self.session_uid.is_empty() && h.session_uid != self.session_uid {
+            self.reset_volatile_lap_state();
+        }
         self.format = h.packet_format;
         self.game_year = h.game_year;
         self.session_uid = h.session_uid.clone();
@@ -348,6 +376,32 @@ impl TunerState {
         }
     }
 
+    /// A Time Trial restart spawns a new session UID, often at the same lap number
+    /// and near-zero distance. Durable learning — setup, corner maps, gains, runs,
+    /// preference, the wear estimator — survives (this state is deliberately
+    /// UID-resilient), but the in-progress lap must not bleed across the boundary:
+    /// half a lap under the old UID then a fresh lap under the new one would
+    /// otherwise segment as one run. Reset only the volatile lap buffers.
+    fn reset_volatile_lap_state(&mut self) {
+        self.lap_distance = 0.0;
+        self.current_lap_num = -1;
+        self.lap_invalidated = false;
+        self.lap_trace = Vec::new();
+        self.lap_diag = HashMap::new();
+        self.slip_balance = None;
+        self.front_slip = None;
+        self.rear_slip = None;
+        self.understeer_angle = None;
+        self.cornering = false;
+        self.t_speed = None;
+        self.t_throttle = 0.0;
+        self.t_brake = 0.0;
+        // An open gain measurement spanning the reset is suspect: drop it and its
+        // window so it can't complete against samples mixed from two runs.
+        self.window_diag = HashMap::new();
+        self.pending = None;
+    }
+
     fn ingest_session(&mut self, s: &SessionData) {
         let new_track = s.track_id as i32;
         if new_track != self.track_id {
@@ -370,8 +424,16 @@ impl TunerState {
         self.t_throttle = t.throttle as f64;
         self.t_brake = t.brake as f64;
         if t.speed > TEMP_SPEED_FLOOR {
-            self.core_temp = Some(ema_tyre(self.core_temp, tyres_from_packet(&t.tyres_inner_temperature), TEMP_EMA_ALPHA));
-            self.surface_temp = Some(ema_tyre(self.surface_temp, tyres_from_packet(&t.tyres_surface_temperature), TEMP_EMA_ALPHA));
+            self.core_temp = Some(ema_tyre(
+                self.core_temp,
+                tyres_from_packet(&t.tyres_inner_temperature),
+                TEMP_EMA_ALPHA,
+            ));
+            self.surface_temp = Some(ema_tyre(
+                self.surface_temp,
+                tyres_from_packet(&t.tyres_surface_temperature),
+                TEMP_EMA_ALPHA,
+            ));
         }
     }
 
@@ -434,13 +496,18 @@ impl TunerState {
                     let throttle = self.t_throttle;
                     let brake = self.t_brake;
 
-                    let by_corner = self.corner_diag.entry(self.track_id).or_default();
-                    let triple = by_corner.entry(corner.id).or_default();
-                    fold_sample(triple.phase_mut(cc.phase), sb, understeer_angle, throttle, brake);
-
-                    let w_triple = self.window_diag.entry(corner.id).or_default();
-                    fold_sample(w_triple.phase_mut(cc.phase), sb, understeer_angle, throttle, brake);
-                    self.try_complete_pending();
+                    // Stage this frame in the per-lap buffer; it is committed to the
+                    // durable corner diagnosis and the measurement window only when
+                    // the lap finalizes clean (P1.3), so a cut/spin/off-track lap
+                    // never shapes advice or learned gains.
+                    let triple = self.lap_diag.entry(corner.id).or_default();
+                    fold_sample(
+                        triple.phase_mut(cc.phase),
+                        sb,
+                        understeer_angle,
+                        throttle,
+                        brake,
+                    );
                 }
             }
         }
@@ -468,6 +535,7 @@ impl TunerState {
             self.try_complete_wear_pending();
             self.current_lap_num = lap.current_lap_num as i32;
             self.lap_trace = Vec::new();
+            self.lap_diag = HashMap::new();
             self.lap_invalidated = false;
         }
         if lap.current_lap_invalid {
@@ -501,19 +569,53 @@ impl TunerState {
 
         let fresh = segment_lap(&self.lap_trace);
         if !fresh.is_empty() {
-            let merged = merge_corner_map(self.corner_maps.get(&self.track_id).map(|v| v.as_slice()), &fresh);
+            let merged = merge_corner_map(
+                self.corner_maps.get(&self.track_id).map(|v| v.as_slice()),
+                &fresh,
+            );
             self.corner_maps.insert(self.track_id, merged);
         }
 
-        let corners = self.corner_maps.get(&self.track_id).cloned().unwrap_or_default();
-        let ls = lap_stats(&self.lap_trace, &corners, lap_time_ms, !self.lap_invalidated);
-        if let Some(setup) = self.setup.clone() {
-            if ls.valid && ls.lap_time_ms > 0 {
+        let corners = self
+            .corner_maps
+            .get(&self.track_id)
+            .cloned()
+            .unwrap_or_default();
+        let ls = lap_stats(
+            &self.lap_trace,
+            &corners,
+            lap_time_ms,
+            !self.lap_invalidated,
+        );
+        // Only fold a run when the captured setup matches the live car/track, so a
+        // stale setup can't bank lap times against the wrong wing config (P2.5).
+        if self.setup_is_current() && ls.valid && ls.lap_time_ms > 0 {
+            if let Some(setup) = self.setup.clone() {
                 let key = run_key(setup.front_wing, setup.rear_wing);
                 let m = self.runs.entry(self.track_id).or_default();
-                let cur = m.get(&key).copied().unwrap_or_else(|| new_run(setup.front_wing, setup.rear_wing));
+                let cur = m
+                    .get(&key)
+                    .copied()
+                    .unwrap_or_else(|| new_run(setup.front_wing, setup.rear_wing));
                 m.insert(key, fold_lap(cur, &ls));
             }
+        }
+
+        // Commit this lap's staged corner diagnosis only if it stayed clean: a cut,
+        // spin or off-track lap must not shape setup advice or persistent gains.
+        // Reaching here also means the lap was complete enough (the checks above).
+        if !self.lap_invalidated {
+            let staged = std::mem::take(&mut self.lap_diag);
+            {
+                let by_corner = self.corner_diag.entry(self.track_id).or_default();
+                for (id, triple) in &staged {
+                    by_corner.entry(*id).or_default().merge_from(triple);
+                }
+            }
+            for (id, triple) in &staged {
+                self.window_diag.entry(*id).or_default().merge_from(triple);
+            }
+            self.try_complete_pending();
         }
     }
 
@@ -533,29 +635,44 @@ impl TunerState {
     }
 
     fn try_complete_pending(&mut self) {
-        let Some(p) = self.pending.clone() else { return };
+        let Some(p) = self.pending.clone() else {
+            return;
+        };
         let (value, samples) = self.window_channel(p.channel);
         let Some(after) = value else { return };
         if samples < MIN_WINDOW_SAMPLES {
             return;
         }
-        if self.estimator.record(p.lever, p.delta_clicks, p.channel_before, after) {
+        if self
+            .estimator
+            .record(p.lever, p.delta_clicks, p.channel_before, after)
+        {
             self.profile_rev += 1;
         }
         self.pending = None;
     }
 
     fn on_setup_change(&mut self, old: &CarSetupEntry, next: &CarSetupEntry) {
-        let changed_fields: Vec<SetupField> =
-            SETUP_FIELDS.iter().copied().filter(|k| k.value(old) != k.value(next)).collect();
+        let changed_fields: Vec<SetupField> = SETUP_FIELDS
+            .iter()
+            .copied()
+            .filter(|k| k.value(old) != k.value(next))
+            .collect();
         if changed_fields.is_empty() {
             return;
         }
 
         // The single changed tracked lever, if exactly one.
-        let changed_tracked: Vec<SetupField> =
-            changed_fields.iter().copied().filter(|k| k.as_suggest().is_some()).collect();
-        let single: Option<SetupField> = if changed_tracked.len() == 1 { Some(changed_tracked[0]) } else { None };
+        let changed_tracked: Vec<SetupField> = changed_fields
+            .iter()
+            .copied()
+            .filter(|k| k.as_suggest().is_some())
+            .collect();
+        let single: Option<SetupField> = if changed_tracked.len() == 1 {
+            Some(changed_tracked[0])
+        } else {
+            None
+        };
 
         // Coalesce a multi-click ramp of ONE lever made in the garage with no
         // driving between the clicks into a single net change.
@@ -609,7 +726,11 @@ impl TunerState {
                 if self.wear_laps >= MIN_WEAR_LAPS {
                     if let Some(before) = wear_rate(baseline, wear, self.wear_laps) {
                         let front = wear_axle_is_front(wear_key);
-                        let rate_before = if front { (before.fl + before.fr) / 2.0 } else { (before.rl + before.rr) / 2.0 };
+                        let rate_before = if front {
+                            (before.fl + before.fr) / 2.0
+                        } else {
+                            (before.rl + before.rr) / 2.0
+                        };
                         // Delta on the changed field, in its native units.
                         let field = changed_fields[0];
                         self.wear_pending = Some(WearPending {
@@ -629,30 +750,57 @@ impl TunerState {
     }
 
     fn try_complete_wear_pending(&mut self) {
-        let Some(wp) = self.wear_pending.clone() else { return };
-        let (Some(wear), Some(baseline)) = (self.wear, self.wear_baseline) else { return };
+        let Some(wp) = self.wear_pending.clone() else {
+            return;
+        };
+        let (Some(wear), Some(baseline)) = (self.wear, self.wear_baseline) else {
+            return;
+        };
         if self.wear_laps < MIN_WEAR_LAPS {
             return;
         }
-        let Some(rate) = wear_rate(baseline, wear, self.wear_laps) else { return };
-        let after = if wp.front { (rate.fl + rate.fr) / 2.0 } else { (rate.rl + rate.rr) / 2.0 };
-        if self.wear_estimator.record(wp.lever, wp.delta_clicks, wp.rate_before, after) {
+        let Some(rate) = wear_rate(baseline, wear, self.wear_laps) else {
+            return;
+        };
+        let after = if wp.front {
+            (rate.fl + rate.fr) / 2.0
+        } else {
+            (rate.rl + rate.rr) / 2.0
+        };
+        if self
+            .wear_estimator
+            .record(wp.lever, wp.delta_clicks, wp.rate_before, after)
+        {
             self.profile_rev += 1;
         }
         self.wear_pending = None;
     }
 
-    fn note_change_opt(&mut self, single: Option<SetupField>, old: &CarSetupEntry, next: &CarSetupEntry, coalesce: bool) {
+    fn note_change_opt(
+        &mut self,
+        single: Option<SetupField>,
+        old: &CarSetupEntry,
+        next: &CarSetupEntry,
+        coalesce: bool,
+    ) {
         match single {
             None => self.last_change = None,
             Some(f) => self.note_change(f, old, next, coalesce),
         }
     }
 
-    fn note_change(&mut self, single: SetupField, old: &CarSetupEntry, next: &CarSetupEntry, coalesce: bool) {
+    fn note_change(
+        &mut self,
+        single: SetupField,
+        old: &CarSetupEntry,
+        next: &CarSetupEntry,
+        coalesce: bool,
+    ) {
         let lever = single.as_suggest().unwrap();
         let delta = single.value(next) - single.value(old);
-        let Some(direction) = change_direction(lever, delta) else { return };
+        let Some(direction) = change_direction(lever, delta) else {
+            return;
+        };
         let from = if coalesce && self.last_change.as_ref().map(|lc| lc.lever) == Some(lever) {
             self.last_change.as_ref().unwrap().from_value
         } else {
@@ -672,16 +820,24 @@ impl TunerState {
         if !setup_looks_real(self.setup.as_ref()) {
             return false;
         }
-        let track_changed = self.setup_track_id >= 0 && self.track_id >= 0 && self.setup_track_id != self.track_id;
-        let player_changed = self.setup_player_idx >= 0 && self.setup_player_idx != self.player_car_index as i32;
+        let track_changed =
+            self.setup_track_id >= 0 && self.track_id >= 0 && self.setup_track_id != self.track_id;
+        let player_changed =
+            self.setup_player_idx >= 0 && self.setup_player_idx != self.player_car_index as i32;
         !track_changed && !player_changed
     }
 
     pub fn snapshot(&self) -> Snapshot {
         let empty_corners: Vec<MappedCorner> = Vec::new();
-        let corners = self.corner_maps.get(&self.track_id).unwrap_or(&empty_corners);
+        let corners = self
+            .corner_maps
+            .get(&self.track_id)
+            .unwrap_or(&empty_corners);
         let empty_buckets: HashMap<u32, PhaseTriple> = HashMap::new();
-        let buckets = self.corner_diag.get(&self.track_id).unwrap_or(&empty_buckets);
+        let buckets = self
+            .corner_diag
+            .get(&self.track_id)
+            .unwrap_or(&empty_buckets);
         let corner_diagnosis: Vec<CornerDiagnosis> = if corners.is_empty() {
             Vec::new()
         } else {
@@ -726,7 +882,9 @@ impl TunerState {
             }),
             _ => None,
         };
-        let wear_advice = wear.as_ref().and_then(|w| build_wear_advice(w, &self.wear_estimator.as_map()));
+        let wear_advice = wear
+            .as_ref()
+            .and_then(|w| build_wear_advice(w, &self.wear_estimator.as_map()));
 
         let balance = self.slip_balance.map(|sb| BalanceOut {
             cornering: self.cornering,
@@ -736,11 +894,17 @@ impl TunerState {
             understeer_angle: self.understeer_angle.unwrap_or(0.0),
         });
 
-        let cur_corner = if corners.is_empty() { None } else { current_corner(corners, self.lap_distance) };
+        let cur_corner = if corners.is_empty() {
+            None
+        } else {
+            current_corner(corners, self.lap_distance)
+        };
 
         let trim: Option<TrimAdvice> = match (&self.setup, setup_current) {
             (Some(setup), true) => {
-                let all: Vec<RunStats> = track_runs.map(|m| m.values().copied().collect()).unwrap_or_default();
+                let all: Vec<RunStats> = track_runs
+                    .map(|m| m.values().copied().collect())
+                    .unwrap_or_default();
                 Some(build_trim_advice(setup.front_wing, setup.rear_wing, &all))
             }
             _ => None,
@@ -750,17 +914,29 @@ impl TunerState {
             track: track_name(self.track_id).unwrap_or("—").to_string(),
             session: session_label(self.session_type).to_string(),
             setup_received: setup_current,
-            equal_perf: self.equal_car_performance == Some(1),
+            // Tri-state (P2.6): None = unknown (not yet seen / 2025 pre-session),
+            // Some(false) = Off, Some(true) = On. Never collapse unknown to Off.
+            equal_perf: self.equal_car_performance.map(|v| v == 1),
             balance_preference: self.balance_preference,
             balance,
             current_corner: cur_corner,
             corners_mapped: corners.len() as u32,
             corners_confirmed: corners.iter().filter(|c| c.seen >= 2).count() as u32,
             diagnosis: corner_diagnosis.iter().map(CornerDiagOut::from).collect(),
-            setup: self.setup.clone(),
+            // Null a stale setup (and its last change) so a setup from a previous
+            // track or player car can't be shown or rated (P2.5).
+            setup: if setup_current {
+                self.setup.clone()
+            } else {
+                None
+            },
             next_front_wing: self.next_front_wing_value as f64,
             setup_advice,
-            last_change: self.last_change.as_ref().map(LastChangeOut::from),
+            last_change: if setup_current {
+                self.last_change.as_ref().map(LastChangeOut::from)
+            } else {
+                None
+            },
             trim,
             run: current_run,
             wear,
@@ -809,7 +985,11 @@ pub struct CornerDiagOut {
 impl From<&CornerDiagnosis> for CornerDiagOut {
     fn from(c: &CornerDiagnosis) -> Self {
         let phase = |p: &Option<super::diagnosis::PhaseDiagnosis>| {
-            p.map(|p| PhaseOut { tone: p.tone, slip_balance: p.slip_balance, samples: p.samples })
+            p.map(|p| PhaseOut {
+                tone: p.tone,
+                slip_balance: p.slip_balance,
+                samples: p.samples,
+            })
         };
         CornerDiagOut {
             id: c.id,
@@ -849,7 +1029,7 @@ pub struct Snapshot {
     pub track: String,
     pub session: String,
     pub setup_received: bool,
-    pub equal_perf: bool,
+    pub equal_perf: Option<bool>,
     pub balance_preference: f64,
     pub balance: Option<BalanceOut>,
     pub current_corner: Option<CurrentCorner>,
@@ -898,11 +1078,23 @@ mod tests {
     }
 
     fn p(id: u8, body: Body) -> ParsedPacket {
-        ParsedPacket { id, header: header(id), data: Some(body) }
+        ParsedPacket {
+            id,
+            header: header(id),
+            data: Some(body),
+        }
     }
 
     fn session(track: i8, stype: u8, len: u16) -> ParsedPacket {
-        p(1, Body::Session(SessionData { track_id: track, session_type: stype, track_length: len, ..Default::default() }))
+        p(
+            1,
+            Body::Session(SessionData {
+                track_id: track,
+                session_type: stype,
+                track_length: len,
+                ..Default::default()
+            }),
+        )
     }
 
     fn setups() -> ParsedPacket {
@@ -932,7 +1124,13 @@ mod tests {
             fuel_load: 10.0,
             engine_braking: 0,
         };
-        p(5, Body::CarSetups(CarSetupsData { cars: vec![c], next_front_wing_value: 5.0 }))
+        p(
+            5,
+            Body::CarSetups(CarSetupsData {
+                cars: vec![c],
+                next_front_wing_value: 5.0,
+            }),
+        )
     }
 
     fn telemetry(speed_kmh: u16, throttle: f64) -> ParsedPacket {
@@ -944,24 +1142,76 @@ mod tests {
             tyres_surface_temperature: vec![85, 85, 85, 85],
             ..Default::default()
         };
-        p(6, Body::CarTelemetry(CarTelemetryData { cars: vec![car], mfd_panel_index: 0, suggested_gear: 0 }))
+        p(
+            6,
+            Body::CarTelemetry(CarTelemetryData {
+                cars: vec![car],
+                mfd_panel_index: 0,
+                suggested_gear: 0,
+            }),
+        )
     }
 
     fn lapdata(dist: f64, lap: u8, last_ms: u32) -> ParsedPacket {
-        let car = LapEntry { index: 0, lap_distance: dist as f32, current_lap_num: lap, last_lap_time_ms: last_ms, ..Default::default() };
-        p(2, Body::LapData(LapDataData { cars: vec![car], time_trial_pb_car_idx: 0, time_trial_rival_car_idx: 0 }))
+        let car = LapEntry {
+            index: 0,
+            lap_distance: dist as f32,
+            current_lap_num: lap,
+            last_lap_time_ms: last_ms,
+            ..Default::default()
+        };
+        p(
+            2,
+            Body::LapData(LapDataData {
+                cars: vec![car],
+                time_trial_pb_car_idx: 0,
+                time_trial_rival_car_idx: 0,
+            }),
+        )
+    }
+
+    fn lapdata_invalid(dist: f64, lap: u8, last_ms: u32) -> ParsedPacket {
+        let car = LapEntry {
+            index: 0,
+            lap_distance: dist as f32,
+            current_lap_num: lap,
+            last_lap_time_ms: last_ms,
+            current_lap_invalid: true,
+            ..Default::default()
+        };
+        p(
+            2,
+            Body::LapData(LapDataData {
+                cars: vec![car],
+                time_trial_pb_car_idx: 0,
+                time_trial_rival_car_idx: 0,
+            }),
+        )
     }
 
     // Wheel order RL, RR, FL, FR. Cornering at 40 m/s with a clear steered angle.
     fn motion(slip_front: f64, slip_rear: f64) -> ParsedPacket {
-        let sa = vec![slip_rear as f32, slip_rear as f32, slip_front as f32, slip_front as f32];
+        let sa = vec![
+            slip_rear as f32,
+            slip_rear as f32,
+            slip_front as f32,
+            slip_front as f32,
+        ];
         let d = MotionExData {
             wheel_slip_ratio: vec![0.0; 4],
             wheel_slip_angle: sa,
             wheel_lat_force: vec![0.0; 4],
             wheel_long_force: vec![0.0; 4],
-            local_velocity: Vec3 { x: 0.0, y: 0.0, z: 40.0 },
-            angular_velocity: Vec3 { x: 0.0, y: 0.2, z: 0.0 },
+            local_velocity: Vec3 {
+                x: 0.0,
+                y: 0.0,
+                z: 40.0,
+            },
+            angular_velocity: Vec3 {
+                x: 0.0,
+                y: 0.2,
+                z: 0.0,
+            },
             front_wheels_angle: 0.1,
         };
         p(13, Body::MotionEx(d))
@@ -973,7 +1223,11 @@ mod tests {
         for i in 0..120u32 {
             let d = i as f64 * 25.0; // 0..2975
             let off = (d - 1500.0).abs();
-            let speed = if off < 250.0 { 300.0 - 200.0 * (250.0 - off) / 250.0 } else { 300.0 };
+            let speed = if off < 250.0 {
+                300.0 - 200.0 * (250.0 - off) / 250.0
+            } else {
+                300.0
+            };
             st.ingest(&telemetry(speed as u16, 0.3));
             st.ingest(&lapdata(d, lap, 0));
             if feed_motion && off < 250.0 {
@@ -995,12 +1249,37 @@ mod tests {
         let s = st.snapshot();
         assert_eq!(s.track, "Suzuka");
         assert_eq!(s.session, "Time Trial");
-        assert!(!s.equal_perf);
+        assert_eq!(s.equal_perf, None, "unknown until a packet reports it");
 
-        let tt = TimeTrialDataSet { equal_car_performance: 1, ..Default::default() };
-        let ttd = TimeTrialData { player_session_best: tt, ..Default::default() };
+        let tt = TimeTrialDataSet {
+            equal_car_performance: 1,
+            ..Default::default()
+        };
+        let ttd = TimeTrialData {
+            player_session_best: tt,
+            ..Default::default()
+        };
         st.ingest(&p(14, Body::TimeTrial(ttd)));
-        assert!(st.snapshot().equal_perf);
+        assert_eq!(st.snapshot().equal_perf, Some(true));
+    }
+
+    #[test]
+    fn feedback_thumb_zero_is_ignored() {
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&setups());
+        // Move one tracked lever so a last_change exists to rate.
+        let mut changed = setups();
+        if let Some(Body::CarSetups(d)) = changed.data.as_mut() {
+            d.cars[0].front_wing = 8; // +2 clicks vs the 6 in setups()
+        }
+        st.ingest(&changed);
+        let before = st.snapshot().balance_preference;
+        // A zero thumb must not consume the change or move the preference.
+        assert_eq!(st.apply_feedback(0.0), before);
+        // A real thumbs-down still works afterwards.
+        let after = st.apply_feedback(-1.0);
+        assert_ne!(after, before);
     }
 
     #[test]
@@ -1022,7 +1301,11 @@ mod tests {
         // The balance read is live understeer (front slip > rear).
         let bal = s.balance.expect("balance present after cornering");
         assert!(bal.cornering);
-        assert!(bal.slip_balance > 0.02, "slip balance reads understeer: {}", bal.slip_balance);
+        assert!(
+            bal.slip_balance > 0.02,
+            "slip balance reads understeer: {}",
+            bal.slip_balance
+        );
 
         // The per-corner diagnosis bucketed the mid phase as understeer.
         assert_eq!(s.diagnosis.len(), 1);
@@ -1031,7 +1314,11 @@ mod tests {
 
         // Advice was drawn (mid understeer) and the measured run banked the laps.
         let advice = s.setup_advice.expect("advice present");
-        assert!(advice.headline.contains("understeer"), "headline: {}", advice.headline);
+        assert!(
+            advice.headline.contains("understeer"),
+            "headline: {}",
+            advice.headline
+        );
         assert!(!advice.suggestions.is_empty());
 
         let run = s.run.expect("a measured run on the current wings");
@@ -1043,14 +1330,99 @@ mod tests {
     }
 
     #[test]
+    fn invalid_lap_does_not_shape_diagnosis() {
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&setups());
+
+        // Lap 1 clean: maps the corner (so the corner window exists below).
+        drive_lap(&mut st, 1, false);
+        roll_over(&mut st, 2, 90_000);
+
+        // Lap 2 INVALID, with strong oversteer fed through the mapped corner. The
+        // samples must be discarded at finalize, not bucketed into the diagnosis.
+        for i in 0..120u32 {
+            let d = i as f64 * 25.0;
+            let off = (d - 1500.0).abs();
+            let speed = if off < 250.0 {
+                300.0 - 200.0 * (250.0 - off) / 250.0
+            } else {
+                300.0
+            };
+            st.ingest(&telemetry(speed as u16, 0.3));
+            st.ingest(&lapdata_invalid(d, 2, 0));
+            if off < 250.0 {
+                st.ingest(&motion(0.01, 0.09)); // rear slip >> front: oversteer
+            }
+        }
+        roll_over(&mut st, 3, 91_000);
+
+        let s = st.snapshot();
+        assert_eq!(
+            s.corners_mapped, 1,
+            "corner still mapped (geometry is fine)"
+        );
+        let c = &s.diagnosis[0];
+        assert!(
+            c.entry.is_none() && c.mid.is_none() && c.exit.is_none(),
+            "an invalid lap must contribute no diagnosis samples",
+        );
+    }
+
+    #[test]
+    fn time_trial_uid_reset_clears_volatile_lap_state() {
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&setups());
+
+        // Half a lap under UID "1": the trace builds toward the corner but the lap
+        // never completes.
+        for i in 0..60u32 {
+            let d = i as f64 * 25.0; // 0..1475
+            st.ingest(&telemetry(300, 0.3));
+            st.ingest(&lapdata(d, 1, 0));
+        }
+        assert!(st.lap_trace.len() > 10, "trace built under UID 1");
+
+        // A restart spawns a new UID at the same lap number near zero distance.
+        let mut reset_pkt = lapdata(5.0, 1, 0);
+        reset_pkt.header.session_uid = "2".into();
+        st.ingest(&reset_pkt);
+
+        // The old half-lap trace was discarded, so the two runs can't segment as
+        // one. (current_lap_num re-seeds from the new packet.)
+        assert_eq!(st.current_lap_num, 1);
+        assert!(
+            st.lap_trace.len() <= 1,
+            "volatile trace reset on UID change, got {}",
+            st.lap_trace.len(),
+        );
+    }
+
+    #[test]
     fn wear_rate_and_advice() {
-        let base = TyreReading { fl: 0.0, fr: 0.0, rl: 0.0, rr: 0.0 };
-        let now = TyreReading { fl: 10.0, fr: 8.0, rl: 3.0, rr: 3.0 };
+        let base = TyreReading {
+            fl: 0.0,
+            fr: 0.0,
+            rl: 0.0,
+            rr: 0.0,
+        };
+        let now = TyreReading {
+            fl: 10.0,
+            fr: 8.0,
+            rl: 3.0,
+            rr: 3.0,
+        };
         let r = wear_rate(base, now, 5).unwrap();
         assert!((r.fl - 2.0).abs() < 1e-9);
 
         let gains: HashMap<WearLever, _> = WearEstimator::default().as_map();
-        let rate = TyreReading { fl: 2.0, fr: 2.0, rl: 0.5, rr: 0.5 };
+        let rate = TyreReading {
+            fl: 2.0,
+            fr: 2.0,
+            rl: 0.5,
+            rr: 0.5,
+        };
         let stint = WearStint {
             laps: 5,
             wear: now,
@@ -1062,9 +1434,16 @@ mod tests {
             surface: None,
         };
         let adv = build_wear_advice(&stint, &gains).expect("front-biased wear gives advice");
-        assert!(adv.headline.contains("Fronts"), "headline: {}", adv.headline);
+        assert!(
+            adv.headline.contains("Fronts"),
+            "headline: {}",
+            adv.headline
+        );
         assert_eq!(adv.fastest, TyreCorner::Fl);
-        assert!(adv.suggestions.iter().any(|x| x.param == WearParam::FrontToe));
+        assert!(adv
+            .suggestions
+            .iter()
+            .any(|x| x.param == WearParam::FrontToe));
     }
 
     #[test]

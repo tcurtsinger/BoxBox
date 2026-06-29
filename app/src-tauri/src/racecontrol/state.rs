@@ -88,6 +88,7 @@ pub struct DriverState {
     pub nationality: u8,
     pub ai_controlled: bool,
     pub telemetry_public: bool,
+    pub show_online_names: bool,
     pub livery_colours: Vec<LiveryColour>,
     pub name_override: Option<String>,
     // timing (LapData)
@@ -189,6 +190,19 @@ pub struct SessionState {
     name_overrides: HashMap<u8, String>,
 }
 
+// Bound the live incident log so an event flood can't grow memory without limit;
+// the snapshot clones this vector each poll, so its size also caps poll latency.
+const MAX_INCIDENTS: usize = 1000;
+// Exact-duplicate auto incidents within this window (seconds) are suppressed.
+const INCIDENT_DEDUPE_SECS: f64 = 2.0;
+
+// The event codes the F1 title emits. Only these are tallied, so a spoofed packet
+// with an arbitrary 4-char code can't grow the tally map without bound.
+const KNOWN_EVENT_CODES: &[&str] = &[
+    "SSTA", "SEND", "FTLP", "RTMT", "DRSE", "DRSD", "TMPT", "CHQF", "RCWN", "PENA", "SPTP", "STLG",
+    "LGOT", "DTSV", "SGSV", "FLBK", "BUTN", "RDFL", "OVTK", "SCAR", "COLL",
+];
+
 impl SessionState {
     pub fn new() -> Self {
         Self {
@@ -242,7 +256,10 @@ impl SessionState {
     }
 
     fn driver_mut(&mut self, index: u8) -> &mut DriverState {
-        self.drivers.entry(index).or_insert_with(|| DriverState { index, ..Default::default() })
+        self.drivers.entry(index).or_insert_with(|| DriverState {
+            index,
+            ..Default::default()
+        })
     }
 
     fn ingest_participants(&mut self, p: &ParticipantsData) {
@@ -255,6 +272,7 @@ impl SessionState {
             d.nationality = e.nationality;
             d.ai_controlled = e.ai_controlled;
             d.telemetry_public = e.telemetry_public;
+            d.show_online_names = e.show_online_names;
             d.livery_colours = e.livery_colours.clone();
         }
     }
@@ -265,7 +283,8 @@ impl SessionState {
             d.position = c.car_position;
             d.grid_position = c.grid_position;
             d.last_lap_ms = c.last_lap_time_ms;
-            if c.last_lap_time_ms > 0 && (d.best_lap_ms == 0 || c.last_lap_time_ms < d.best_lap_ms) {
+            if c.last_lap_time_ms > 0 && (d.best_lap_ms == 0 || c.last_lap_time_ms < d.best_lap_ms)
+            {
                 d.best_lap_ms = c.last_lap_time_ms;
             }
             d.current_lap_num = c.current_lap_num;
@@ -333,8 +352,13 @@ impl SessionState {
     }
 
     fn ingest_event(&mut self, e: &EventData, session_time: f64) {
-        *self.event_tally.entry(e.code.clone()).or_insert(0) += 1;
-        let Some(label) = self.event_incident_label(e) else { return };
+        // Only tally known codes so a spoofed code can't grow the map (P2.2).
+        if KNOWN_EVENT_CODES.contains(&e.code.as_str()) {
+            *self.event_tally.entry(e.code.clone()).or_insert(0) += 1;
+        }
+        let Some(label) = self.event_incident_label(e) else {
+            return;
+        };
 
         // 255 is the F1 "no value" sentinel; drop it from car lists (deduped) and
         // from detail so it never surfaces (e.g. a penalty with no time).
@@ -378,13 +402,29 @@ impl SessionState {
         put_f32("lapTime", e.lap_time);
         put_f32("stopTime", e.stop_time);
 
+        let lap_num = e.lap_num.map(|v| v as u32);
+        // Suppress an exact-duplicate auto incident right after another (same code,
+        // cars, lap and detail within a short window) so a flood of identical
+        // spammed events can't fill the log (P2.2).
+        if let Some(last) = self.incidents.last() {
+            if last.source == IncidentSource::Auto
+                && last.code == e.code
+                && last.car_indices == car_indices
+                && last.lap_num == lap_num
+                && last.detail == detail
+                && session_time - last.session_time < INCIDENT_DEDUPE_SECS
+            {
+                return;
+            }
+        }
+
         let id = self.next_incident_id;
         self.next_incident_id += 1;
         self.incidents.push(Incident {
             id: id.to_string(),
             source: IncidentSource::Auto,
             session_time,
-            lap_num: e.lap_num.map(|v| v as u32),
+            lap_num,
             code: e.code.clone(),
             label,
             car_indices,
@@ -393,6 +433,21 @@ impl SessionState {
             note: String::new(),
             ruling: None,
         });
+        self.trim_incidents();
+    }
+
+    /// Cap the incident log: drop the oldest still-logged (auto, undecided)
+    /// incidents first so steward-flagged and decided ones survive, falling back
+    /// to the very oldest only if every remaining incident is steward-touched.
+    fn trim_incidents(&mut self) {
+        while self.incidents.len() > MAX_INCIDENTS {
+            let idx = self
+                .incidents
+                .iter()
+                .position(|i| i.status == IncidentStatus::Logged)
+                .unwrap_or(0);
+            self.incidents.remove(idx);
+        }
     }
 
     // The incident-log label for an event, or None to keep it out of the log.
@@ -425,24 +480,43 @@ impl SessionState {
         }
     }
 
-    /// Steward logs an incident by hand. Returns the created incident.
+    /// Steward logs an incident by hand. Returns the created incident. `code` is
+    /// the steward's selected incident type (e.g. COLL, TLIM) so a live manual
+    /// incident behaves like its auto counterpart for tone/label; it falls back to
+    /// "MANUAL" when omitted (P3.2).
     pub fn log_manual_incident(
         &mut self,
         car_indices: Vec<u8>,
+        code: Option<String>,
         label: Option<String>,
         note: Option<String>,
         at_ms: f64,
     ) -> Incident {
-        let leader_lap = self.drivers.values().map(|d| d.current_lap_num).max().unwrap_or(0);
+        let leader_lap = self
+            .drivers
+            .values()
+            .map(|d| d.current_lap_num)
+            .max()
+            .unwrap_or(0);
         let id = self.next_incident_id;
         self.next_incident_id += 1;
         let incident = Incident {
             id: id.to_string(),
             source: IncidentSource::Manual,
             session_time: self.session_time,
-            lap_num: if leader_lap > 0 { Some(leader_lap as u32) } else { None },
-            code: "MANUAL".to_string(),
-            label: label.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "Manual incident".to_string()),
+            lap_num: if leader_lap > 0 {
+                Some(leader_lap as u32)
+            } else {
+                None
+            },
+            code: code
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "MANUAL".to_string()),
+            label: label
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "Manual incident".to_string()),
             car_indices,
             detail: HashMap::new(),
             status: IncidentStatus::Flagged,
@@ -450,6 +524,7 @@ impl SessionState {
             ruling: None,
         };
         self.incidents.push(incident.clone());
+        self.trim_incidents();
         self.last_update = at_ms;
         incident
     }
@@ -458,15 +533,30 @@ impl SessionState {
         self.incidents.iter_mut().find(|i| i.id == id)
     }
 
-    /// Steward approves an incident with a free-text outcome.
-    pub fn approve_incident(&mut self, id: &str, outcome: Option<String>, at_ms: f64) -> Option<Incident> {
+    /// Steward approves an incident with a free-text outcome. The outcome is the
+    /// audit record of the ruling, so a blank one is rejected rather than silently
+    /// recording an empty penalty (P1.5). `Ok(None)` means no such incident id.
+    pub fn approve_incident(
+        &mut self,
+        id: &str,
+        outcome: Option<String>,
+        at_ms: f64,
+    ) -> Result<Option<Incident>, String> {
         let outcome = outcome.map(|s| s.trim().to_string()).unwrap_or_default();
-        let i = self.incident_mut(id)?;
-        i.ruling = Some(Ruling { outcome, decided_at_ms: at_ms });
+        if outcome.is_empty() {
+            return Err("A penalty needs an outcome.".to_string());
+        }
+        let Some(i) = self.incident_mut(id) else {
+            return Ok(None);
+        };
+        i.ruling = Some(Ruling {
+            outcome,
+            decided_at_ms: at_ms,
+        });
         i.status = IncidentStatus::Approved;
         let out = i.clone();
         self.last_update = at_ms;
-        Some(out)
+        Ok(Some(out))
     }
 
     /// Steward promotes a logged feed item into the review queue.
@@ -490,7 +580,12 @@ impl SessionState {
     }
 
     /// Set or clear a steward note on any incident.
-    pub fn set_incident_note(&mut self, id: &str, note: Option<String>, at_ms: f64) -> Option<Incident> {
+    pub fn set_incident_note(
+        &mut self,
+        id: &str,
+        note: Option<String>,
+        at_ms: f64,
+    ) -> Option<Incident> {
         let note = note.map(|s| s.trim().to_string()).unwrap_or_default();
         let i = self.incident_mut(id)?;
         i.note = note;
@@ -511,12 +606,21 @@ impl SessionState {
 
     /// Set or clear a manual display-name override for a car. Persists across
     /// session resets. Returns None for an invalid index.
-    pub fn set_driver_name(&mut self, index: u8, name: &str, at_ms: f64) -> Option<(u8, Option<String>)> {
+    pub fn set_driver_name(
+        &mut self,
+        index: u8,
+        name: &str,
+        at_ms: f64,
+    ) -> Option<(u8, Option<String>)> {
         if index >= 100 {
             return None;
         }
         let trimmed = name.trim().to_string();
-        let value = if trimmed.is_empty() { None } else { Some(trimmed) };
+        let value = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        };
         match &value {
             Some(v) => {
                 self.name_overrides.insert(index, v.clone());
@@ -546,15 +650,33 @@ impl SessionState {
             d.name_override = self.name_overrides.get(&d.index).cloned();
         }
         let by_position = |a: &DriverState, b: &DriverState| {
-            let pa = if a.position == 0 { 999 } else { a.position as u32 };
-            let pb = if b.position == 0 { 999 } else { b.position as u32 };
+            let pa = if a.position == 0 {
+                999
+            } else {
+                a.position as u32
+            };
+            let pb = if b.position == 0 {
+                999
+            } else {
+                b.position as u32
+            };
             pa.cmp(&pb).then(a.index.cmp(&b.index))
         };
 
-        if session_category_of(self.session.as_ref().map(|s| s.session_type)) == SessionCategory::Qualifying {
+        if session_category_of(self.session.as_ref().map(|s| s.session_type))
+            == SessionCategory::Qualifying
+        {
             list.sort_by(|a, b| {
-                let ba = if a.best_lap_ms == 0 { u32::MAX } else { a.best_lap_ms };
-                let bb = if b.best_lap_ms == 0 { u32::MAX } else { b.best_lap_ms };
+                let ba = if a.best_lap_ms == 0 {
+                    u32::MAX
+                } else {
+                    a.best_lap_ms
+                };
+                let bb = if b.best_lap_ms == 0 {
+                    u32::MAX
+                } else {
+                    b.best_lap_ms
+                };
                 ba.cmp(&bb).then_with(|| by_position(a, b))
             });
         } else {
@@ -616,28 +738,67 @@ mod tests {
     fn pkt(id: u8, uid: &str, body: Body) -> ParsedPacket {
         let mut h = header(uid);
         h.packet_id = id;
-        ParsedPacket { id, header: h, data: Some(body) }
+        ParsedPacket {
+            id,
+            header: h,
+            data: Some(body),
+        }
     }
 
     fn session(uid: &str, stype: u8) -> ParsedPacket {
-        pkt(1, uid, Body::Session(SessionData { session_type: stype, track_id: 13, ..Default::default() }))
+        pkt(
+            1,
+            uid,
+            Body::Session(SessionData {
+                session_type: stype,
+                track_id: 13,
+                ..Default::default()
+            }),
+        )
     }
 
     fn participant(index: usize, name: &str, team: u16) -> ParticipantEntry {
-        ParticipantEntry { index, name: name.into(), team_id: team, ..Default::default() }
+        ParticipantEntry {
+            index,
+            name: name.into(),
+            team_id: team,
+            ..Default::default()
+        }
     }
 
     fn participants(uid: &str, cars: Vec<ParticipantEntry>) -> ParsedPacket {
         let n = cars.len() as u8;
-        pkt(4, uid, Body::Participants(ParticipantsData { num_active_cars: n, participants: cars }))
+        pkt(
+            4,
+            uid,
+            Body::Participants(ParticipantsData {
+                num_active_cars: n,
+                participants: cars,
+            }),
+        )
     }
 
     fn lap_entry(index: usize, pos: u8, grid: u8, last: u32, lap_num: u8) -> LapEntry {
-        LapEntry { index, car_position: pos, grid_position: grid, last_lap_time_ms: last, current_lap_num: lap_num, ..Default::default() }
+        LapEntry {
+            index,
+            car_position: pos,
+            grid_position: grid,
+            last_lap_time_ms: last,
+            current_lap_num: lap_num,
+            ..Default::default()
+        }
     }
 
     fn laps(uid: &str, cars: Vec<LapEntry>) -> ParsedPacket {
-        pkt(2, uid, Body::LapData(LapDataData { cars, time_trial_pb_car_idx: 0, time_trial_rival_car_idx: 0 }))
+        pkt(
+            2,
+            uid,
+            Body::LapData(LapDataData {
+                cars,
+                time_trial_pb_car_idx: 0,
+                time_trial_rival_car_idx: 0,
+            }),
+        )
     }
 
     fn event(uid: &str, e: EventData) -> ParsedPacket {
@@ -649,11 +810,25 @@ mod tests {
         let mut st = SessionState::new();
         st.ingest(&session("A", 15), 0.0); // race
         st.ingest(
-            &participants("A", vec![participant(0, "Rossi", 1), participant(1, "Sato", 2), participant(2, "Vance", 3)]),
+            &participants(
+                "A",
+                vec![
+                    participant(0, "Rossi", 1),
+                    participant(1, "Sato", 2),
+                    participant(2, "Vance", 3),
+                ],
+            ),
             0.0,
         );
         st.ingest(
-            &laps("A", vec![lap_entry(0, 3, 1, 80500, 10), lap_entry(1, 1, 2, 80100, 10), lap_entry(2, 2, 3, 80300, 10)]),
+            &laps(
+                "A",
+                vec![
+                    lap_entry(0, 3, 1, 80500, 10),
+                    lap_entry(1, 1, 2, 80100, 10),
+                    lap_entry(2, 2, 3, 80300, 10),
+                ],
+            ),
             0.0,
         );
 
@@ -670,9 +845,29 @@ mod tests {
     fn qualifying_sorts_by_best_lap() {
         let mut st = SessionState::new();
         st.ingest(&session("Q", 5), 0.0); // Q1 -> qualifying
-        st.ingest(&participants("Q", vec![participant(0, "A", 1), participant(1, "B", 2), participant(2, "C", 3)]), 0.0);
+        st.ingest(
+            &participants(
+                "Q",
+                vec![
+                    participant(0, "A", 1),
+                    participant(1, "B", 2),
+                    participant(2, "C", 3),
+                ],
+            ),
+            0.0,
+        );
         // positions deliberately not matching pace; B fastest, A no time set.
-        st.ingest(&laps("Q", vec![lap_entry(0, 1, 1, 0, 3), lap_entry(1, 2, 2, 79000, 3), lap_entry(2, 3, 3, 79500, 3)]), 0.0);
+        st.ingest(
+            &laps(
+                "Q",
+                vec![
+                    lap_entry(0, 1, 1, 0, 3),
+                    lap_entry(1, 2, 2, 79000, 3),
+                    lap_entry(2, 3, 3, 79500, 3),
+                ],
+            ),
+            0.0,
+        );
 
         let s = st.snapshot();
         let order: Vec<&str> = s.drivers.iter().map(|d| d.name.as_str()).collect();
@@ -683,7 +878,13 @@ mod tests {
     fn collision_event_logs_incident() {
         let mut st = SessionState::new();
         st.ingest(&session("A", 15), 0.0);
-        let e = EventData { code: "COLL".into(), vehicle_idx: Some(3), other_vehicle_idx: Some(7), severity: Some(2), ..Default::default() };
+        let e = EventData {
+            code: "COLL".into(),
+            vehicle_idx: Some(3),
+            other_vehicle_idx: Some(7),
+            severity: Some(2),
+            ..Default::default()
+        };
         st.ingest(&event("A", e), 0.0);
 
         let s = st.snapshot();
@@ -701,9 +902,21 @@ mod tests {
         let mut st = SessionState::new();
         st.ingest(&session("A", 15), 0.0);
         // Real: time penalty (type 4), infringement 7 (corner cutting gained time).
-        let real = EventData { code: "PENA".into(), penalty_type: Some(4), infringement_type: Some(7), vehicle_idx: Some(5), ..Default::default() };
+        let real = EventData {
+            code: "PENA".into(),
+            penalty_type: Some(4),
+            infringement_type: Some(7),
+            vehicle_idx: Some(5),
+            ..Default::default()
+        };
         // Filtered: a warning (type 5) is tallied but not logged.
-        let warn = EventData { code: "PENA".into(), penalty_type: Some(5), infringement_type: Some(21), vehicle_idx: Some(6), ..Default::default() };
+        let warn = EventData {
+            code: "PENA".into(),
+            penalty_type: Some(5),
+            infringement_type: Some(21),
+            vehicle_idx: Some(6),
+            ..Default::default()
+        };
         st.ingest(&event("A", real), 0.0);
         st.ingest(&event("A", warn), 0.0);
 
@@ -718,11 +931,44 @@ mod tests {
         let mut st = SessionState::new();
         st.ingest(&session("A", 15), 0.0);
         // Deployed full SC (type 1, event 0) -> logged.
-        st.ingest(&event("A", EventData { code: "SCAR".into(), safety_car_type: Some(1), safety_car_event_type: Some(0), ..Default::default() }), 0.0);
+        st.ingest(
+            &event(
+                "A",
+                EventData {
+                    code: "SCAR".into(),
+                    safety_car_type: Some(1),
+                    safety_car_event_type: Some(0),
+                    ..Default::default()
+                },
+            ),
+            0.0,
+        );
         // Formation lap (type 3) -> not an incident.
-        st.ingest(&event("A", EventData { code: "SCAR".into(), safety_car_type: Some(3), safety_car_event_type: Some(0), ..Default::default() }), 0.0);
+        st.ingest(
+            &event(
+                "A",
+                EventData {
+                    code: "SCAR".into(),
+                    safety_car_type: Some(3),
+                    safety_car_event_type: Some(0),
+                    ..Default::default()
+                },
+            ),
+            0.0,
+        );
         // Returning (event type 1) -> not an incident.
-        st.ingest(&event("A", EventData { code: "SCAR".into(), safety_car_type: Some(1), safety_car_event_type: Some(1), ..Default::default() }), 0.0);
+        st.ingest(
+            &event(
+                "A",
+                EventData {
+                    code: "SCAR".into(),
+                    safety_car_type: Some(1),
+                    safety_car_event_type: Some(1),
+                    ..Default::default()
+                },
+            ),
+            0.0,
+        );
 
         let s = st.snapshot();
         assert_eq!(s.incidents.len(), 1);
@@ -734,7 +980,18 @@ mod tests {
         let mut st = SessionState::new();
         st.ingest(&session("A", 15), 0.0);
         st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
-        st.ingest(&event("A", EventData { code: "COLL".into(), vehicle_idx: Some(0), other_vehicle_idx: Some(1), ..Default::default() }), 0.0);
+        st.ingest(
+            &event(
+                "A",
+                EventData {
+                    code: "COLL".into(),
+                    vehicle_idx: Some(0),
+                    other_vehicle_idx: Some(1),
+                    ..Default::default()
+                },
+            ),
+            0.0,
+        );
         assert_eq!(st.snapshot().incidents.len(), 1);
 
         // New session UID wipes drivers + incidents.
@@ -750,24 +1007,120 @@ mod tests {
         let mut st = SessionState::new();
         st.ingest(&session("A", 15), 0.0);
         st.ingest(&participants("A", vec![participant(0, "Player", 1)]), 0.0);
-        st.ingest(&event("A", EventData { code: "COLL".into(), vehicle_idx: Some(0), other_vehicle_idx: Some(1), ..Default::default() }), 0.0);
+        st.ingest(
+            &event(
+                "A",
+                EventData {
+                    code: "COLL".into(),
+                    vehicle_idx: Some(0),
+                    other_vehicle_idx: Some(1),
+                    ..Default::default()
+                },
+            ),
+            0.0,
+        );
 
         let id = st.snapshot().incidents[0].id.clone();
         st.flag_for_review(&id, 1.0);
-        let approved = st.approve_incident(&id, Some("5s time penalty".into()), 2.0).unwrap();
+
+        // A penalty needs a non-empty outcome (P1.5): blanks are rejected and the
+        // incident stays undecided.
+        assert!(st.approve_incident(&id, None, 2.0).is_err());
+        assert!(st.approve_incident(&id, Some("   ".into()), 2.0).is_err());
+        assert_eq!(st.snapshot().incidents[0].status, IncidentStatus::Flagged);
+
+        let approved = st
+            .approve_incident(&id, Some("5s time penalty".into()), 2.0)
+            .unwrap()
+            .unwrap();
         assert_eq!(approved.status, IncidentStatus::Approved);
         assert_eq!(approved.ruling.unwrap().outcome, "5s time penalty");
 
-        let manual = st.log_manual_incident(vec![0], Some("Track limits".into()), Some("turn 9".into()), 3.0);
+        // A manual incident keeps the steward's selected code (P3.2).
+        let manual = st.log_manual_incident(
+            vec![0],
+            Some("TLIM".into()),
+            Some("Track limits".into()),
+            Some("turn 9".into()),
+            3.0,
+        );
         assert_eq!(manual.source, IncidentSource::Manual);
+        assert_eq!(manual.code, "TLIM");
         assert_eq!(manual.status, IncidentStatus::Flagged);
         assert_eq!(st.snapshot().incidents.len(), 2);
 
         // Name override surfaces in the snapshot and survives a session reset.
         st.set_driver_name(0, "M. Rossi", 4.0);
-        assert_eq!(st.snapshot().drivers[0].name_override.as_deref(), Some("M. Rossi"));
+        assert_eq!(
+            st.snapshot().drivers[0].name_override.as_deref(),
+            Some("M. Rossi")
+        );
         st.ingest(&session("C", 15), 0.0);
         st.ingest(&participants("C", vec![participant(0, "Player", 1)]), 0.0);
-        assert_eq!(st.snapshot().drivers[0].name_override.as_deref(), Some("M. Rossi"));
+        assert_eq!(
+            st.snapshot().drivers[0].name_override.as_deref(),
+            Some("M. Rossi")
+        );
+    }
+
+    #[test]
+    fn incident_log_is_bounded_under_flood() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        // Distinct collisions (varying cars + advancing time) so dedupe doesn't
+        // merge them — far more than the cap.
+        for i in 0..5000u32 {
+            let e = EventData {
+                code: "COLL".into(),
+                vehicle_idx: Some((i % 20) as u8),
+                other_vehicle_idx: Some(((i + 3) % 20) as u8),
+                ..Default::default()
+            };
+            st.ingest(&event("A", e), i as f64);
+        }
+        let s = st.snapshot();
+        assert!(
+            s.incidents.len() <= MAX_INCIDENTS,
+            "log capped, got {}",
+            s.incidents.len()
+        );
+        assert_eq!(s.event_tally.len(), 1, "only the one known code is tallied");
+    }
+
+    #[test]
+    fn identical_event_flood_is_deduped() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        let e = EventData {
+            code: "COLL".into(),
+            vehicle_idx: Some(3),
+            other_vehicle_idx: Some(7),
+            ..Default::default()
+        };
+        for _ in 0..1000 {
+            st.ingest(&event("A", e.clone()), 0.0); // identical, same tick
+        }
+        assert_eq!(
+            st.snapshot().incidents.len(),
+            1,
+            "identical spam collapses to one"
+        );
+    }
+
+    #[test]
+    fn unknown_event_code_is_not_tallied() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(
+            &event(
+                "A",
+                EventData {
+                    code: "XXXX".into(),
+                    ..Default::default()
+                },
+            ),
+            0.0,
+        );
+        assert!(st.snapshot().event_tally.is_empty(), "spoofed code ignored");
     }
 }

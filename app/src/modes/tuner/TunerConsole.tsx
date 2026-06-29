@@ -63,7 +63,12 @@ export function TunerConsole() {
     if (!sample) void setBalancePreference(v);
   };
   const onFeedback = (thumb: number) => {
-    if (!sample) void applyFeedback(thumb);
+    if (sample) return;
+    // A thumb nudges the engine's balance target; reflect the value it actually
+    // applied back into the coarse control instead of leaving it stale (P2.5).
+    void applyFeedback(thumb).then((p) => {
+      if (p != null) setPref(p > 0.001 ? 1 : p < -0.001 ? -1 : 0);
+    });
   };
 
   if (!snap) {
@@ -98,9 +103,10 @@ export function TunerConsole() {
                 groupClassName="seg seg-sm"
               />
             </div>
-            <span className={`tn-eqp${snap.equalPerf ? " is-on" : ""}`}>
+            <span className={`tn-eqp${snap.equalPerf === true ? " is-on" : ""}`}>
               <span className="tn-eqp-dot" aria-hidden="true" />
-              Equal performance <b>{snap.equalPerf ? "ON" : "OFF"}</b>
+              Equal performance{" "}
+              <b>{snap.equalPerf == null ? "—" : snap.equalPerf ? "ON" : "OFF"}</b>
             </span>
           </div>
         </header>
