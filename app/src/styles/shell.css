@@ -459,6 +459,24 @@ textarea {
   justify-content: center;
   gap: var(--space-sm);
 }
+/* Secondary troubleshooting note (e.g. firewall) below the setup steps. */
+.nofeed-note {
+  margin: var(--space-xl) auto 0;
+  max-width: 44ch;
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: left;
+}
+.nofeed-note strong {
+  color: var(--muted);
+  font-weight: 600;
+}
+.nofeed-note .mono {
+  color: var(--primary);
+}
 
 /* ======================================================================== */
 /* Mode placeholder (live-state holding content for later passes)            */
@@ -692,6 +710,56 @@ textarea {
 .seg-sm .seg-opt {
   padding: 4px 12px;
   font-size: 12px;
+}
+
+/* Telemetry-repeater targets (the "Forward telemetry to" section) */
+.fwd-targets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: 2px;
+}
+.fwd-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.fwd-host {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.fwd-port {
+  flex: 0 0 88px;
+  width: 88px;
+}
+.fwd-colon {
+  color: var(--faint);
+  font-family: var(--font-mono);
+}
+.fwd-remove {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.fwd-remove:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--ink);
+}
+.fwd-remove:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.fwd-add {
+  align-self: flex-start;
 }
 .dialog-foot {
   display: flex;

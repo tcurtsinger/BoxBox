@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -23,9 +24,54 @@ export interface Feed {
 
 export type RaceSection = "timing" | "incidents" | "review" | "reports";
 
+/** One telemetry-repeater destination: BoxBox sends a verbatim copy of the
+ *  game's feed here so a wheel/SimHub dashboard can listen without contending
+ *  for the bind. */
+export interface ForwardTarget {
+  host: string;
+  port: number;
+}
+
 export interface Connection {
   port: number;
   format: "2026" | "2025";
+  /** Relay the incoming feed to `forwardTargets` (the UDP repeater). */
+  forwardEnabled: boolean;
+  forwardTargets: ForwardTarget[];
+}
+
+const STORAGE_KEY = "boxbox.connection";
+
+const DEFAULT_CONNECTION: Connection = {
+  port: 20777,
+  format: "2026",
+  forwardEnabled: false,
+  // SimHub/dashboards then listen on 20778; the game still points at BoxBox.
+  forwardTargets: [{ host: "127.0.0.1", port: 20778 }],
+};
+
+/** Restore the saved connection, merging over the defaults so a blob written by
+ *  an older build (missing the forward fields) stays valid. */
+function loadConnection(): Connection {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return DEFAULT_CONNECTION;
+    const saved = JSON.parse(raw) as Partial<Connection>;
+    const targets = Array.isArray(saved.forwardTargets)
+      ? saved.forwardTargets.filter(
+          (t): t is ForwardTarget =>
+            !!t && typeof t.host === "string" && typeof t.port === "number",
+        )
+      : [];
+    return {
+      ...DEFAULT_CONNECTION,
+      ...saved,
+      forwardTargets:
+        targets.length > 0 ? targets : DEFAULT_CONNECTION.forwardTargets,
+    };
+  } catch {
+    return DEFAULT_CONNECTION;
+  }
 }
 
 interface ShellState {
@@ -56,10 +102,18 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   // Honest default: nothing is wired to the Rust feed yet, so there is no feed.
   const [feed, setFeed] = useState<Feed>({ state: "no-feed" });
   const [raceSection, setRaceSection] = useState<RaceSection>("timing");
-  const [connection, setConnection] = useState<Connection>({
-    port: 20777,
-    format: "2026",
-  });
+  const [connection, setConnection] = useState<Connection>(loadConnection);
+
+  // Persist the connection (port, format, forward config) so it survives
+  // restarts. localStorage in the Tauri webview is durable per install.
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(connection));
+    } catch {
+      // Storage unavailable (quota/private mode): a non-persisted session is
+      // still fully functional, so swallow.
+    }
+  }, [connection]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState<number | null>(null);
   const [incidents, setIncidents] = useState<UIIncident[]>(() =>

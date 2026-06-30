@@ -65,6 +65,12 @@ export interface LastChange {
   fromValue: number;
   toValue: number;
   direction: "looser" | "stabler";
+  /** Instant: the change moved the lever by exactly a recommended delta, so it
+   *  was dialed onto its suggested target. Drives the green "matched" cue. */
+  matched: boolean;
+  /** Deferred: >=1 clean lap has run on the new value, so the thumbs prompt is
+   *  meaningful. Until then the change is logged but not yet rateable. */
+  rateable: boolean;
 }
 
 export interface RunStats {
@@ -281,7 +287,7 @@ export function sampleTuner(): TunerSnapshot {
         { key: "brakeBias", delta: 1, confidence: "measured", basis: "stabilised entry, A/B confirmed" },
       ],
     },
-    lastChange: { lever: "rearAntiRollBar", fromValue: 8, toValue: 9, direction: "stabler" },
+    lastChange: { lever: "rearAntiRollBar", fromValue: 8, toValue: 9, direction: "stabler", matched: false, rateable: true },
     trim: {
       current: { frontWing: 6, rearWing: 8 },
       variants: [

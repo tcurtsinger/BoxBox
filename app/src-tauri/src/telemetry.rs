@@ -5,7 +5,7 @@
 //! reaches the UI via the `tuner_snapshot` / `race_snapshot` commands, so the whole
 //! parsed packet is deliberately NOT pushed over IPC every frame (P2.5).
 
-use std::net::{IpAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -70,6 +70,10 @@ pub struct Listener {
     stop: Arc<AtomicBool>,
     /// Set by the reset command to re-open UDP source selection without restarting.
     reset: Arc<AtomicBool>,
+    /// Live telemetry-repeater targets, read by the worker for every datagram.
+    /// Shared so the forward config can change (toggle, add/remove a SimHub
+    /// target) without rebinding the port and blipping the feed.
+    forwards: Arc<Mutex<Vec<SocketAddr>>>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -98,11 +102,29 @@ fn spawn_listener(
     tuner: Arc<Mutex<TunerState>>,
     race: Arc<Mutex<SessionState>>,
     profile: Arc<ProfileStore>,
+    forwards: Vec<SocketAddr>,
 ) -> Result<Listener, String> {
     let socket = UdpSocket::bind(("0.0.0.0", port)).map_err(|e| format!("bind UDP {port}: {e}"))?;
     socket
         .set_read_timeout(Some(Duration::from_millis(400)))
         .map_err(|e| e.to_string())?;
+
+    // Outbound socket for the telemetry repeater: a verbatim copy of every
+    // datagram from the locked game source is relayed to each configured target,
+    // so a wheel/SimHub dashboard listening on another port gets the same feed
+    // without contending for the bind. This avoids UDP broadcast mode, which a
+    // dashboard bound to 127.0.0.1 never receives. Bound to an ephemeral port; a
+    // bind failure just disables forwarding for this session (never fatal to the
+    // feed). Created unconditionally so the config can be enabled live later.
+    let forward_socket = match UdpSocket::bind(("0.0.0.0", 0)) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            eprintln!("telemetry forward socket bind failed, forwarding disabled: {e}");
+            None
+        }
+    };
+    let forwards = Arc::new(Mutex::new(forwards));
+    let forwards_worker = forwards.clone();
 
     let stop = Arc::new(AtomicBool::new(false));
     let stop_worker = stop.clone();
@@ -117,6 +139,9 @@ fn spawn_listener(
         // the full socket address, so a game restart that changes the ephemeral
         // source port doesn't strand the feed (P1.2).
         let mut source: Option<IpAddr> = None;
+        // Rate-limit forward-error logging so a wrong or unreachable target can't
+        // flood the log at packet rate (the feed runs ~60Hz across many ids).
+        let mut last_fwd_warn: Option<std::time::Instant> = None;
         while !stop_worker.load(Ordering::Relaxed) {
             // A reset request re-opens source selection (e.g. after moving the feed
             // to a different sending PC) without restarting the listener.
@@ -130,19 +155,41 @@ fn spawn_listener(
                     if matches!(source, Some(pinned) if pinned != host) {
                         continue;
                     }
-                    let Some(packet) = parse_packet(&buf[..n]) else {
-                        continue;
-                    };
+                    let packet = parse_packet(&buf[..n]);
                     // Pin only on a COMPLETE, decoded packet: parse_packet has
                     // already enforced the exact size/format/id (P1.1), and
                     // requiring a decoded body means a valid-but-unhandled packet
                     // (data: None) can't claim the feed before the real game does.
                     if source.is_none() {
-                        if packet.data.is_none() {
-                            continue;
+                        match packet.as_ref() {
+                            Some(p) if p.data.is_some() => source = Some(host),
+                            _ => continue,
                         }
-                        source = Some(host);
                     }
+                    // The datagram is from the locked game source: relay a
+                    // verbatim copy to every configured forward target before
+                    // anything else, so a downstream dashboard sees the feed even
+                    // for packet types BoxBox itself doesn't decode. A send error
+                    // to one target is logged (throttled) and never fatal.
+                    if let Some(fwd) = &forward_socket {
+                        if let Ok(targets) = forwards_worker.lock() {
+                            for target in targets.iter() {
+                                if let Err(e) = fwd.send_to(&buf[..n], target) {
+                                    if last_fwd_warn
+                                        .is_none_or(|t| t.elapsed() >= Duration::from_secs(5))
+                                    {
+                                        eprintln!("telemetry forward to {target} failed: {e}");
+                                        last_fwd_warn = Some(std::time::Instant::now());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Past here we need the decoded body; an undecodable datagram
+                    // was still forwarded verbatim above.
+                    let Some(packet) = packet else {
+                        continue;
+                    };
                     // Minimal heartbeat only — not the whole packet (P2.5).
                     let _ = app.emit(
                         "telemetry:packet",
@@ -178,6 +225,7 @@ fn spawn_listener(
         port,
         stop,
         reset,
+        forwards,
         handle: Some(handle),
     })
 }
@@ -191,21 +239,30 @@ pub fn start_telemetry(
     profile: tauri::State<'_, ProfileState>,
     app: AppHandle,
     port: u16,
+    forwards: Vec<SocketAddr>,
 ) -> Result<(), String> {
     let mut slot = state.0.lock().map_err(|e| e.to_string())?;
-    if slot.as_ref().is_some_and(|l| l.port == port) {
-        return Ok(());
+    // Already bound to this port: reconcile the forward targets live so toggling
+    // or editing a SimHub target doesn't drop and rebind the feed.
+    if let Some(listener) = slot.as_ref() {
+        if listener.port == port {
+            if let Ok(mut t) = listener.forwards.lock() {
+                *t = forwards;
+            }
+            return Ok(());
+        }
     }
-    // Bind the new listener first; only replace (and so drop) the old one on
-    // success, so a failed bind leaves the existing listener running rather than
-    // killing the feed (P2.1). A port change is always to a different port, so the
-    // two never contend for the same bind.
+    // Different port: bind the new listener first; only replace (and so drop) the
+    // old one on success, so a failed bind leaves the existing listener running
+    // rather than killing the feed (P2.1). A port change is always to a different
+    // port, so the two never contend for the same bind.
     let listener = spawn_listener(
         app,
         port,
         tuner.0.clone(),
         race.0.clone(),
         profile.0.clone(),
+        forwards,
     )?;
     *slot = Some(listener); // drops & joins the previous listener
     Ok(())

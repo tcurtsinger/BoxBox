@@ -491,6 +491,27 @@
   background: color-mix(in oklch, var(--data-good) 7%, transparent);
   border-color: color-mix(in oklch, var(--data-good) 30%, transparent);
 }
+/* Change logged, but not yet driven a clean lap: a calm, neutral holding state
+   (no thumbs) rather than the attention-grabbing primary tint. */
+.setup-feedback.is-pending {
+  background: var(--inset);
+  border-color: var(--border);
+}
+.feedback-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--faint);
+}
+.feedback-pending-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--faint);
+}
 .feedback-ack {
   display: inline-flex;
   align-items: center;
@@ -584,6 +605,13 @@
   border: 1px solid currentColor;
 }
 .setup-sug-empty { border: none; }
+/* The lever just dialed onto its suggested target: green bar + ✓ instead of the
+   now-applied nudge. */
+.setup-fill.is-matched { background: var(--data-good); }
+.setup-sug-matched {
+  color: var(--data-good);
+  background: color-mix(in oklch, var(--data-good) 12%, transparent);
+}
 
 .setup-foot {
   display: flex;

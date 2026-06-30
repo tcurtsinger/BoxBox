@@ -267,6 +267,9 @@ function SetupPanel({
 
   const sugs = advice?.suggestions ?? [];
   const byKey = new Map<string, SetupSuggestion>(sugs.map((s) => [s.key, s]));
+  // The lever the driver just dialed onto its suggested target: confirmed with a
+  // green ✓ in the full-setup table instead of still nagging the applied nudge.
+  const matchedKey = lastChange?.matched ? lastChange.lever : null;
   const measured = sugs.filter((s) => s.confidence === "measured").length;
   const dialedIn = advice !== null && sugs.length === 0;
   const n = sugs.length;
@@ -277,7 +280,13 @@ function SetupPanel({
         <h2 className="panel-title">Setup</h2>
       </div>
 
-      {lastChange && <FeedbackCard change={lastChange} onRate={onFeedback} />}
+      {lastChange && (
+        <FeedbackCard
+          key={`${lastChange.lever}:${lastChange.fromValue}:${lastChange.toValue}`}
+          change={lastChange}
+          onRate={onFeedback}
+        />
+      )}
 
       <div className={`setup-status${dialedIn ? " is-dialed" : ""}`}>
         {!advice ? (
@@ -330,14 +339,26 @@ function SetupPanel({
               {g.sliders.map((s) => {
                 const value = setup[s.key];
                 const sug = byKey.get(s.key);
+                const matched = matchedKey === s.key;
                 return (
                   <div className="setup-row" key={s.key}>
                     <span className="setup-label">{s.label}</span>
                     <span className="setup-track" title={`${s.fmt(s.min)} – ${s.fmt(s.max)}`}>
-                      <span className="setup-fill" style={{ width: `${fillPct(value, s.min, s.max)}%` }} />
+                      <span
+                        className={`setup-fill${matched ? " is-matched" : ""}`}
+                        style={{ width: `${fillPct(value, s.min, s.max)}%` }}
+                      />
                     </span>
                     <span className="setup-value mono">{s.fmt(value)}</span>
-                    {sug ? (
+                    {matched ? (
+                      <span
+                        className="setup-sug setup-sug-matched"
+                        title="You applied this — matched the suggested target"
+                        aria-label="Applied — matched the suggestion"
+                      >
+                        ✓
+                      </span>
+                    ) : sug ? (
                       <span className={`setup-sug conf-${sug.confidence}`} title={`${sug.basis} · ${sug.confidence}`}>
                         {sug.delta > 0 ? "+" : ""}{sug.delta}
                       </span>
@@ -377,16 +398,26 @@ function FeedbackCard({ change, onRate }: { change: LastChange; onRate: (thumb: 
     setRated(dir);
     onRate(dir === "up" ? 1 : -1);
   };
+  // You can't rate a change you haven't driven: hold the thumbs until at least
+  // one clean lap has run on the new value (change.rateable).
+  const pending = !rated && !change.rateable;
   return (
-    <div className={`setup-feedback${rated ? " is-logged" : ""}`}>
+    <div
+      className={`setup-feedback${rated ? " is-logged" : ""}${pending ? " is-pending" : ""}`}
+    >
       <span className="feedback-text">
         You changed <strong>{label}</strong> <span className="mono">{fmt(change.fromValue)} → {fmt(change.toValue)}</span> · made the car{" "}
-        <strong>{change.direction}</strong>. {rated ? "" : "How did it feel?"}
+        <strong>{change.direction}</strong>. {rated || pending ? "" : "How did it feel?"}
       </span>
       {rated ? (
         <span className="feedback-ack" role="status">
           <span className="feedback-ack-mark" aria-hidden="true">✓</span>
           {rated === "up" ? "Logged — we'll keep building on this lever" : "Logged — we'll ease off this lever"}
+        </span>
+      ) : pending ? (
+        <span className="feedback-pending" role="status">
+          <span className="feedback-pending-dot" aria-hidden="true" />
+          Logged — drive a clean lap to rate it
         </span>
       ) : (
         <span className="feedback-thumbs">

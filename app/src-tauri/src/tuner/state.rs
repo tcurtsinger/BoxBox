@@ -191,6 +191,9 @@ struct LastChange {
     from_value: f64,
     to_value: f64,
     direction: BalanceDirection,
+    /// `clean_laps` at the moment of the change. The change becomes "rateable"
+    /// once `clean_laps` has advanced past this (>=1 clean lap on the new value).
+    clean_lap_at_change: u32,
 }
 
 #[derive(Default)]
@@ -241,6 +244,10 @@ pub struct TunerState {
     pending: Option<Pending>,
     last_change: Option<LastChange>,
     runs: HashMap<i32, HashMap<String, RunStats>>,
+    // Monotonic count of clean, complete laps finalized this session. Stamped into
+    // `last_change` so the UI can defer the "how did it feel?" prompt until the
+    // driver has run at least one clean lap on the new value.
+    clean_laps: u32,
 
     // Tyre wear (Car Damage id 10) + temps (Car Telemetry id 6).
     wear: Option<TyreReading>,
@@ -626,6 +633,8 @@ impl TunerState {
         // spin or off-track lap must not shape setup advice or persistent gains.
         // Reaching here also means the lap was complete enough (the checks above).
         if !self.lap_invalidated {
+            // A clean, complete lap: advances the rateable gate for `last_change`.
+            self.clean_laps += 1;
             let staged = std::mem::take(&mut self.lap_diag);
             {
                 let by_corner = self.corner_diag.entry(self.track_id).or_default();
@@ -841,6 +850,7 @@ impl TunerState {
             from_value: from,
             to_value: single.value(next),
             direction,
+            clean_lap_at_change: self.clean_laps,
         });
     }
 
@@ -940,6 +950,35 @@ impl TunerState {
             _ => None,
         };
 
+        // (a) "matched" + (b) "rateable" for the last setup change. Built before
+        // the struct literal so it can borrow `setup_advice` (which the struct then
+        // moves). A stale setup nulls the change so it can't be shown or rated.
+        let last_change = if setup_current {
+            self.last_change.as_ref().map(|lc| {
+                // The suggested delta is diagnosis-driven, so it doesn't shrink the
+                // instant a lever moves; the driver "matched" the recommendation
+                // when the delta they applied equals one a live suggestion still
+                // makes for that lever — an immediate, deterministic check.
+                let matched = setup_advice.as_ref().is_some_and(|adv| {
+                    adv.suggestions.iter().any(|s| {
+                        s.key == lc.lever && (lc.to_value - lc.from_value).round() as i32 == s.delta
+                    })
+                });
+                // Rateable only once a clean lap has finalized since the change.
+                let rateable = self.clean_laps > lc.clean_lap_at_change;
+                LastChangeOut {
+                    lever: lc.lever,
+                    from_value: lc.from_value,
+                    to_value: lc.to_value,
+                    direction: lc.direction,
+                    matched,
+                    rateable,
+                }
+            })
+        } else {
+            None
+        };
+
         Snapshot {
             track: track_name(self.track_id).unwrap_or("—").to_string(),
             session: session_label(self.session_type).to_string(),
@@ -962,11 +1001,7 @@ impl TunerState {
             },
             next_front_wing: self.next_front_wing_value as f64,
             setup_advice,
-            last_change: if setup_current {
-                self.last_change.as_ref().map(LastChangeOut::from)
-            } else {
-                None
-            },
+            last_change,
             trim,
             run: current_run,
             wear,
@@ -1040,17 +1075,14 @@ pub struct LastChangeOut {
     pub from_value: f64,
     pub to_value: f64,
     pub direction: BalanceDirection,
-}
-
-impl From<&LastChange> for LastChangeOut {
-    fn from(lc: &LastChange) -> Self {
-        LastChangeOut {
-            lever: lc.lever,
-            from_value: lc.from_value,
-            to_value: lc.to_value,
-            direction: lc.direction,
-        }
-    }
+    /// Instant confirmation: the change moved the lever by exactly the delta a
+    /// live suggestion recommends, so the driver dialed it onto its target. Drives
+    /// the green "matched" cue on that lever.
+    pub matched: bool,
+    /// The driver has finished >=1 clean lap on the new value, so the "how did it
+    /// feel?" thumbs prompt is now meaningful. Until then the change is logged but
+    /// not yet rateable.
+    pub rateable: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1360,6 +1392,85 @@ mod tests {
         // A real thumbs-down still works afterwards.
         let after = st.apply_feedback(-1.0);
         assert_ne!(after, before);
+    }
+
+    #[test]
+    fn last_change_rateable_only_after_a_clean_lap() {
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&setups());
+        // A change is registered immediately, but you can't rate a change you
+        // haven't driven: it stays un-rateable until a clean lap on the new value.
+        let mut changed = setups();
+        if let Some(Body::CarSetups(d)) = changed.data.as_mut() {
+            d.cars[0].front_wing = 8; // +2 clicks vs the 6 in setups()
+        }
+        st.ingest(&changed);
+        let lc = st
+            .snapshot()
+            .last_change
+            .expect("change registered instantly");
+        assert!(
+            !lc.rateable,
+            "logged, but not rateable before any clean lap"
+        );
+
+        // One clean, complete lap flips it rateable.
+        drive_lap(&mut st, 1, false);
+        roll_over(&mut st, 2, 90_000); // finalize lap 1 (clean)
+        let lc = st.snapshot().last_change.expect("change still present");
+        assert!(lc.rateable, "rateable after >=1 clean lap on the new value");
+    }
+
+    #[test]
+    fn last_change_matched_when_dialed_onto_target() {
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&setups());
+        // Confirm an understeer diagnosis so the engine recommends a change.
+        drive_lap(&mut st, 1, false);
+        roll_over(&mut st, 2, 90_000);
+        drive_lap(&mut st, 2, true);
+        roll_over(&mut st, 3, 90_500);
+
+        let snap = st.snapshot();
+        let advice = snap.setup_advice.expect("advice after understeer laps");
+        let sug = advice.suggestions.first().expect("a suggestion");
+        let (key, delta) = (sug.key, sug.delta);
+        assert_ne!(delta, 0);
+
+        // Dial exactly that lever onto its suggested target (cur + delta).
+        let mut changed = setups();
+        if let Some(Body::CarSetups(d)) = changed.data.as_mut() {
+            let car = &mut d.cars[0];
+            let bump = |v: u8| (v as i32 + delta) as u8;
+            match key {
+                SuggestKey::FrontWing => car.front_wing = bump(car.front_wing),
+                SuggestKey::RearWing => car.rear_wing = bump(car.rear_wing),
+                SuggestKey::OnThrottle => car.on_throttle = bump(car.on_throttle),
+                SuggestKey::OffThrottle => car.off_throttle = bump(car.off_throttle),
+                SuggestKey::FrontAntiRollBar => {
+                    car.front_anti_roll_bar = bump(car.front_anti_roll_bar)
+                }
+                SuggestKey::RearAntiRollBar => {
+                    car.rear_anti_roll_bar = bump(car.rear_anti_roll_bar)
+                }
+                SuggestKey::BrakeBias => car.brake_bias = bump(car.brake_bias),
+            }
+        }
+        st.ingest(&changed);
+
+        let lc = st.snapshot().last_change.expect("change registered");
+        assert_eq!(lc.lever, key);
+        assert!(
+            lc.matched,
+            "matched: applied delta equals the suggested delta"
+        );
+        // Instant signal only — a clean lap on the new value hasn't run yet.
+        assert!(
+            !lc.rateable,
+            "not rateable until a clean lap on the new value"
+        );
     }
 
     #[test]

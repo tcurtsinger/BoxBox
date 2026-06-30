@@ -51,6 +51,15 @@ export function NoFeed({
           </button>
         )}
       </div>
+      <p className="nofeed-note">
+        Telemetry on in-game but still nothing here? Windows Firewall may be
+        silently blocking the port — allow <strong>BoxBox</strong> on{" "}
+        <strong>Private networks</strong> in Windows Defender Firewall. Also
+        check that no other app is already bound to port{" "}
+        <span className="mono">{connection.port}</span>; if a dashboard needs it
+        too, turn on <strong>Forward telemetry</strong> in connection settings
+        instead of pointing both apps at the same port.
+      </p>
     </div>
   );
 }

@@ -19,6 +19,14 @@ export function useTelemetry() {
   const stale = useRef(false); // packets have paused; showing last data (standby)
   const lastPacket = useRef(0);
 
+  // Telemetry-repeater targets as "host:port" strings the Rust listener parses
+  // into SocketAddrs; empty when forwarding is off. The joined key drives the
+  // effect so editing a target re-applies it without a port change.
+  const forwards = connection.forwardEnabled
+    ? connection.forwardTargets.map((t) => `${t.host}:${t.port}`)
+    : [];
+  const forwardsKey = forwards.join(",");
+
   useEffect(() => {
     if (!IN_TAURI) return;
     let cancelled = false;
@@ -30,7 +38,7 @@ export function useTelemetry() {
       const { listen } = await import("@tauri-apps/api/event");
 
       try {
-        await invoke("start_telemetry", { port: connection.port });
+        await invoke("start_telemetry", { port: connection.port, forwards });
       } catch (err) {
         // Bind failed (port in use, permissions): surface it as no-feed instead
         // of leaving a stale status the heartbeat will never correct (P2.1).
@@ -71,5 +79,5 @@ export function useTelemetry() {
       if (unlisten) unlisten();
       if (heartbeat) clearInterval(heartbeat);
     };
-  }, [connection.port, setFeed]);
+  }, [connection.port, forwardsKey, setFeed]);
 }
