@@ -9,7 +9,7 @@ use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
 
@@ -75,6 +75,8 @@ pub struct Listener {
     /// target) without rebinding the port and blipping the feed.
     forwards: Arc<Mutex<Vec<SocketAddr>>>,
     handle: Option<JoinHandle<()>>,
+    /// Background profile-flush thread; shares `stop` with the receive worker.
+    persist_handle: Option<JoinHandle<()>>,
 }
 
 impl Listener {
@@ -83,6 +85,68 @@ impl Listener {
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
+        if let Some(h) = self.persist_handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+/// How long the pinned UDP source may go silent before a datagram from a *different*
+/// host is allowed to re-open source selection. The game streams continuously while
+/// on track, so a gap this long from the locked source while another host is now
+/// sending means the source's address almost certainly moved (VPN reconnect,
+/// Wi-Fi/Ethernet failover, DHCP renew). Re-pinning then keeps the feed AND the
+/// forwarded dashboard alive without a restart. Kept comfortably longer than a
+/// normal inter-packet gap so a stray LAN sender can't hijack a live feed.
+const SOURCE_STALL: Duration = Duration::from_secs(3);
+
+/// What to do with an incoming datagram, given the pinned source state.
+#[derive(Debug, PartialEq, Eq)]
+enum SourceAction {
+    /// Process it (it's from the pinned source, or selection is open).
+    Accept,
+    /// Drop it: a different host while the pinned source is still live (anti-spoof).
+    Ignore,
+    /// Re-open selection: the pinned source went silent and a new host is sending.
+    Reopen,
+}
+
+/// Decide how to treat a datagram from `host` against the pinned `source`. A
+/// different host is normally ignored, but once the pinned source has been silent
+/// past `SOURCE_STALL` it is allowed to take over (the game's address likely moved
+/// — VPN/adapter failover, DHCP renew), so the feed recovers without a restart.
+fn classify_source(
+    source: Option<IpAddr>,
+    last_from_source: Option<Instant>,
+    host: IpAddr,
+    now: Instant,
+) -> SourceAction {
+    match source {
+        None => SourceAction::Accept,
+        Some(pinned) if pinned == host => SourceAction::Accept,
+        Some(_) => {
+            let stalled = last_from_source
+                .map(|t| now.duration_since(t) >= SOURCE_STALL)
+                .unwrap_or(true);
+            if stalled {
+                SourceAction::Reopen
+            } else {
+                SourceAction::Ignore
+            }
+        }
+    }
+}
+
+/// Snapshot any pending profile change under the engine lock (cheap) and write it
+/// to disk OUTSIDE the lock, so a slow disk write never stalls the receive/forward
+/// loop. A poisoned lock (a prior panic) is skipped rather than propagated.
+fn flush_profile(tuner: &Arc<Mutex<TunerState>>, profile: &ProfileStore) {
+    let pending = match tuner.lock() {
+        Ok(t) => profile.pending_save(&t),
+        Err(_) => None,
+    };
+    if let Some((rev, prof)) = pending {
+        profile.commit_save(rev, &prof);
     }
 }
 
@@ -130,6 +194,22 @@ fn spawn_listener(
     let stop_worker = stop.clone();
     let reset = Arc::new(AtomicBool::new(false));
     let reset_worker = reset.clone();
+
+    // Flush learned Tuner profile changes to disk on a low-cadence background
+    // thread, keeping the disk write OFF the hot receive/forward loop. A slow or
+    // stalled write can then never block telemetry ingest or the repeater (which
+    // would freeze the feed AND a forwarded dashboard together). Shares `stop`.
+    let tuner_persist = tuner.clone();
+    let stop_persist = stop.clone();
+    let persist_handle = std::thread::spawn(move || {
+        while !stop_persist.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(250));
+            flush_profile(&tuner_persist, &profile);
+        }
+        // Final flush so a clean stop / port change doesn't drop the last interval.
+        flush_profile(&tuner_persist, &profile);
+    });
+
     let handle = std::thread::spawn(move || {
         let mut buf = [0u8; 2048];
         // The F1 feed comes from exactly one host (the game PC or console). Lock
@@ -139,21 +219,42 @@ fn spawn_listener(
         // the full socket address, so a game restart that changes the ephemeral
         // source port doesn't strand the feed (P1.2).
         let mut source: Option<IpAddr> = None;
+        // When we last heard a valid datagram from the pinned source. Drives the
+        // self-healing re-pin when the source's address moves mid-session.
+        let mut last_from_source: Option<Instant> = None;
         // Rate-limit forward-error logging so a wrong or unreachable target can't
         // flood the log at packet rate (the feed runs ~60Hz across many ids).
-        let mut last_fwd_warn: Option<std::time::Instant> = None;
+        let mut last_fwd_warn: Option<Instant> = None;
         while !stop_worker.load(Ordering::Relaxed) {
             // A reset request re-opens source selection (e.g. after moving the feed
             // to a different sending PC) without restarting the listener.
             if reset_worker.swap(false, Ordering::Relaxed) {
                 source = None;
+                last_from_source = None;
             }
             match socket.recv_from(&mut buf) {
                 Ok((n, addr)) => {
                     let host = addr.ip();
-                    // Ignore anything from a host other than the pinned source.
-                    if matches!(source, Some(pinned) if pinned != host) {
-                        continue;
+                    let now = Instant::now();
+                    // A datagram from a host other than the pinned source is normally
+                    // ignored (anti-spoof). But if the pinned source has gone silent
+                    // past SOURCE_STALL while another host is now sending, the game's
+                    // address has almost certainly moved (VPN/adapter failover, DHCP
+                    // renew) — re-open selection so the feed AND the forwarded
+                    // dashboard recover without a restart, instead of dropping every
+                    // packet forever.
+                    match classify_source(source, last_from_source, host, now) {
+                        SourceAction::Ignore => continue,
+                        SourceAction::Reopen => {
+                            if let Some(pinned) = source {
+                                eprintln!(
+                                    "telemetry: pinned source {pinned} silent >{}s, re-selecting (now hearing {host})",
+                                    SOURCE_STALL.as_secs()
+                                );
+                            }
+                            source = None;
+                        }
+                        SourceAction::Accept => {}
                     }
                     let packet = parse_packet(&buf[..n]);
                     // Pin only on a COMPLETE, decoded packet: parse_packet has
@@ -162,10 +263,16 @@ fn spawn_listener(
                     // (data: None) can't claim the feed before the real game does.
                     if source.is_none() {
                         match packet.as_ref() {
-                            Some(p) if p.data.is_some() => source = Some(host),
+                            Some(p) if p.data.is_some() => {
+                                eprintln!("telemetry: locked onto source {host}");
+                                source = Some(host);
+                            }
                             _ => continue,
                         }
                     }
+                    // Pinned to `host` (kept or freshly selected): record the liveness
+                    // tick the self-healing check above reads.
+                    last_from_source = Some(now);
                     // The datagram is from the locked game source: relay a
                     // verbatim copy to every configured forward target before
                     // anything else, so a downstream dashboard sees the feed even
@@ -179,7 +286,7 @@ fn spawn_listener(
                                         .is_none_or(|t| t.elapsed() >= Duration::from_secs(5))
                                     {
                                         eprintln!("telemetry forward to {target} failed: {e}");
-                                        last_fwd_warn = Some(std::time::Instant::now());
+                                        last_fwd_warn = Some(Instant::now());
                                     }
                                 }
                             }
@@ -201,11 +308,10 @@ fn spawn_listener(
                     );
                     // Feed both engines. A poisoned lock just means a prior
                     // panic elsewhere; skip the frame rather than propagate.
+                    // Persistence is handled off this thread (see persist_handle),
+                    // so a disk write can't stall ingest or the repeater.
                     if let Ok(mut t) = tuner.lock() {
                         t.ingest(&packet);
-                        // Persist only when this frame actually learned
-                        // something (revision-gated; usually a no-op).
-                        profile.save_if_changed(&t);
                     }
                     if let Ok(mut r) = race.lock() {
                         r.ingest(&packet, now_ms());
@@ -227,6 +333,7 @@ fn spawn_listener(
         reset,
         forwards,
         handle: Some(handle),
+        persist_handle: Some(persist_handle),
     })
 }
 
@@ -423,4 +530,63 @@ pub fn set_driver_name(
         .lock()
         .map_err(|e| e.to_string())?
         .set_driver_name(race_number, &name, now_ms()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn open_selection_accepts_any_host() {
+        let now = Instant::now();
+        assert_eq!(
+            classify_source(None, None, ip("127.0.0.1"), now),
+            SourceAction::Accept
+        );
+    }
+
+    #[test]
+    fn pinned_source_is_accepted() {
+        let now = Instant::now();
+        let game = ip("127.0.0.1");
+        assert_eq!(
+            classify_source(Some(game), Some(now), game, now),
+            SourceAction::Accept
+        );
+    }
+
+    #[test]
+    fn other_host_is_ignored_while_source_is_live() {
+        let now = Instant::now();
+        let recent = now - Duration::from_millis(200);
+        assert_eq!(
+            classify_source(Some(ip("127.0.0.1")), Some(recent), ip("192.168.1.50"), now),
+            SourceAction::Ignore
+        );
+    }
+
+    #[test]
+    fn other_host_reopens_after_pinned_source_goes_silent() {
+        let now = Instant::now();
+        let stale = now - (SOURCE_STALL + Duration::from_secs(1));
+        assert_eq!(
+            classify_source(Some(ip("127.0.0.1")), Some(stale), ip("192.168.1.50"), now),
+            SourceAction::Reopen
+        );
+    }
+
+    #[test]
+    fn other_host_reopens_when_source_liveness_unknown() {
+        // Pinned but we have never timestamped a packet from it: treat as stalled
+        // so a moved source can still take over rather than stranding the feed.
+        let now = Instant::now();
+        assert_eq!(
+            classify_source(Some(ip("127.0.0.1")), None, ip("192.168.1.50"), now),
+            SourceAction::Reopen
+        );
+    }
 }

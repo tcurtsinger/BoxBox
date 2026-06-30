@@ -80,9 +80,17 @@ pub struct SetupAdvice {
 }
 
 const DEG: f64 = std::f64::consts::PI / 180.0;
-const BASELINE_BIAS: f64 = 1.0 * DEG;
+// Neutral preference targets a truly neutral car; the preset shifts the target a
+// modest ±1° (Loose → ~1° oversteer, Stable → ~1° understeer). Previously a 1°
+// baseline + 2° range put "Stable" at a 3° understeer target — six times the
+// per-corner US threshold — so a plowing car read as "dialed in".
+const BASELINE_BIAS: f64 = 0.0;
 const MID_DEADBAND: f64 = 0.5 * DEG;
-const PREF_RANGE: f64 = 2.0 * DEG;
+const PREF_RANGE: f64 = 1.0 * DEG;
+// Absolute understeer ceiling: no preference makes heavy understeer acceptable.
+// Past this, advice to reduce understeer is always surfaced so a heavily
+// understeering car is never reported as on-target, whatever the preset.
+const MID_UNDERSTEER_CEILING: f64 = 2.0 * DEG;
 const EXIT_TARGET: f64 = 0.5 * DEG;
 const ENTRY_DEADBAND: f64 = 1.0 * DEG;
 const POWER_THROTTLE: f64 = 0.5;
@@ -287,7 +295,18 @@ pub fn suggest_setup(
     let target = BASELINE_BIAS + clamp_pref(preference) * PREF_RANGE;
     let mid_excess = match roll.mid_balance {
         None => 0.0,
-        Some(m) => signed_deadband(m - target, MID_DEADBAND),
+        Some(m) => {
+            let pref_excess = signed_deadband(m - target, MID_DEADBAND);
+            // Absolute guard: once past the ceiling, demand at least the amount
+            // over it (understeer is positive). Only ever raises the understeer
+            // signal — never cancels a "looser than target" one.
+            let over_ceiling = (m - MID_UNDERSTEER_CEILING).max(0.0);
+            if over_ceiling > 0.0 {
+                pref_excess.max(over_ceiling)
+            } else {
+                pref_excess
+            }
+        }
     };
     let traction_excess = match roll.exit_balance {
         None => 0.0,
@@ -403,4 +422,67 @@ fn headline_for(mid_excess: f64, traction_excess: f64) -> String {
         parts.push("rear loose on power");
     }
     parts.join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tuner::diagnosis::{PhaseDiagnosis, PhaseTone};
+
+    const STABLE: f64 = 1.0;
+
+    // A confirmed corner with only a mid-phase reading, to isolate mid balance.
+    fn mid_corner(slip_balance_rad: f64) -> CornerDiagnosis {
+        CornerDiagnosis {
+            id: 1,
+            index: 1,
+            apex_dist: 0.0,
+            min_speed: 100.0,
+            seen: MIN_SEEN,
+            entry: None,
+            mid: Some(PhaseDiagnosis {
+                samples: 10,
+                slip_balance: slip_balance_rad,
+                understeer_angle: 0.0,
+                throttle: 0.0,
+                brake: 0.0,
+                tone: PhaseTone::Understeer,
+            }),
+            exit: None,
+        }
+    }
+
+    #[test]
+    fn heavy_understeer_is_advised_even_on_stable() {
+        // ~3° understeer with the "Stable" preset must NOT read as dialed in:
+        // that was the field bug (Stable's old 3° target swallowed the plow).
+        let advice = suggest_setup(&[mid_corner(3.0 * DEG)], |_| 10.0, STABLE, &HashMap::new())
+            .expect("advice once a corner is confirmed");
+        assert!(
+            advice.headline.contains("understeer vs your target"),
+            "heavy understeer should flag understeer, got: {}",
+            advice.headline
+        );
+        assert!(
+            !advice.suggestions.is_empty(),
+            "heavy understeer on Stable should still suggest a fix"
+        );
+    }
+
+    #[test]
+    fn mild_understeer_stays_on_target_on_stable() {
+        // ~1° understeer == the Stable target: a planted car the driver asked for,
+        // so no change is demanded (the preset is respected, just not to excess).
+        let advice = suggest_setup(&[mid_corner(1.0 * DEG)], |_| 10.0, STABLE, &HashMap::new())
+            .expect("advice");
+        assert!(
+            advice.headline.contains("on your target"),
+            "mild understeer should read on-target at Stable, got: {}",
+            advice.headline
+        );
+        assert!(
+            advice.suggestions.is_empty(),
+            "mild understeer at Stable should not demand a change"
+        );
+    }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Segmented } from "../../shell/Segmented";
+import { ChevronIcon } from "../../shell/icons";
 import { useShell } from "../../shell/shell-context";
 import { useTunerSnapshot, setBalancePreference, applyFeedback } from "./useTunerSnapshot";
 import {
@@ -89,7 +90,7 @@ export function TunerConsole() {
 
   return (
     <div className="tuner">
-      <div className="tuner-inner">
+      <div className={`tuner-inner${snap.lastChange ? " has-feedback" : ""}`}>
         <h1 className="sr-only">Tuner — {snap.track}, {snap.session}</h1>
         <header className="tn-bar">
           <div className="tn-meta">
@@ -116,13 +117,13 @@ export function TunerConsole() {
           </div>
         </header>
 
-        <SetupPanel
-          setup={snap.setup}
-          advice={snap.setupAdvice}
-          lastChange={snap.lastChange}
-          nextFrontWing={snap.nextFrontWing}
-          onFeedback={onFeedback}
-        />
+        {snap.lastChange && (
+          <FeedbackCard
+            key={`${snap.lastChange.lever}:${snap.lastChange.fromValue}:${snap.lastChange.toValue}`}
+            change={snap.lastChange}
+            onRate={onFeedback}
+          />
+        )}
         <BalancePanel
           balance={snap.balance}
           corner={snap.currentCorner}
@@ -132,6 +133,12 @@ export function TunerConsole() {
         />
         <TrimPanel trim={snap.trim} run={snap.run} />
         <WearPanel wear={snap.wear} advice={snap.wearAdvice} />
+        <SetupPanel
+          setup={snap.setup}
+          advice={snap.setupAdvice}
+          lastChange={snap.lastChange}
+          nextFrontWing={snap.nextFrontWing}
+        />
       </div>
     </div>
   );
@@ -244,14 +251,24 @@ function SetupPanel({
   advice,
   lastChange,
   nextFrontWing,
-  onFeedback,
 }: {
   setup: SetupEntry | null;
   advice: SetupAdvice | null;
   lastChange: LastChange | null;
   nextFrontWing: number;
-  onFeedback: (thumb: number) => void;
 }) {
+  const sugs = advice?.suggestions ?? [];
+  const hasSugs = sugs.length > 0;
+  // Collapsed by default so a "dialed in" setup isn't the focal point with nothing
+  // to act on; auto-expand the first time suggestions appear so the recommended
+  // changes surface without a click. Manual toggling is respected between edges.
+  const [expanded, setExpanded] = useState(false);
+  const prevHasSugs = useRef(false);
+  useEffect(() => {
+    if (hasSugs && !prevHasSugs.current) setExpanded(true);
+    prevHasSugs.current = hasSugs;
+  }, [hasSugs]);
+
   if (!setup) {
     return (
       <section id="tn-setup" className="panel setup">
@@ -265,7 +282,6 @@ function SetupPanel({
     );
   }
 
-  const sugs = advice?.suggestions ?? [];
   const byKey = new Map<string, SetupSuggestion>(sugs.map((s) => [s.key, s]));
   // The lever the driver just dialed onto its suggested target: confirmed with a
   // green ✓ in the full-setup table instead of still nagging the applied nudge.
@@ -275,18 +291,19 @@ function SetupPanel({
   const n = sugs.length;
 
   return (
-    <section id="tn-setup" className="panel setup">
+    <section id="tn-setup" className={`panel setup${expanded ? " is-expanded" : ""}`}>
       <div className="panel-head">
-        <h2 className="panel-title">Setup</h2>
+        <button
+          type="button"
+          className="setup-toggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((e) => !e)}
+        >
+          <ChevronIcon size={16} className={`setup-chevron${expanded ? " is-open" : ""}`} />
+          <span className="panel-title">Setup</span>
+          {!expanded && hasSugs && <span className="setup-toggle-badge">{n}</span>}
+        </button>
       </div>
-
-      {lastChange && (
-        <FeedbackCard
-          key={`${lastChange.lever}:${lastChange.fromValue}:${lastChange.toValue}`}
-          change={lastChange}
-          onRate={onFeedback}
-        />
-      )}
 
       <div className={`setup-status${dialedIn ? " is-dialed" : ""}`}>
         {!advice ? (
@@ -301,6 +318,8 @@ function SetupPanel({
         )}
       </div>
 
+      {expanded && (
+        <>
       {sugs.length > 0 && (
         <ol className="setup-changes">
           {sugs.map((s, i) => {
@@ -385,6 +404,8 @@ function SetupPanel({
           {Math.round(setup.ballast)} · Next front wing {Math.round(nextFrontWing)}
         </span>
       </div>
+        </>
+      )}
     </section>
   );
 }

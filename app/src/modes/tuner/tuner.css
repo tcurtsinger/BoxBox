@@ -16,35 +16,57 @@
   margin: 0 auto;
   display: grid;
   grid-template-columns: 1.15fr 1fr 1fr;
+  /* Live readouts lead; the setup sheet sits at the bottom, collapsed until
+     there's advice to act on. The feedback banner only takes a row when present
+     (.has-feedback), so no empty gap when there's no recent change to rate. */
   grid-template-areas:
     "bar   bar   bar"
-    "setup setup setup"
-    "bal   trim  wear";
+    "bal   trim  wear"
+    "setup setup setup";
   align-items: stretch;
   gap: var(--space-lg);
 }
+.tuner-inner.has-feedback {
+  grid-template-areas:
+    "bar      bar      bar"
+    "feedback feedback feedback"
+    "bal      trim     wear"
+    "setup    setup    setup";
+}
 .tuner-inner > .tn-bar { grid-area: bar; }
-.tuner-inner > .setup { grid-area: setup; }
+.tuner-inner > .setup-feedback { grid-area: feedback; }
 .tuner-inner > .balance { grid-area: bal; }
 .tuner-inner > .trim { grid-area: trim; }
 .tuner-inner > .wear { grid-area: wear; }
+.tuner-inner > .setup { grid-area: setup; }
 
-/* Tablet: setup leads, balance full width, the two advice panels pair up. */
+/* Tablet: balance full width, the two advice panels pair up, setup last. */
 @media (max-width: 1180px) {
   .tuner-inner {
     grid-template-columns: 1fr 1fr;
     grid-template-areas:
       "bar   bar"
-      "setup setup"
       "bal   bal"
-      "trim  wear";
+      "trim  wear"
+      "setup setup";
+  }
+  .tuner-inner.has-feedback {
+    grid-template-areas:
+      "bar      bar"
+      "feedback feedback"
+      "bal      bal"
+      "trim     wear"
+      "setup    setup";
   }
 }
 /* Narrow: single column in reading order. */
 @media (max-width: 720px) {
   .tuner-inner {
     grid-template-columns: 1fr;
-    grid-template-areas: "bar" "setup" "bal" "trim" "wear";
+    grid-template-areas: "bar" "bal" "trim" "wear" "setup";
+  }
+  .tuner-inner.has-feedback {
+    grid-template-areas: "bar" "feedback" "bal" "trim" "wear" "setup";
   }
 }
 
@@ -223,10 +245,15 @@
   color: var(--ink);
 }
 .balance-verdict {
+  /* Fixed-width slot sized to the longest state ("Awaiting corner") so the gauge
+     beside it keeps a constant length and start position as the word changes,
+     instead of the bar (and its centred marker) jumping around. */
   flex: none;
-  font-size: 22px;
+  width: 8.5rem;
+  font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 .balance-understeer .balance-verdict { color: var(--data-caution); }
 .balance-oversteer .balance-verdict { color: var(--data-info); }
@@ -378,6 +405,54 @@
 .diag-k-pow { color: var(--data-danger); }
 
 /* ---- Setup -------------------------------------------------------------- */
+/* Setup is collapsible: the header is the toggle, the body shows only when
+   expanded (auto-expands the first time advice arrives). */
+.setup-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.setup-chevron {
+  flex: none;
+  color: var(--muted);
+  transform: rotate(-90deg);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.setup-chevron.is-open {
+  transform: rotate(0deg);
+}
+.setup-toggle:hover .panel-title {
+  color: var(--ink);
+}
+.setup-toggle-badge {
+  margin-left: var(--space-sm);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: color-mix(in oklch, var(--primary) 18%, transparent);
+  border: 1px solid color-mix(in oklch, var(--primary) 40%, transparent);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  .setup-chevron {
+    transition: none;
+  }
+}
+
 .setup-status {
   margin-bottom: var(--space-lg);
   padding: 10px 14px;
@@ -393,6 +468,8 @@
   border-color: color-mix(in oklch, var(--data-good) 35%, transparent);
 }
 .setup-status.is-dialed strong { color: var(--data-good); }
+/* Collapsed: the status is the last visible row, so drop its trailing margin. */
+.setup:not(.is-expanded) .setup-status { margin-bottom: 0; }
 
 /* Suggested changes — the answer, hoisted out of the 20-row grid into a row of
    glanceable cards (priority-ordered). */
@@ -464,7 +541,6 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--space-md);
-  margin-bottom: var(--space-lg);
   padding: 10px 14px;
   background: color-mix(in oklch, var(--primary) 8%, transparent);
   border: 1px solid color-mix(in oklch, var(--primary) 35%, transparent);

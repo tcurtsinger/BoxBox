@@ -18,6 +18,15 @@ function base(size: number) {
   };
 }
 
+/** Disclosure chevron, pointing down by default; rotate via CSS for other states. */
+export function ChevronIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
 /* ---- Window controls (square 10-unit glyphs centred in 24 box) ---------- */
 export function MinimizeIcon({ size = 16, className }: IconProps) {
   return (

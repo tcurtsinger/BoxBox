@@ -46,17 +46,39 @@ impl ProfileStore {
 
     /// Write the profile if the engine's learned state changed since the last
     /// save. A cheap no-op otherwise. Returns true if it wrote. Callers hold the
-    /// engine lock, which also serializes writes across threads.
+    /// engine lock for the whole call (snapshot + write), so this is for the rare
+    /// user-triggered saves (a thumbs rating, a balance change) — NOT the hot
+    /// receive loop, which uses `pending_save` + `commit_save` to keep the disk
+    /// write off the engine lock.
     pub fn save_if_changed(&self, state: &TunerState) -> bool {
+        match self.pending_save(state) {
+            Some((rev, profile)) => self.commit_save(rev, &profile),
+            None => false,
+        }
+    }
+
+    /// If the engine changed since the last save, snapshot the profile to write.
+    /// Cheap — a revision compare plus a small clone — and meant to run under the
+    /// engine lock. The heavy disk write is deferred to `commit_save` so it can run
+    /// WITHOUT the lock held, keeping disk I/O off the hot receive/forward path (a
+    /// slow or stalled write must never block telemetry ingest or the repeater).
+    pub fn pending_save(&self, state: &TunerState) -> Option<(u64, TunerProfile)> {
         let rev = state.profile_revision();
         if rev == self.last_saved.load(Ordering::Relaxed) {
-            return false;
+            return None;
         }
-        if write_profile(&self.path, &state.export_profile()).is_ok() {
+        Some((rev, state.export_profile()))
+    }
+
+    /// Write a profile snapshot from `pending_save` to disk and record its revision
+    /// as saved. Call WITHOUT the engine lock held. A failed write leaves
+    /// `last_saved` behind so the next change retries.
+    pub fn commit_save(&self, rev: u64, profile: &TunerProfile) -> bool {
+        if write_profile(&self.path, profile).is_ok() {
             self.last_saved.store(rev, Ordering::Relaxed);
             true
         } else {
-            false // a failed write leaves last_saved behind so the next change retries
+            false
         }
     }
 }
