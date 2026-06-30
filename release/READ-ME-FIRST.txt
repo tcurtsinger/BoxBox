@@ -1,0 +1,37 @@
+BoxBox — Install & First Run
+============================
+
+1. Double-click the BoxBox installer you downloaded
+   (the file named BoxBox_..._x64-setup.exe).
+
+2. Windows may show a blue "Windows protected your PC" box.
+   This is normal — the app just isn't signed with a paid certificate.
+   Click "More info", then "Run anyway".
+
+3. Follow the installer. When it finishes, open BoxBox from the
+   Start Menu (or the desktop shortcut).
+
+4. The first time it launches, Windows may ask about firewall access.
+   Click "Allow" — BoxBox needs it to receive telemetry from the game.
+
+5. In F1 25 / F1 26:
+   Settings -> Telemetry Settings
+     - UDP Telemetry:        On
+     - UDP Broadcast Mode:   Off (unless you know you need it)
+     - UDP Format:           2026   (2025 also works)
+     - Port:                 20777
+   BoxBox detects the feed automatically once you're in a session.
+
+IMPORTANT: For BoxBox to see your telemetry, run it on the SAME PC
+that you play the game on. (If you want it on a different PC, set the
+game's "UDP IP Address" to that PC's local IP — otherwise leave it.)
+
+Running SimHub or a wheel dashboard too?
+   Only one app can bind the telemetry port, so instead of fighting over
+   it, let BoxBox pass the feed along. Open BoxBox -> Settings ->
+   Connection, turn on "Forward telemetry", and point it at the other
+   app's port (e.g. 127.0.0.1:20778). Set that app to listen on 20778.
+   BoxBox relays a copy of every packet to it — no UDP broadcast needed,
+   and both apps get live data at once.
+
+That's it. Jump in a session and the data should start flowing.
