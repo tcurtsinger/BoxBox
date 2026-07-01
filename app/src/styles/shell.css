@@ -702,6 +702,36 @@ textarea {
   background: var(--surface);
   color: var(--ink);
 }
+
+/* Voice race-engineer settings */
+.eng-config {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: 2px;
+}
+.eng-cats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+}
+.eng-cat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.eng-cat input {
+  accent-color: var(--primary);
+}
+.eng-rate-label {
+  margin-top: 2px;
+}
+.eng-test {
+  align-self: flex-start;
+}
 .fwd-remove:disabled {
   opacity: 0.35;
   cursor: default;

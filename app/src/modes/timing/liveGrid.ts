@@ -30,6 +30,8 @@ export interface LiveDriver {
   penaltiesSec: number;
   tyreVisual: number;
   tyreAgeLaps: number;
+  /** Per-corner tyre wear %, wheel order [RL, RR, FL, FR] (CarDamage id 10). */
+  tyreWear: number[];
   fuelRemainingLaps: number;
   batteryPct: number;
   ersDeployMode: number;
@@ -79,6 +81,9 @@ export interface RaceSnapshot {
   session: { totalLaps: number } | null;
   sessionCategory: string;
   numActiveCars: number;
+  /** Car index of the player's own car (F1 header `m_playerCarIndex`); the voice
+   *  race engineer targets this row. 255 when there is no local player (spectating). */
+  playerCarIndex: number;
   drivers: LiveDriver[];
   finalClassification: { numCars: number; classification: FinalClassificationEntry[] } | null;
   qualiSegments: QualiSegment[];

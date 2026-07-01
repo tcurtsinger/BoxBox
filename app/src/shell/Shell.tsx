@@ -2,6 +2,7 @@ import { Titlebar } from "./Titlebar";
 import { useShell } from "./shell-context";
 import { useTelemetry } from "./useTelemetry";
 import { CloseGuard } from "./CloseGuard";
+import { RaceEngineer } from "../engineer/RaceEngineer";
 import { TunesView } from "../modes/TunesView";
 import { RaceControlView } from "../modes/RaceControlView";
 
@@ -16,6 +17,7 @@ export function Shell() {
         {mode === "tunes" ? <TunesView /> : <RaceControlView />}
       </main>
       <CloseGuard />
+      <RaceEngineer />
     </div>
   );
 }

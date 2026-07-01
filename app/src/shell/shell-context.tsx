@@ -78,6 +78,51 @@ function loadConnection(): Connection {
   }
 }
 
+/** Which callout families the voice race engineer will speak. */
+export interface EngineerCategories {
+  fuelTyres: boolean;
+  gapsPosition: boolean;
+  lapTimes: boolean;
+  flagsIncidents: boolean;
+}
+
+/** Voice race-engineer settings. The engine reads the live snapshot and speaks
+ *  proactive callouts through the OS voice (Web Speech) — entirely local, no AI. */
+export interface EngineerSettings {
+  enabled: boolean;
+  categories: EngineerCategories;
+  /** Chosen speechSynthesis voice URI, or null to use the browser default. */
+  voiceURI: string | null;
+  rate: number; // 0.5..2 speech rate
+  volume: number; // 0..1
+}
+
+const ENGINEER_STORAGE_KEY = "boxbox.engineer";
+
+const DEFAULT_ENGINEER: EngineerSettings = {
+  enabled: false,
+  categories: { fuelTyres: true, gapsPosition: true, lapTimes: true, flagsIncidents: true },
+  voiceURI: null,
+  rate: 1,
+  volume: 1,
+};
+
+/** Restore engineer settings, merged over defaults so an older/partial blob stays valid. */
+function loadEngineer(): EngineerSettings {
+  try {
+    const raw = localStorage.getItem(ENGINEER_STORAGE_KEY);
+    if (!raw) return DEFAULT_ENGINEER;
+    const saved = JSON.parse(raw) as Partial<EngineerSettings>;
+    return {
+      ...DEFAULT_ENGINEER,
+      ...saved,
+      categories: { ...DEFAULT_ENGINEER.categories, ...(saved.categories ?? {}) },
+    };
+  } catch {
+    return DEFAULT_ENGINEER;
+  }
+}
+
 interface ShellState {
   mode: Mode;
   setMode: (m: Mode) => void;
@@ -98,6 +143,9 @@ interface ShellState {
   setSessionSaved: (saved: boolean) => void;
   connection: Connection;
   setConnection: (c: Connection) => void;
+  /** Voice race-engineer settings (persisted locally). */
+  engineer: EngineerSettings;
+  setEngineer: (e: EngineerSettings) => void;
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
   /** Car number of the timing-tower row the steward has selected, if any. */
@@ -122,6 +170,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const [raceSection, setRaceSection] = useState<RaceSection>("timing");
   const [sessionSaved, setSessionSaved] = useState(false);
   const [connection, setConnection] = useState<Connection>(loadConnection);
+  const [engineer, setEngineer] = useState<EngineerSettings>(loadEngineer);
 
   // A fresh connect is a new, unsaved session: clear the saved flag whenever the
   // feed drops to no-feed so the close guard re-arms for the next session.
@@ -139,6 +188,16 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       // still fully functional, so swallow.
     }
   }, [connection]);
+
+  // Persist engineer settings locally so the driver's voice preferences survive
+  // restarts, just like the connection config.
+  useEffect(() => {
+    try {
+      localStorage.setItem(ENGINEER_STORAGE_KEY, JSON.stringify(engineer));
+    } catch {
+      // Storage unavailable: settings just won't persist this session.
+    }
+  }, [engineer]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState<number | null>(null);
   const [incidents, setIncidents] = useState<UIIncident[]>(() =>
@@ -161,6 +220,8 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setSessionSaved,
       connection,
       setConnection,
+      engineer,
+      setEngineer,
       settingsOpen,
       setSettingsOpen,
       selectedDriver,
@@ -168,7 +229,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       incidents,
       setIncidents,
     }),
-    [mode, tunesSection, referenceTune, feed, raceSection, sessionSaved, connection, settingsOpen, selectedDriver, incidents],
+    [mode, tunesSection, referenceTune, feed, raceSection, sessionSaved, connection, engineer, settingsOpen, selectedDriver, incidents],
   );
 
   return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>;

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { useShell, type ForwardTarget } from "./shell-context";
+import { useShell, type ForwardTarget, type EngineerCategories } from "./shell-context";
 import { CloseIcon } from "./icons";
 import { Segmented, type SegmentedOption } from "./Segmented";
 import { historyRetention, setHistoryRetention } from "../modes/history/historyData";
+import { listVoices, onVoicesReady, speakOnce } from "../engineer/speech";
 
 const FORMAT_OPTIONS: SegmentedOption<"2026" | "2025">[] = [
   { value: "2026", label: "2026" },
@@ -19,6 +20,18 @@ const RETENTION_OPTIONS: SegmentedOption<string>[] = [
   { value: "30", label: "30 days" },
   { value: "90", label: "90 days" },
   { value: "365", label: "1 year" },
+];
+
+const ONOFF_OPTIONS: SegmentedOption<"off" | "on">[] = [
+  { value: "off", label: "Off" },
+  { value: "on", label: "On" },
+];
+
+const ENGINEER_CATEGORIES: { key: keyof EngineerCategories; label: string }[] = [
+  { key: "fuelTyres", label: "Fuel & tyres" },
+  { key: "gapsPosition", label: "Gaps & position" },
+  { key: "lapTimes", label: "Lap times" },
+  { key: "flagsIncidents", label: "Flags & incidents" },
 ];
 
 /** Editing draft for a forward target — port is a string so it can be cleared
@@ -59,7 +72,8 @@ export function SettingsDialog({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const { connection, setConnection } = useShell();
+  const { connection, setConnection, engineer, setEngineer } = useShell();
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [port, setPort] = useState(String(connection.port));
   const [format, setFormat] = useState(connection.format);
   const [forwardEnabled, setForwardEnabled] = useState(connection.forwardEnabled);
@@ -80,6 +94,19 @@ export function SettingsDialog({
       active = false;
     };
   }, [open]);
+
+  // OS voices populate asynchronously; keep the picker's list in sync while open.
+  useEffect(() => {
+    if (!open) return;
+    const update = () => setVoices(listVoices());
+    const off = onVoicesReady(update);
+    update();
+    return off;
+  }, [open]);
+
+  const cats = engineer.categories;
+  const toggleCat = (k: keyof EngineerCategories) =>
+    setEngineer({ ...engineer, categories: { ...cats, [k]: !cats[k] } });
 
   // Sync the dialog element with the `open` prop and reset the draft on open.
   useEffect(() => {
@@ -270,6 +297,85 @@ export function SettingsDialog({
           <p className="field-hint">
             Auto-delete saved sessions older than this. Pinned sessions are always kept.
           </p>
+        </div>
+
+        <div className="field">
+          <span className="field-label">Voice race engineer</span>
+          <Segmented
+            options={ONOFF_OPTIONS}
+            value={engineer.enabled ? "on" : "off"}
+            onChange={(v) => setEngineer({ ...engineer, enabled: v === "on" })}
+            ariaLabel="Voice race engineer"
+          />
+          <p className="field-hint">
+            Speaks proactive callouts from live telemetry using your computer's
+            voice — offline, no account, no AI.
+          </p>
+
+          {engineer.enabled && (
+            <div className="eng-config">
+              <div className="eng-cats" role="group" aria-label="Callout types">
+                {ENGINEER_CATEGORIES.map(({ key, label }) => (
+                  <label className="eng-cat" key={key}>
+                    <input
+                      type="checkbox"
+                      checked={cats[key]}
+                      onChange={() => toggleCat(key)}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+
+              <label className="field-label" htmlFor="eng-voice">
+                Voice
+              </label>
+              <select
+                id="eng-voice"
+                className="field-input"
+                value={engineer.voiceURI ?? ""}
+                onChange={(e) =>
+                  setEngineer({ ...engineer, voiceURI: e.target.value || null })
+                }
+              >
+                <option value="">System default</option>
+                {voices.map((v) => (
+                  <option key={v.voiceURI} value={v.voiceURI}>
+                    {v.name} ({v.lang})
+                  </option>
+                ))}
+              </select>
+
+              <label className="field-label eng-rate-label" htmlFor="eng-rate">
+                Speech speed — {engineer.rate.toFixed(1)}×
+              </label>
+              <input
+                id="eng-rate"
+                type="range"
+                min={0.5}
+                max={2}
+                step={0.1}
+                value={engineer.rate}
+                onChange={(e) =>
+                  setEngineer({ ...engineer, rate: Number(e.target.value) })
+                }
+              />
+
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm eng-test"
+                onClick={() =>
+                  speakOnce("Radio check — loud and clear.", {
+                    voiceURI: engineer.voiceURI,
+                    rate: engineer.rate,
+                    volume: engineer.volume,
+                  })
+                }
+              >
+                Test voice
+              </button>
+            </div>
+          )}
         </div>
 
         <footer className="dialog-foot">
