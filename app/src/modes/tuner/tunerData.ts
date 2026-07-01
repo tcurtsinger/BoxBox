@@ -134,6 +134,10 @@ export interface TunerSnapshot {
   run: RunStats | null;
   wear: WearStint | null;
   wearAdvice: WearAdvice | null;
+  /** The saved tune whose setup matches the live one, if any (filled by the
+   *  `tuner_snapshot` command). Drives the Tuner run card and the Setups live
+   *  badge. Optional so older snapshot shapes still parse. */
+  matchedTuneId?: string | null;
 }
 
 /* ------------------------------------------------------------------ helpers */
@@ -257,6 +261,9 @@ export function sampleTuner(): TunerSnapshot {
     track: "Suzuka",
     session: "Time Trial",
     setupReceived: true,
+    // = SAMPLE_RUNNING_TUNE_ID in tunes/tunesData (its setup equals this snapshot's),
+    // so the preview shows the "Running saved tune" / live-badge state.
+    matchedTuneId: "tune-sample-1",
     equalPerf: true,
     balancePreference: 0,
     balance: { cornering: true, slipBalance: 0.012, frontSlip: 0.052, rearSlip: 0.04, understeerAngle: 0.014 },

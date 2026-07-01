@@ -1,13 +1,13 @@
 import { useShell, type Mode } from "./shell-context";
 
 const MODES: { id: Mode; label: string }[] = [
-  { id: "tuner", label: "Tuner" },
-  { id: "race-control", label: "Race Control" },
+  { id: "tunes", label: "Tunes" },
+  { id: "race", label: "Race" },
 ];
 
 /**
- * Top-level identity control. Tuner and Race Control are peers; the active
- * segment is teal text + a 2px underline, never a filled block (DESIGN.md).
+ * Top-level identity control. Tunes and Race are peers; the active segment is
+ * teal text + a 2px underline, never a filled block (DESIGN.md).
  */
 export function ModeSwitch() {
   const { mode, setMode } = useShell();

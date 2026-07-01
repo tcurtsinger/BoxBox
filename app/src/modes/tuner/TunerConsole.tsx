@@ -30,6 +30,9 @@ import {
   type TyreCorner,
 } from "./tunerData";
 import "./tuner.css";
+import { SetupSheet } from "../tunes/SetupSheet";
+import { getTune, saveCurrentTune, fmtBest, trackName, type Tune } from "../tunes/tunesData";
+import "../tunes/tunes.css";
 
 const PHASE_LABEL = { entry: "Entry", mid: "Mid", exit: "Exit" } as const;
 const PREFS: { label: string; value: number }[] = [
@@ -39,7 +42,7 @@ const PREFS: { label: string; value: number }[] = [
 ];
 
 export function TunerConsole() {
-  const { feed } = useShell();
+  const { feed, referenceTune, setReferenceTune } = useShell();
   const sample = feed.sample === true;
   const snap = useTunerSnapshot(sample);
   const [pref, setPref] = useState(0);
@@ -90,6 +93,14 @@ export function TunerConsole() {
 
   return (
     <div className="tuner">
+      {(referenceTune || snap.setup) && (
+        <div className="tuner-strips">
+          {referenceTune && (
+            <ReferencePanel tune={referenceTune} onClear={() => setReferenceTune(null)} />
+          )}
+          <RunCard matchedId={snap.matchedTuneId ?? null} hasSetup={!!snap.setup} />
+        </div>
+      )}
       <div className={`tuner-inner${snap.lastChange ? " has-feedback" : ""}`}>
         <h1 className="sr-only">Tuner — {snap.track}, {snap.session}</h1>
         <header className="tn-bar">
@@ -603,9 +614,132 @@ function WearPanel({ wear, advice }: { wear: WearStint | null; advice: WearAdvic
             )}
           </>
         ) : (
-          <p className="panel-foot">Building wear data — a few laps needed.</p>
+          <p className="panel-foot">Building wear data — {laps}/3 laps on this set.</p>
         )}
       </div>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------- Tunes */
+/** Shows which saved tune the live setup matches ("Running …"), or offers to
+ *  save the current setup when it isn't in the library yet. Hidden until a setup
+ *  has been auto-detected (nothing to match or save before then). */
+function RunCard({ matchedId, hasSetup }: { matchedId: string | null; hasSetup: boolean }) {
+  const { setTunesSection } = useShell();
+  const [matched, setMatched] = useState<Tune | null>(null);
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [savedId, setSavedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!matchedId) {
+      setMatched(null);
+      return;
+    }
+    // Once the engine reports a match, the local "just saved" acknowledgement is
+    // redundant — the matched card takes over.
+    setSavedId(null);
+    let active = true;
+    void getTune(matchedId).then((t) => {
+      if (active) setMatched(t);
+    });
+    return () => {
+      active = false;
+    };
+  }, [matchedId]);
+
+  if (!hasSetup) return null;
+
+  if (matchedId) {
+    return (
+      <div className="tuner-runcard is-matched">
+        <span className="runcard-dot" aria-hidden="true" />
+        <div className="runcard-text">
+          <span className="runcard-kicker">Running saved tune</span>
+          <span className="runcard-name">{matched ? matched.name : "…"}</span>
+          {matched && (
+            <span className="runcard-times mono">
+              Best TT {fmtBest(matched.timeTrial.bestMs)} · Practice {fmtBest(matched.practice.bestMs)}
+            </span>
+          )}
+        </div>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setTunesSection("setups")}>
+          Manage
+        </button>
+      </div>
+    );
+  }
+
+  const onSave = async () => {
+    setSaving(true);
+    const id = await saveCurrentTune(name.trim() || undefined);
+    setSaving(false);
+    if (id) setSavedId(id);
+  };
+
+  return (
+    <div className="tuner-runcard">
+      <span className="runcard-dot is-unsaved" aria-hidden="true" />
+      <div className="runcard-text">
+        <span className="runcard-kicker">Current setup</span>
+        <span className="runcard-name">Not saved to your library</span>
+      </div>
+      {savedId ? (
+        <span className="runcard-saved">
+          Saved ✓
+          <button type="button" className="btn btn-quiet btn-sm" onClick={() => setTunesSection("setups")}>
+            Open
+          </button>
+        </span>
+      ) : (
+        <span className="runcard-save">
+          <input
+            className="field-input runcard-input"
+            placeholder="Name (optional)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <button type="button" className="btn btn-primary btn-sm" onClick={onSave} disabled={saving}>
+            Save to library
+          </button>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** A saved tune opened as a read-only baseline (Setups → Open in Tuner): its
+ *  setup sheet to dial in-game. When the live setup matches, the run card above
+ *  flips to "Running …". */
+function ReferencePanel({ tune, onClear }: { tune: Tune; onClear: () => void }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <section className="tuner-ref" aria-label={`Reference setup: ${tune.name}`}>
+      <div className="ref-head">
+        <div className="ref-head-left">
+          <span className="ref-kicker">Reference setup</span>
+          <span className="ref-name">{tune.name}</span>
+          <span className="ref-track">{trackName(tune.trackId)}</span>
+        </div>
+        <div className="ref-actions">
+          <button type="button" className="btn btn-quiet btn-sm" onClick={() => setOpen((o) => !o)}>
+            {open ? "Hide" : "Show"}
+          </button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClear}>
+            Clear
+          </button>
+        </div>
+      </div>
+      {open && (
+        <>
+          <p className="ref-note">
+            Dial these into the in-game setup screen to match <strong>{tune.name}</strong>. BoxBox reads
+            your setup back live — when it matches, the card above shows you&rsquo;re running it.
+          </p>
+          <SetupSheet values={tune.setup} />
+        </>
+      )}
     </section>
   );
 }

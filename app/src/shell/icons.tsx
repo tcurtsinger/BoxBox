@@ -61,7 +61,7 @@ export function CloseIcon({ size = 16, className }: IconProps) {
   );
 }
 
-/* ---- Race Control section rail ------------------------------------------ */
+/* ---- Section rails (Race + Tunes) --------------------------------------- */
 export function StopwatchIcon({ size = 16, className }: IconProps) {
   return (
     <svg {...base(size)} className={className}>
@@ -91,6 +91,40 @@ export function ReportIcon({ size = 16, className }: IconProps) {
   return (
     <svg {...base(size)} className={className}>
       <path d="M6 3h8l4 4v14H6zM14 3v4h4M9 13h6M9 16.5h6M9 9.5h2" />
+    </svg>
+  );
+}
+
+/** Horizontal tuning sliders: the Setups library section. */
+export function SlidersIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M4 7h7M16 7h4M4 12h2M11 12h9M4 17h9M18 17h2" />
+      <circle cx="13" cy="7" r="2" />
+      <circle cx="8" cy="12" r="2" />
+      <circle cx="15" cy="17" r="2" />
+    </svg>
+  );
+}
+
+/** A dial/gauge with a needle: the Tuner section. */
+export function GaugeIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M4 18a8 8 0 0 0 16 0" />
+      <path d="M12 18l4.5-4.5" />
+      <circle cx="12" cy="18" r="1.25" />
+    </svg>
+  );
+}
+
+/** A clock with a rewind arrow: the saved-session History section. */
+export function HistoryIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M12 7v5l4 2" />
     </svg>
   );
 }

@@ -33,6 +33,8 @@ use super::wear::{
 };
 use super::wear_estimator::{WearEstimator, WearLever};
 
+use crate::tunes::model::{SetupIdentity, TuneSession};
+
 // A lap is only segmented if clean and reasonably complete.
 const MIN_LAP_SAMPLES: usize = 50;
 const MIN_LAP_COVERAGE: f64 = 0.5; // fraction of track length the trace must span
@@ -44,6 +46,9 @@ const WHEELBASE_M: f64 = 3.6;
 const CORNERING_SPEED_FLOOR: f64 = 10.0; // m/s
 const CORNERING_STEER_FLOOR: f64 = 0.03; // rad
 const BALANCE_EMA_ALPHA: f64 = 0.08;
+// Cap on laps queued for the tune library between listener drains (defensive: the
+// listener drains every frame, so this is only reached if nothing is consuming them).
+const MAX_PENDING_LAPS: usize = 64;
 
 fn ema(prev: Option<f64>, x: f64) -> f64 {
     match prev {
@@ -137,6 +142,26 @@ impl SetupField {
             _ => None,
         }
     }
+
+    /// Whether changing this field materially shifts how the tyres wear, so the
+    /// wear stint must rebaseline. Aero, differential, and brakes — the levers
+    /// drivers nudge from the wheel mid-run — deliberately do NOT, so a cockpit
+    /// tweak can't wipe the multi-lap stint the wear advice is built from.
+    fn affects_wear(self) -> bool {
+        matches!(
+            self,
+            SetupField::FrontCamber
+                | SetupField::RearCamber
+                | SetupField::FrontToe
+                | SetupField::RearToe
+                | SetupField::FrontAntiRollBar
+                | SetupField::RearAntiRollBar
+                | SetupField::FrontRideHeight
+                | SetupField::RearRideHeight
+                | SetupField::FrontSuspension
+                | SetupField::RearSuspension
+        )
+    }
 }
 
 fn suggest_value(s: &CarSetupEntry, key: SuggestKey) -> f64 {
@@ -196,6 +221,21 @@ struct LastChange {
     clean_lap_at_change: u32,
 }
 
+/// A clean Time Trial / Practice lap queued for the tune library: the lap time plus
+/// the setup it was driven on and the context that keeps laps comparable. Produced
+/// by `finalize_lap`; the listener drains these (`take_pending_laps`), matches each
+/// against the saved tunes, and records it against the matching tune.
+#[derive(Debug, Clone)]
+pub struct PendingLap {
+    pub session: TuneSession,
+    pub lap_time_ms: u32,
+    pub compound: Option<u8>,
+    pub track_temp: Option<i8>,
+    pub fuel: Option<f32>,
+    pub track_id: i32,
+    pub setup: SetupIdentity,
+}
+
 #[derive(Default)]
 pub struct TunerState {
     format: u16,
@@ -214,6 +254,10 @@ pub struct TunerState {
     equal_car_performance: Option<u8>,
     custom_setup: Option<u8>,
     lap_valid: Option<u8>,
+    // Track temperature from Session, stamped onto recorded tune laps.
+    track_temp: Option<i8>,
+    // Clean TT/Practice laps queued for the tune library, drained by the listener.
+    pending_laps: Vec<PendingLap>,
 
     // Balance EMAs from MotionEx (id 13); None until the first cornering sample.
     slip_balance: Option<f64>,
@@ -357,6 +401,25 @@ impl TunerState {
         next
     }
 
+    /// Drain the clean TT/Practice laps finalized since the last call, for the
+    /// listener to record against the matching saved tune.
+    pub fn take_pending_laps(&mut self) -> Vec<PendingLap> {
+        std::mem::take(&mut self.pending_laps)
+    }
+
+    /// The live setup as a tune identity plus its track, when the captured setup
+    /// still matches the live car/track. Used by the snapshot command to find the
+    /// matching saved tune for `matched_tune_id`.
+    pub fn live_setup_identity(&self) -> Option<(i32, SetupIdentity)> {
+        if self.setup_is_current() {
+            self.setup
+                .as_ref()
+                .map(|s| (self.track_id, SetupIdentity::from_setup(s)))
+        } else {
+            None
+        }
+    }
+
     pub fn ingest(&mut self, pkt: &ParsedPacket) {
         let h = &pkt.header;
         if !self.session_uid.is_empty() && h.session_uid != self.session_uid {
@@ -432,6 +495,7 @@ impl TunerState {
         self.session_type = s.session_type;
         self.track_id = new_track;
         self.track_length = s.track_length as f64;
+        self.track_temp = Some(s.track_temperature);
         if let Some(e) = s.equal_car_performance {
             self.equal_car_performance = Some(e);
         }
@@ -626,6 +690,28 @@ impl TunerState {
                     .copied()
                     .unwrap_or_else(|| new_run(setup.front_wing, setup.rear_wing));
                 m.insert(key, fold_lap(cur, &ls));
+
+                // Queue this lap for the tune library when it is a Time Trial or
+                // Practice session (the only ones the Tuner serves). The listener
+                // matches it against the saved tunes; an unsaved setup has no match,
+                // so the lap is simply dropped.
+                if let Some(session) = TuneSession::from_session_type(self.session_type) {
+                    let fuel = match session {
+                        TuneSession::Practice => Some(setup.fuel_load),
+                        TuneSession::TimeTrial => None,
+                    };
+                    if self.pending_laps.len() < MAX_PENDING_LAPS {
+                        self.pending_laps.push(PendingLap {
+                            session,
+                            lap_time_ms: ls.lap_time_ms,
+                            compound: self.compound,
+                            track_temp: self.track_temp,
+                            fuel,
+                            track_id: self.track_id,
+                            setup: SetupIdentity::from_setup(&setup),
+                        });
+                    }
+                }
             }
         }
 
@@ -775,7 +861,11 @@ impl TunerState {
                 }
             }
         }
-        if self.wear.is_some() {
+        // Rebaseline the wear stint only when a wear-affecting field changed. A
+        // diff / brake-bias / wing tweak (common mid-run, especially from the
+        // wheel) must NOT reset it, or the stint never survives the laps the wear
+        // advice needs — it would sit on "building wear data" forever (P2.2).
+        if self.wear.is_some() && changed_fields.iter().any(|f| f.affects_wear()) {
             self.wear_baseline = self.wear;
             self.wear_laps = 0;
             self.wear_stint_clean = true; // the new setup's stint starts clean
@@ -1006,6 +1096,9 @@ impl TunerState {
             run: current_run,
             wear,
             wear_advice,
+            // Set by the tuner_snapshot command from the tune library; the engine
+            // has no library handle, so it defaults to None here.
+            matched_tune_id: None,
             // Diagnostic fields the UI ignores but tests/inspection find useful.
             format: self.format,
             game_year: self.game_year,
@@ -1106,6 +1199,9 @@ pub struct Snapshot {
     pub run: Option<RunStats>,
     pub wear: Option<WearStint>,
     pub wear_advice: Option<WearAdvice>,
+    /// The id of the saved tune whose setup matches the live one, if any (filled by
+    /// the `tuner_snapshot` command). Drives the Tuner's "Running Tune X" card.
+    pub matched_tune_id: Option<String>,
     pub format: u16,
     pub game_year: u8,
     pub session_uid: String,
@@ -1336,6 +1432,61 @@ mod tests {
             d.cars[0].front_toe = front_toe;
         }
         pkt
+    }
+
+    // setups() with the brake bias overridden — a cockpit tweak that does not
+    // affect tyre wear (the kind drivers make from the wheel mid-run).
+    fn setups_brake_bias(brake_bias: u8) -> ParsedPacket {
+        let mut pkt = setups();
+        if let Some(Body::CarSetups(d)) = pkt.data.as_mut() {
+            d.cars[0].brake_bias = brake_bias;
+        }
+        pkt
+    }
+
+    #[test]
+    fn non_wear_tweak_keeps_the_wear_stint() {
+        // A brake-bias change (no effect on tyre wear) must NOT reset the stint,
+        // or it never survives the laps wear advice needs — the field bug where
+        // every cockpit tweak left it stuck on "building wear data".
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&setups()); // brake bias 58
+        st.ingest(&damage(0.0, 0.0, 0.0, 0.0)); // seed the wear baseline
+        st.ingest(&lapdata(10.0, 1, 0)); // seeds the lap number (no increment)
+        st.ingest(&damage(1.0, 1.0, 2.0, 2.0));
+        st.ingest(&lapdata(10.0, 2, 0)); // wear_laps = 1
+        st.ingest(&setups_brake_bias(57)); // cockpit tweak mid-run
+        st.ingest(&damage(2.0, 2.0, 4.0, 4.0));
+        st.ingest(&lapdata(10.0, 3, 0)); // wear_laps = 2
+        st.ingest(&damage(3.0, 3.0, 6.0, 6.0));
+        st.ingest(&lapdata(10.0, 4, 0)); // wear_laps = 3 (would be 2 if the tweak reset it)
+
+        assert_eq!(
+            st.wear_laps, 3,
+            "a brake-bias tweak must not rebaseline the wear stint"
+        );
+        assert!(
+            st.snapshot().wear_advice.is_some(),
+            "wear advice should appear once the stint survives 3 laps"
+        );
+    }
+
+    #[test]
+    fn geometry_change_does_rebaseline_the_wear_stint() {
+        // A front-toe change DOES affect wear, so it should still rebaseline.
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&setups());
+        st.ingest(&damage(0.0, 0.0, 0.0, 0.0));
+        st.ingest(&lapdata(10.0, 1, 0)); // wear_laps = 1
+        st.ingest(&damage(1.0, 1.0, 2.0, 2.0));
+        st.ingest(&lapdata(10.0, 2, 0)); // wear_laps = 2
+        st.ingest(&setups_toe(0.04)); // wear-relevant change -> rebaseline
+        assert_eq!(
+            st.wear_laps, 0,
+            "a wear-relevant change should reset the stint to measure the new rate"
+        );
     }
 
     // A clean 3-lap baseline stint with climbing wear, then a single-lever (front

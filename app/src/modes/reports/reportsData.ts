@@ -5,9 +5,28 @@
  */
 import { fmtLap, fmtSec, type DriverRow } from "../timing/mockGrid";
 import { carLabel, isDecided, type UIIncident } from "../incidents/incident";
+import {
+  toDriverRows,
+  sessionInfo,
+  toFinalClassification,
+  toQualifyingClassification,
+  type RaceSnapshot,
+} from "../timing/liveGrid";
+import { toUIIncidents } from "../incidents/liveIncidents";
+
+/** Session-category code → report header label. */
+export const CATEGORY_LABEL: Record<string, string> = {
+  race: "Race",
+  qualifying: "Qualifying",
+  practice: "Practice",
+  timeTrial: "Time trial",
+};
 
 export interface ClassRow {
   pos: number;
+  /** Starting grid position (Final classification only; 0 when unknown, e.g. a
+   *  provisional projection or a qualifying row). Drives the grid→finish delta. */
+  gridPos: number;
   no: number;
   name: string;
   teamName: string;
@@ -35,6 +54,7 @@ export interface ReportSummary {
   fastestLapTime: string;
   incidentCount: number;
   penaltyCount: number;
+  pitStops: number;
 }
 
 export interface Decision {
@@ -72,6 +92,7 @@ export function markPenalties(rows: ClassRow[], incidents: UIIncident[]): ClassR
 export function buildClassification(grid: DriverRow[]): ClassRow[] {
   return grid.map((d) => ({
     pos: d.pos,
+    gridPos: 0,
     no: d.no,
     name: d.name,
     teamName: d.teamName,
@@ -107,6 +128,7 @@ export function buildSummary(
     fastestLapTime: fl ? fmtLap(fl.bestMs) : "—",
     incidentCount: incidents.length,
     penaltyCount: incidents.filter((i) => i.status === "approved").length,
+    pitStops: classification.reduce((n, c) => n + c.pits, 0),
   };
 }
 
@@ -148,6 +170,54 @@ export interface ReportData {
    *  provisional projection otherwise. Stamped into the export so a saved file
    *  isn't mistaken for the official result. */
   final: boolean;
+  /** The classification is a (stacked) qualifying result rather than a race; drives
+   *  the section heading and the per-row elimination badges. */
+  isQualifying: boolean;
+}
+
+/** Assemble a report from a base classification + incidents: cross-references the
+ *  steward penalties, then derives the summary and the decision list. Shared by the
+ *  live report and a saved snapshot so both render identically. */
+export function assembleReport(args: {
+  header: ReportHeader;
+  baseClassification: ClassRow[];
+  incidents: UIIncident[];
+  isFinal: boolean;
+  isQualifying: boolean;
+}): ReportData {
+  const classification = markPenalties(args.baseClassification, args.incidents);
+  return {
+    header: args.header,
+    summary: buildSummary(classification, args.incidents),
+    classification,
+    decisions: buildDecisions(args.incidents),
+    final: args.isFinal,
+    isQualifying: args.isQualifying,
+  };
+}
+
+/** Build a report from a saved (or live) Race Control snapshot, via the same pure
+ *  transforms the timing tower uses. A saved session stores exactly this snapshot
+ *  shape, so re-opening one renders the report identically to when it was live. */
+export function reportFromSnapshot(snap: RaceSnapshot): ReportData {
+  const session = sessionInfo(snap);
+  const finalC = toFinalClassification(snap);
+  const qualiC = toQualifyingClassification(snap);
+  const isQualifying = qualiC != null;
+  const baseClassification = qualiC ?? finalC ?? buildClassification(toDriverRows(snap));
+  return assembleReport({
+    header: {
+      name: CATEGORY_LABEL[session.category ?? ""] ?? "Session",
+      track: session.track,
+      totalLaps: session.totalLaps,
+    },
+    baseClassification,
+    incidents: toUIIncidents(snap),
+    // A saved snapshot is a completed session: Final when packet 8 was captured or
+    // it's a qualifying result; provisional only if neither is present.
+    isFinal: finalC != null || isQualifying,
+    isQualifying,
+  });
 }
 
 export type ReportFormat = "csv" | "json";
@@ -166,11 +236,12 @@ export function buildReportCsv(r: ReportData): string {
   );
   lines.push("");
   lines.push("Classification");
-  lines.push("Pos,No,Driver,Team,Best Lap,Gap,Pits,Points,Tyres,Result,Pen Time (s),Penalties,Penalised");
+  lines.push("Pos,Grid,No,Driver,Team,Best Lap,Gap,Pits,Points,Tyres,Result,Pen Time (s),Penalties,Penalised");
   r.classification.forEach((c) =>
     lines.push(
       [
         c.pos,
+        c.gridPos || "",
         c.no,
         csv(c.name),
         csv(c.teamName),
@@ -215,6 +286,7 @@ export function buildReportJson(r: ReportData): string {
       },
       classification: r.classification.map((c) => ({
         pos: c.pos,
+        gridPos: c.gridPos,
         no: c.no,
         driver: c.name,
         team: c.teamName,

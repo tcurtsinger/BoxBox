@@ -8,8 +8,12 @@ import {
 } from "react";
 import { type UIIncident } from "../modes/incidents/incident";
 import { SEED_INCIDENTS } from "../modes/incidents/sampleIncidents";
+import type { Tune } from "../modes/tunes/tunesData";
 
-export type Mode = "tuner" | "race-control";
+export type Mode = "tunes" | "race";
+
+/** The two sections inside the Tunes mode (left section rail). */
+export type TunesSection = "setups" | "tuner";
 
 export type FeedState = "no-feed" | "connecting" | "standby" | "live";
 
@@ -22,7 +26,7 @@ export interface Feed {
   sample?: boolean;
 }
 
-export type RaceSection = "timing" | "incidents" | "review" | "reports";
+export type RaceSection = "timing" | "incidents" | "review" | "history";
 
 /** One telemetry-repeater destination: BoxBox sends a verbatim copy of the
  *  game's feed here so a wheel/SimHub dashboard can listen without contending
@@ -77,10 +81,21 @@ function loadConnection(): Connection {
 interface ShellState {
   mode: Mode;
   setMode: (m: Mode) => void;
+  tunesSection: TunesSection;
+  setTunesSection: (s: TunesSection) => void;
+  /** A saved tune opened as a read-only baseline in the Tuner ("Open in Tuner"),
+   *  or null. UDP is read-only, so this is a target to dial in-game, not a push. */
+  referenceTune: Tune | null;
+  setReferenceTune: (t: Tune | null) => void;
   feed: Feed;
   setFeed: (f: Feed) => void;
   raceSection: RaceSection;
   setRaceSection: (s: RaceSection) => void;
+  /** Whether the current live session has been saved to history. Reset when the
+   *  feed goes away (a fresh connect is a new, unsaved session). Drives the
+   *  "Save before closing?" guard and the History current-session indicator. */
+  sessionSaved: boolean;
+  setSessionSaved: (saved: boolean) => void;
   connection: Connection;
   setConnection: (c: Connection) => void;
   settingsOpen: boolean;
@@ -98,11 +113,21 @@ interface ShellState {
 const ShellContext = createContext<ShellState | null>(null);
 
 export function ShellProvider({ children }: { children: ReactNode }) {
-  const [mode, setMode] = useState<Mode>("tuner");
+  // Launches into Tunes -> Tuner (closest to the old landing on the Tuner).
+  const [mode, setMode] = useState<Mode>("tunes");
+  const [tunesSection, setTunesSection] = useState<TunesSection>("tuner");
+  const [referenceTune, setReferenceTune] = useState<Tune | null>(null);
   // Honest default: nothing is wired to the Rust feed yet, so there is no feed.
   const [feed, setFeed] = useState<Feed>({ state: "no-feed" });
   const [raceSection, setRaceSection] = useState<RaceSection>("timing");
+  const [sessionSaved, setSessionSaved] = useState(false);
   const [connection, setConnection] = useState<Connection>(loadConnection);
+
+  // A fresh connect is a new, unsaved session: clear the saved flag whenever the
+  // feed drops to no-feed so the close guard re-arms for the next session.
+  useEffect(() => {
+    if (feed.state === "no-feed" && sessionSaved) setSessionSaved(false);
+  }, [feed.state, sessionSaved]);
 
   // Persist the connection (port, format, forward config) so it survives
   // restarts. localStorage in the Tauri webview is durable per install.
@@ -124,10 +149,16 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     () => ({
       mode,
       setMode,
+      tunesSection,
+      setTunesSection,
+      referenceTune,
+      setReferenceTune,
       feed,
       setFeed,
       raceSection,
       setRaceSection,
+      sessionSaved,
+      setSessionSaved,
       connection,
       setConnection,
       settingsOpen,
@@ -137,7 +168,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       incidents,
       setIncidents,
     }),
-    [mode, feed, raceSection, connection, settingsOpen, selectedDriver, incidents],
+    [mode, tunesSection, referenceTune, feed, raceSection, sessionSaved, connection, settingsOpen, selectedDriver, incidents],
   );
 
   return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>;

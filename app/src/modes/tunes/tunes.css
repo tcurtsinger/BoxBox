@@ -1,0 +1,547 @@
+/* Tunes / Setups — the saved-setup library and the Tuner's tune-aware strips
+   (running / save, reference setup). Master list + detail on a flat graphite
+   panel set; teal marks the live/selected state, green the recorded bests.
+   Reuses the setup-sheet primitives from tuner.css. Consumes tokens.css only. */
+
+/* ======================================================================== */
+/* Setups library                                                            */
+/* ======================================================================== */
+.setups {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-xl) var(--space-2xl);
+}
+/* Empty library: centre the hero in the content area, both axes. */
+.setups-centered {
+  display: grid;
+  place-items: center;
+}
+.setups-inner {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+/* ---- Header bar --------------------------------------------------------- */
+.setups-bar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+.setups-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.setups-title {
+  margin: 0;
+  font-size: var(--text-headline);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+.setups-sub {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.setups-bar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+.setups-running {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px 12px;
+  border: 1px solid color-mix(in oklch, var(--data-good) 30%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklch, var(--data-good) 8%, transparent);
+  color: var(--muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.setups-running:hover {
+  background: color-mix(in oklch, var(--data-good) 14%, transparent);
+}
+.setups-running strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.setups-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.setups-sort-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* Status dots, shared by list rows and detail. */
+.tune-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.tune-dot.is-pin {
+  background: var(--primary);
+}
+.tune-dot.is-live {
+  background: var(--data-good);
+}
+
+/* ---- Empty state -------------------------------------------------------- */
+.setups-empty {
+  max-width: 460px;
+  margin: var(--space-2xl) auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  text-align: center;
+}
+.setups-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--primary);
+}
+.setups-empty-title {
+  margin: 0;
+  font-size: var(--text-headline);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+.setups-empty-lead {
+  margin: 0;
+  max-width: 42ch;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.setups-empty-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--faint);
+}
+
+/* ---- Master list + detail ----------------------------------------------- */
+.setups-body {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  gap: var(--space-lg);
+  align-items: start;
+}
+.setups-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.tune-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: 9px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.tune-row:hover {
+  background: var(--surface-raised);
+  border-color: var(--border);
+}
+.tune-row.is-active {
+  border-color: color-mix(in oklch, var(--primary) 55%, transparent);
+  background: color-mix(in oklch, var(--primary) 8%, transparent);
+}
+.tune-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.tune-row-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tune-row-track {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.tune-row-times {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  flex: none;
+  font-size: 11.5px;
+}
+.tune-row-time {
+  color: var(--ink);
+  font-weight: 600;
+}
+.tune-row-time b {
+  margin-right: 4px;
+  color: var(--faint);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+/* ---- Detail ------------------------------------------------------------- */
+.setups-detail {
+  min-width: 0;
+}
+.tune-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-lg) var(--space-xl);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+.tune-detail-empty {
+  padding: var(--space-2xl);
+  text-align: center;
+  color: var(--faint);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.tune-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+.tune-detail-id {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.tune-name {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  border-bottom: 1px dashed transparent;
+  background: none;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-headline);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.tune-name:hover {
+  border-bottom-color: var(--border);
+}
+.tune-name-input {
+  max-width: min(340px, 100%);
+  font-size: 18px;
+  font-weight: 600;
+}
+.tune-detail-track {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.tune-live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in oklch, var(--data-good) 35%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklch, var(--data-good) 8%, transparent);
+  color: var(--data-good);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+.tune-detail-when {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+.tune-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  flex: none;
+}
+/* ---- Time stores -------------------------------------------------------- */
+.tune-times {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+}
+.timestat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-md) var(--space-lg);
+  background: var(--inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+}
+.timestat-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.timestat-best {
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: var(--tracking-tight);
+  color: var(--ink);
+}
+.timestat-meta {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.lap-list {
+  margin: 6px 0 0;
+  padding: var(--space-sm) 0 0;
+  border-top: 1px solid var(--border-soft);
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.lap-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+.lap-time {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.lap-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lap-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  color: var(--faint);
+}
+
+/* ---- Saved setup sheet + notes ------------------------------------------ */
+/* The read-only sheet drops the Tuner's suggestion column. */
+.setup-row-ro {
+  grid-template-columns: 1fr 64px 48px;
+}
+.tune-notes-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tune-notes {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .setups-body {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .tune-times {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ======================================================================== */
+/* Tuner tune-aware strips (rendered above the bento in .tuner)              */
+/* ======================================================================== */
+.tuner-strips {
+  width: 100%;
+  max-width: 1560px;
+  margin: 0 auto var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* Running / save card. */
+.tuner-runcard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+.tuner-runcard.is-matched {
+  border-color: color-mix(in oklch, var(--data-good) 30%, transparent);
+  background: color-mix(in oklch, var(--data-good) 6%, transparent);
+}
+.runcard-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.tuner-runcard.is-matched .runcard-dot {
+  background: var(--data-good);
+}
+.runcard-dot.is-unsaved {
+  background: var(--data-caution);
+}
+.runcard-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.runcard-kicker {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.runcard-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.runcard-times {
+  font-size: 12px;
+  color: var(--muted);
+}
+.runcard-save {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  flex: none;
+}
+.runcard-input {
+  width: 200px;
+}
+.runcard-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: none;
+  color: var(--data-good);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Reference setup overlay (Open in Tuner). */
+.tuner-ref {
+  padding: var(--space-lg) var(--space-xl);
+  background: var(--surface);
+  border: 1px solid color-mix(in oklch, var(--primary) 25%, transparent);
+  border-radius: var(--radius-card);
+}
+.ref-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-md);
+}
+.ref-head-left {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+.ref-kicker {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--primary);
+}
+.ref-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ref-track {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.ref-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: none;
+}
+.ref-note {
+  margin: 0 0 var(--space-lg);
+  max-width: 70ch;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.ref-note strong {
+  color: var(--ink);
+}

@@ -247,6 +247,7 @@ export function toFinalClassification(snap: RaceSnapshot): ClassRow[] | null {
       const finished = c.resultStatus === 3;
       return {
         pos: c.position,
+        gridPos: d?.gridPosition ?? 0,
         no: d?.raceNumber ?? c.index,
         name: d ? (d.nameOverride ?? d.name) : `Car ${c.index}`,
         teamName: d ? teamName(d.teamId) : "—",
@@ -308,6 +309,7 @@ export function toQualifyingClassification(snap: RaceSnapshot): ClassRow[] | nul
 
   const rowOf = (e: QualiSegmentEntry, status: string | null): ClassRow => ({
     pos: 0, // assigned after stacking
+    gridPos: 0, // qualifying has no grid yet
     no: e.raceNumber,
     name: e.nameOverride ?? e.name,
     teamName: teamName(e.teamId),

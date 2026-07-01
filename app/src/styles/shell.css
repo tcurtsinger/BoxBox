@@ -96,94 +96,6 @@ textarea {
   transform: scaleX(1);
 }
 
-/* ---- Feed status -------------------------------------------------------- */
-.feed {
-  /* Dead-centre of the whole bar, independent of the side contents.
-     Non-interactive, so let drags pass through to the titlebar beneath. */
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-sm);
-  font-size: var(--text-label);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-/* Scoped to the titlebar status component so the incident-row dot
-   (.feed-item .feed-dot) can't reach it. */
-.feed .feed-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
-  /* Optical centring: the uppercase labels have no descenders, so their visual
-     centre sits above the line-box centre. Nudge the dot up to match. */
-  position: relative;
-  top: -1px;
-}
-.feed-no-feed {
-  color: var(--faint);
-}
-.feed-no-feed .feed-dot {
-  background: var(--faint);
-}
-.feed-connecting,
-.feed-standby {
-  color: var(--data-caution);
-}
-.feed-connecting .feed-dot,
-.feed-standby .feed-dot {
-  background: var(--data-caution);
-  animation: feed-blink 1.2s var(--ease-out) infinite;
-}
-.feed-live {
-  color: var(--data-good);
-}
-.feed-live .feed-dot {
-  background: var(--data-good);
-  animation: feed-ring 2s ease-out infinite;
-}
-.feed-sample {
-  color: var(--data-info);
-}
-.feed-sample .feed-dot {
-  background: var(--data-info);
-}
-.feed-meta {
-  margin-left: 2px;
-  padding-left: var(--space-sm);
-  border-left: 1px solid var(--border);
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: var(--text-label);
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--muted);
-}
-@keyframes feed-blink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-@keyframes feed-ring {
-  0% {
-    box-shadow: 0 0 0 0 oklch(0.8 0.16 152 / 0.4);
-  }
-  70%,
-  100% {
-    box-shadow: 0 0 0 6px oklch(0.8 0.16 152 / 0);
-  }
-}
-
 /* ---- Icon button + window controls -------------------------------------- */
 .iconbtn {
   display: grid;
@@ -304,6 +216,33 @@ textarea {
 }
 .rail-item.is-active .rail-marker {
   transform: translateY(-50%) scaleY(1);
+}
+/* Telemetry-feed status, pinned to the foot of the rail. The state is carried by
+   the label's colour alone (no dot), centred in its box, set off by a faint
+   divider; the negative side margins let the divider span the rail's full width. */
+.rail-feed {
+  margin: auto calc(-1 * var(--space-sm)) 0;
+  padding: var(--space-sm) var(--space-sm);
+  border-top: 1px solid var(--border-soft);
+  text-align: center;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--faint);
+}
+.rail-feed.is-connecting,
+.rail-feed.is-standby {
+  color: var(--data-caution);
+}
+.rail-feed.is-live {
+  color: var(--data-good);
+}
+.rail-feed.is-sample {
+  color: var(--data-info);
 }
 .rc-content {
   flex: 1;
@@ -584,6 +523,15 @@ textarea {
 .btn-sm {
   padding: 5px 12px;
   font-size: 12px;
+}
+/* Destructive ghost: no fill at rest, danger-tinted (delete confirmations). */
+.btn-danger {
+  background: none;
+  color: var(--data-danger);
+  border-color: color-mix(in oklch, var(--data-danger) 45%, transparent);
+}
+.btn-danger:hover {
+  background: color-mix(in oklch, var(--data-danger) 12%, transparent);
 }
 
 /* ======================================================================== */

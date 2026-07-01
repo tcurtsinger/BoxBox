@@ -283,6 +283,64 @@
   color: var(--muted);
 }
 
+/* Race classification carries two extra columns (points, tyre stints); the
+   qualifying table keeps the leaner five-column layout. */
+.cls-race .cls-head,
+.cls-race .cls-row {
+  grid-template-columns: 44px minmax(140px, 1fr) 92px 76px 40px 44px 84px;
+}
+.cls-pts {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Grid → finish movement chip in the driver cell. */
+.cls-grid {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.cls-grid-up {
+  color: var(--data-good);
+}
+.cls-grid-down {
+  color: var(--data-danger);
+}
+.cls-grid-none {
+  color: var(--faint);
+}
+
+/* Tyre-stint compound chips (S/M/H/I/W), in stint order. */
+.cls-tyres-cell {
+  display: flex;
+  align-items: center;
+}
+.cls-tyres {
+  display: inline-flex;
+  gap: 3px;
+}
+.cls-tyre {
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+}
+.tyre-s { color: var(--data-danger); }
+.tyre-m { color: var(--data-caution); }
+.tyre-h { color: var(--muted); }
+.tyre-i { color: var(--data-good); }
+.tyre-w { color: var(--data-info); }
+.cls-tyres-empty {
+  color: var(--faint);
+}
+
 @media (max-width: 760px) {
   .cls-team-name {
     display: none;

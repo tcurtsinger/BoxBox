@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useShell, type ForwardTarget } from "./shell-context";
 import { CloseIcon } from "./icons";
 import { Segmented, type SegmentedOption } from "./Segmented";
+import { historyRetention, setHistoryRetention } from "../modes/history/historyData";
 
 const FORMAT_OPTIONS: SegmentedOption<"2026" | "2025">[] = [
   { value: "2026", label: "2026" },
@@ -11,6 +12,13 @@ const FORMAT_OPTIONS: SegmentedOption<"2026" | "2025">[] = [
 const FORWARD_OPTIONS: SegmentedOption<"off" | "on">[] = [
   { value: "off", label: "Off" },
   { value: "on", label: "On" },
+];
+
+const RETENTION_OPTIONS: SegmentedOption<string>[] = [
+  { value: "all", label: "Keep all" },
+  { value: "30", label: "30 days" },
+  { value: "90", label: "90 days" },
+  { value: "365", label: "1 year" },
 ];
 
 /** Editing draft for a forward target — port is a string so it can be cleared
@@ -58,6 +66,20 @@ export function SettingsDialog({
   const [targets, setTargets] = useState<TargetDraft[]>(() =>
     toDrafts(connection.forwardTargets),
   );
+  // History retention applies immediately (not via the connection Apply); null =
+  // keep everything. Loaded from the backend when the dialog opens.
+  const [retention, setRetention] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    void historyRetention().then((d) => {
+      if (active) setRetention(d);
+    });
+    return () => {
+      active = false;
+    };
+  }, [open]);
 
   // Sync the dialog element with the `open` prop and reset the draft on open.
   useEffect(() => {
@@ -111,7 +133,7 @@ export function SettingsDialog({
     <dialog ref={ref} className="dialog" onCancel={onClose} onClose={onClose}>
       <form className="dialog-card" method="dialog" onSubmit={apply}>
         <header className="dialog-head">
-          <h2 className="dialog-title">Connection</h2>
+          <h2 className="dialog-title">Settings</h2>
           <button
             type="button"
             className="dialog-x"
@@ -231,6 +253,23 @@ export function SettingsDialog({
               )}
             </div>
           )}
+        </div>
+
+        <div className="field">
+          <span className="field-label">Keep saved sessions</span>
+          <Segmented
+            options={RETENTION_OPTIONS}
+            value={retention == null ? "all" : String(retention)}
+            onChange={(v) => {
+              const days = v === "all" ? null : Number(v);
+              setRetention(days);
+              void setHistoryRetention(days);
+            }}
+            ariaLabel="History retention"
+          />
+          <p className="field-hint">
+            Auto-delete saved sessions older than this. Pinned sessions are always kept.
+          </p>
         </div>
 
         <footer className="dialog-foot">

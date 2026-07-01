@@ -6,18 +6,24 @@
 //! parsed packet is deliberately NOT pushed over IPC every frame (P2.5).
 
 use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::panic::AssertUnwindSafe;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::packets::parse_packet;
 use crate::persist::{ProfileState, ProfileStore};
 use crate::racecontrol::state::Incident;
 use crate::racecontrol::{SessionSnapshot, SessionState};
 use crate::tuner::{Snapshot, TunerState};
+use crate::history::model::{SessionMeta, SessionRecord};
+use crate::history::store::{HistoryState, HistoryStoreState};
+use crate::tunes::model::{LapRecord, Tune, TuneLibrary, TuneSummary};
+use crate::tunes::store::{TuneLibraryState, TuneStore, TuneStoreState};
 
 /// The minimal per-packet heartbeat pushed to the webview: just enough to flip the
 /// feed status live and show the format/id, NOT the full parsed packet (names,
@@ -54,7 +60,7 @@ impl Default for RaceStore {
 
 /// Wall-clock milliseconds, for the steward-action / stale-feed timestamps the
 /// Race Control state records.
-fn now_ms() -> f64 {
+pub(crate) fn now_ms() -> f64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -150,6 +156,55 @@ fn flush_profile(tuner: &Arc<Mutex<TunerState>>, profile: &ProfileStore) {
     }
 }
 
+/// Like `flush_profile`, for the tune library: snapshot any pending change under the
+/// library lock (cheap) and write it OUTSIDE the lock, so a slow disk write never
+/// stalls the receive/forward loop that records laps.
+fn flush_tunes(library: &Arc<Mutex<TuneLibrary>>, store: &TuneStore) {
+    let pending = match library.lock() {
+        Ok(l) => store.pending_save(&l),
+        Err(_) => None,
+    };
+    if let Some((rev, snap)) = pending {
+        store.commit_save(rev, &snap);
+    }
+}
+
+/// A live feed that goes silent for this long — the game still running, packets
+/// just no longer arriving — is treated as a wedged socket and triggers one
+/// automatic rebind (what a manual app restart does, but unattended).
+const REBIND_AFTER: Duration = Duration::from_secs(10);
+/// How often the worker writes a liveness line to the diagnostic log.
+const LOG_EVERY: Duration = Duration::from_secs(30);
+
+/// Why the receive loop returned to the (re)bind layer.
+enum InnerExit {
+    /// A stop was requested: end the worker.
+    Stopped,
+    /// Rebind the socket and resume (watchdog, hard recv error, or a caught panic).
+    Rebind,
+}
+
+/// Bind the listen socket with the short read timeout the poll loop relies on.
+fn bind_listen(port: u16) -> std::io::Result<UdpSocket> {
+    let socket = UdpSocket::bind(("0.0.0.0", port))?;
+    socket.set_read_timeout(Some(Duration::from_millis(400)))?;
+    Ok(socket)
+}
+
+/// Append one timestamped line to the diagnostic log (best-effort; never panics
+/// or blocks the caller meaningfully). `None` path disables logging.
+fn log_event(path: &Option<PathBuf>, msg: &str) {
+    let Some(p) = path else { return };
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(p)
+    {
+        let _ = writeln!(f, "{} {msg}", now_ms() as u64);
+    }
+}
+
 impl Drop for Listener {
     fn drop(&mut self) {
         self.shut_down();
@@ -160,18 +215,21 @@ impl Drop for Listener {
 #[derive(Default)]
 pub struct TelemetryState(pub Mutex<Option<Listener>>);
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_listener(
     app: AppHandle,
     port: u16,
     tuner: Arc<Mutex<TunerState>>,
     race: Arc<Mutex<SessionState>>,
     profile: Arc<ProfileStore>,
+    library: Arc<Mutex<TuneLibrary>>,
+    tune_store: Arc<TuneStore>,
     forwards: Vec<SocketAddr>,
+    log_path: Option<PathBuf>,
 ) -> Result<Listener, String> {
-    let socket = UdpSocket::bind(("0.0.0.0", port)).map_err(|e| format!("bind UDP {port}: {e}"))?;
-    socket
-        .set_read_timeout(Some(Duration::from_millis(400)))
-        .map_err(|e| e.to_string())?;
+    // Validate the bind up front so a failure is reported to the caller (leaving
+    // any existing listener running) rather than surfacing only inside the worker.
+    let initial = bind_listen(port).map_err(|e| format!("bind UDP {port}: {e}"))?;
 
     // Outbound socket for the telemetry repeater: a verbatim copy of every
     // datagram from the locked game source is relayed to each configured target,
@@ -183,7 +241,10 @@ fn spawn_listener(
     let forward_socket = match UdpSocket::bind(("0.0.0.0", 0)) {
         Ok(s) => Some(s),
         Err(e) => {
-            eprintln!("telemetry forward socket bind failed, forwarding disabled: {e}");
+            log_event(
+                &log_path,
+                &format!("forward socket bind failed, forwarding disabled: {e}"),
+            );
             None
         }
     };
@@ -200,14 +261,17 @@ fn spawn_listener(
     // stalled write can then never block telemetry ingest or the repeater (which
     // would freeze the feed AND a forwarded dashboard together). Shares `stop`.
     let tuner_persist = tuner.clone();
+    let library_persist = library.clone();
     let stop_persist = stop.clone();
     let persist_handle = std::thread::spawn(move || {
         while !stop_persist.load(Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(250));
             flush_profile(&tuner_persist, &profile);
+            flush_tunes(&library_persist, &tune_store);
         }
         // Final flush so a clean stop / port change doesn't drop the last interval.
         flush_profile(&tuner_persist, &profile);
+        flush_tunes(&library_persist, &tune_store);
     });
 
     let handle = std::thread::spawn(move || {
@@ -225,105 +289,219 @@ fn spawn_listener(
         // Rate-limit forward-error logging so a wrong or unreachable target can't
         // flood the log at packet rate (the feed runs ~60Hz across many ids).
         let mut last_fwd_warn: Option<Instant> = None;
-        while !stop_worker.load(Ordering::Relaxed) {
-            // A reset request re-opens source selection (e.g. after moving the feed
-            // to a different sending PC) without restarting the listener.
-            if reset_worker.swap(false, Ordering::Relaxed) {
-                source = None;
-                last_from_source = None;
+        // Watchdog + diagnostics state, persisted across rebinds.
+        let mut live = false; // a valid feed has been seen
+        let mut last_rx; // last successful receive; (re)set per bind below
+        let mut rebound_since_rx = false; // already rebound for the current silence
+        let mut total_rx: u64 = 0;
+        let mut last_log = Instant::now();
+
+        let mut socket = initial;
+        log_event(&log_path, &format!("listener bound on UDP {port}"));
+
+        loop {
+            if stop_worker.load(Ordering::Relaxed) {
+                return;
             }
-            match socket.recv_from(&mut buf) {
-                Ok((n, addr)) => {
-                    let host = addr.ip();
-                    let now = Instant::now();
-                    // A datagram from a host other than the pinned source is normally
-                    // ignored (anti-spoof). But if the pinned source has gone silent
-                    // past SOURCE_STALL while another host is now sending, the game's
-                    // address has almost certainly moved (VPN/adapter failover, DHCP
-                    // renew) — re-open selection so the feed AND the forwarded
-                    // dashboard recover without a restart, instead of dropping every
-                    // packet forever.
-                    match classify_source(source, last_from_source, host, now) {
-                        SourceAction::Ignore => continue,
-                        SourceAction::Reopen => {
-                            if let Some(pinned) = source {
-                                eprintln!(
-                                    "telemetry: pinned source {pinned} silent >{}s, re-selecting (now hearing {host})",
-                                    SOURCE_STALL.as_secs()
-                                );
-                            }
-                            source = None;
-                        }
-                        SourceAction::Accept => {}
+            last_rx = Instant::now(); // fresh clock for this socket
+
+            // The receive loop runs under catch_unwind so a panic decoding one odd
+            // datagram rebinds and continues instead of killing the worker — which
+            // would strand the feed AND the forwarded dashboard until a restart.
+            let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| -> InnerExit {
+                loop {
+                    if stop_worker.load(Ordering::Relaxed) {
+                        return InnerExit::Stopped;
                     }
-                    let packet = parse_packet(&buf[..n]);
-                    // Pin only on a COMPLETE, decoded packet: parse_packet has
-                    // already enforced the exact size/format/id (P1.1), and
-                    // requiring a decoded body means a valid-but-unhandled packet
-                    // (data: None) can't claim the feed before the real game does.
-                    if source.is_none() {
-                        match packet.as_ref() {
-                            Some(p) if p.data.is_some() => {
-                                eprintln!("telemetry: locked onto source {host}");
-                                source = Some(host);
-                            }
-                            _ => continue,
-                        }
+                    // A reset request re-opens source selection (e.g. after moving
+                    // the feed to a different sending PC) without a restart.
+                    if reset_worker.swap(false, Ordering::Relaxed) {
+                        source = None;
+                        last_from_source = None;
                     }
-                    // Pinned to `host` (kept or freshly selected): record the liveness
-                    // tick the self-healing check above reads.
-                    last_from_source = Some(now);
-                    // The datagram is from the locked game source: relay a
-                    // verbatim copy to every configured forward target before
-                    // anything else, so a downstream dashboard sees the feed even
-                    // for packet types BoxBox itself doesn't decode. A send error
-                    // to one target is logged (throttled) and never fatal.
-                    if let Some(fwd) = &forward_socket {
-                        if let Ok(targets) = forwards_worker.lock() {
-                            for target in targets.iter() {
-                                if let Err(e) = fwd.send_to(&buf[..n], target) {
-                                    if last_fwd_warn
-                                        .is_none_or(|t| t.elapsed() >= Duration::from_secs(5))
-                                    {
-                                        eprintln!("telemetry forward to {target} failed: {e}");
-                                        last_fwd_warn = Some(Instant::now());
+                    // Watchdog: a feed that was live and has gone silent past
+                    // REBIND_AFTER — the game still running, packets just no longer
+                    // arriving — means the socket is likely wedged. Rebind once (what
+                    // the user's manual restart does) to recover unattended.
+                    if live && !rebound_since_rx && last_rx.elapsed() >= REBIND_AFTER {
+                        rebound_since_rx = true;
+                        log_event(
+                            &log_path,
+                            &format!(
+                                "feed silent {}s after {total_rx} packets — rebinding socket",
+                                REBIND_AFTER.as_secs()
+                            ),
+                        );
+                        return InnerExit::Rebind;
+                    }
+                    if last_log.elapsed() >= LOG_EVERY {
+                        last_log = Instant::now();
+                        log_event(
+                            &log_path,
+                            &format!(
+                                "alive: {total_rx} packets, last receive {}ms ago, source {source:?}",
+                                last_rx.elapsed().as_millis()
+                            ),
+                        );
+                    }
+                    match socket.recv_from(&mut buf) {
+                        Ok((n, addr)) => {
+                            last_rx = Instant::now();
+                            rebound_since_rx = false;
+                            total_rx += 1;
+                            let host = addr.ip();
+                            let now = Instant::now();
+                            // A datagram from a host other than the pinned source is
+                            // normally ignored (anti-spoof). But once the pinned
+                            // source has gone silent past SOURCE_STALL while another
+                            // host is now sending, its address has likely moved
+                            // (VPN/adapter failover, DHCP renew) — re-open selection.
+                            match classify_source(source, last_from_source, host, now) {
+                                SourceAction::Ignore => continue,
+                                SourceAction::Reopen => {
+                                    if let Some(pinned) = source {
+                                        log_event(
+                                            &log_path,
+                                            &format!(
+                                                "pinned source {pinned} silent >{}s, re-selecting (now hearing {host})",
+                                                SOURCE_STALL.as_secs()
+                                            ),
+                                        );
+                                    }
+                                    source = None;
+                                }
+                                SourceAction::Accept => {}
+                            }
+                            let packet = parse_packet(&buf[..n]);
+                            // Pin only on a COMPLETE, decoded packet (P1.1): a
+                            // valid-but-unhandled packet can't claim the feed before
+                            // the real game does.
+                            if source.is_none() {
+                                match packet.as_ref() {
+                                    Some(p) if p.data.is_some() => {
+                                        log_event(&log_path, &format!("locked onto source {host}"));
+                                        source = Some(host);
+                                        live = true;
+                                    }
+                                    _ => continue,
+                                }
+                            }
+                            last_from_source = Some(now);
+                            // Relay a verbatim copy to every configured forward target
+                            // first, so a downstream dashboard sees the feed even for
+                            // packet types BoxBox doesn't decode. A send error to one
+                            // target is logged (throttled) and never fatal.
+                            if let Some(fwd) = &forward_socket {
+                                if let Ok(targets) = forwards_worker.lock() {
+                                    for target in targets.iter() {
+                                        if let Err(e) = fwd.send_to(&buf[..n], target) {
+                                            if last_fwd_warn.is_none_or(|t| {
+                                                t.elapsed() >= Duration::from_secs(5)
+                                            }) {
+                                                log_event(
+                                                    &log_path,
+                                                    &format!("forward to {target} failed: {e}"),
+                                                );
+                                                last_fwd_warn = Some(Instant::now());
+                                            }
+                                        }
                                     }
                                 }
                             }
+                            // Past here we need the decoded body; an undecodable
+                            // datagram was still forwarded verbatim above.
+                            let Some(packet) = packet else {
+                                continue;
+                            };
+                            // Minimal heartbeat only — not the whole packet (P2.5).
+                            let _ = app.emit(
+                                "telemetry:packet",
+                                &Heartbeat {
+                                    id: packet.id,
+                                    format: packet.header.packet_format,
+                                    session_time: packet.header.session_time,
+                                },
+                            );
+                            // Feed both engines. A poisoned lock just means a prior
+                            // panic elsewhere; skip the frame. Persistence runs off
+                            // this thread (persist_handle), so a disk write can't
+                            // stall ingest or the repeater.
+                            let mut pending_laps = Vec::new();
+                            if let Ok(mut t) = tuner.lock() {
+                                t.ingest(&packet);
+                                pending_laps = t.take_pending_laps();
+                            }
+                            // Record any clean TT/Practice lap against the saved tune
+                            // it was driven on. Done off the tuner lock; the disk write
+                            // is off this loop entirely (the persist thread).
+                            if !pending_laps.is_empty() {
+                                if let Ok(mut lib) = library.lock() {
+                                    for lap in pending_laps {
+                                        let matched = lib
+                                            .find_match(lap.track_id, &lap.setup)
+                                            .map(|t| t.id.clone());
+                                        if let Some(id) = matched {
+                                            let record = LapRecord {
+                                                lap_time_ms: lap.lap_time_ms,
+                                                recorded_at_ms: now_ms(),
+                                                compound: lap.compound,
+                                                track_temp: lap.track_temp,
+                                                fuel: lap.fuel,
+                                            };
+                                            lib.record_lap(&id, lap.session, record, now_ms());
+                                        }
+                                    }
+                                }
+                            }
+                            if let Ok(mut r) = race.lock() {
+                                r.ingest(&packet, now_ms());
+                            }
+                        }
+                        // Read timeout: idle tick, loop back to re-check the flags.
+                        Err(ref e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut => {}
+                        // A hard receive error can leave the socket wedged; rebind it
+                        // rather than spin retrying the same broken socket.
+                        Err(e) => {
+                            log_event(&log_path, &format!("recv error: {e} — rebinding socket"));
+                            return InnerExit::Rebind;
                         }
                     }
-                    // Past here we need the decoded body; an undecodable datagram
-                    // was still forwarded verbatim above.
-                    let Some(packet) = packet else {
-                        continue;
-                    };
-                    // Minimal heartbeat only — not the whole packet (P2.5).
-                    let _ = app.emit(
-                        "telemetry:packet",
-                        &Heartbeat {
-                            id: packet.id,
-                            format: packet.header.packet_format,
-                            session_time: packet.header.session_time,
-                        },
-                    );
-                    // Feed both engines. A poisoned lock just means a prior
-                    // panic elsewhere; skip the frame rather than propagate.
-                    // Persistence is handled off this thread (see persist_handle),
-                    // so a disk write can't stall ingest or the repeater.
-                    if let Ok(mut t) = tuner.lock() {
-                        t.ingest(&packet);
-                    }
-                    if let Ok(mut r) = race.lock() {
-                        r.ingest(&packet, now_ms());
+                }
+            }));
+
+            match outcome {
+                Ok(InnerExit::Stopped) => return,
+                Ok(InnerExit::Rebind) => {}
+                Err(_) => log_event(
+                    &log_path,
+                    "worker panicked decoding a packet — rebinding socket",
+                ),
+            }
+
+            // Drop the wedged socket (frees the port), then bind a fresh one. Retry
+            // so a transient bind failure doesn't end the listener.
+            drop(socket);
+            socket = loop {
+                if stop_worker.load(Ordering::Relaxed) {
+                    return;
+                }
+                match bind_listen(port) {
+                    Ok(s) => break s,
+                    Err(e) => {
+                        log_event(
+                            &log_path,
+                            &format!("rebind UDP {port} failed: {e}; retry in 1s"),
+                        );
+                        std::thread::sleep(Duration::from_secs(1));
                     }
                 }
-                // Read timeout: idle tick, loop back to re-check the stop flag.
-                Err(ref e)
-                    if e.kind() == std::io::ErrorKind::WouldBlock
-                        || e.kind() == std::io::ErrorKind::TimedOut => {}
-                // Transient receive error: keep listening.
-                Err(_) => {}
-            }
+            };
+            // One rebind per silence episode: a real packet clears this so a later
+            // stall can rebind again, but a quiet menu won't churn rebinds.
+            rebound_since_rx = true;
+            log_event(&log_path, &format!("listener rebound on UDP {port}"));
         }
     });
 
@@ -339,11 +517,14 @@ fn spawn_listener(
 
 /// Start (or re-point) the UDP listener on `port`. A no-op if already bound there.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn start_telemetry(
     state: tauri::State<'_, TelemetryState>,
     tuner: tauri::State<'_, TunerStore>,
     race: tauri::State<'_, RaceStore>,
     profile: tauri::State<'_, ProfileState>,
+    library: tauri::State<'_, TuneLibraryState>,
+    tune_store: tauri::State<'_, TuneStoreState>,
     app: AppHandle,
     port: u16,
     forwards: Vec<SocketAddr>,
@@ -359,6 +540,13 @@ pub fn start_telemetry(
             return Ok(());
         }
     }
+    // Diagnostic log beside the profile, so a stall the user can't reproduce on
+    // demand leaves evidence (rebinds, recv errors, panics, liveness) they can send.
+    let log_path = app
+        .path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("boxbox.log"));
     // Different port: bind the new listener first; only replace (and so drop) the
     // old one on success, so a failed bind leaves the existing listener running
     // rather than killing the feed (P2.1). A port change is always to a different
@@ -369,7 +557,10 @@ pub fn start_telemetry(
         tuner.0.clone(),
         race.0.clone(),
         profile.0.clone(),
+        library.0.clone(),
+        tune_store.0.clone(),
         forwards,
+        log_path,
     )?;
     *slot = Some(listener); // drops & joins the previous listener
     Ok(())
@@ -396,8 +587,22 @@ pub fn reset_telemetry_source(state: tauri::State<'_, TelemetryState>) -> Result
 
 /// The current Tuner snapshot (the driver-facing state the panels render).
 #[tauri::command]
-pub fn tuner_snapshot(tuner: tauri::State<'_, TunerStore>) -> Result<Snapshot, String> {
-    Ok(tuner.0.lock().map_err(|e| e.to_string())?.snapshot())
+pub fn tuner_snapshot(
+    tuner: tauri::State<'_, TunerStore>,
+    library: tauri::State<'_, TuneLibraryState>,
+) -> Result<Snapshot, String> {
+    // Build the snapshot and read the live setup identity under the tuner lock, then
+    // match it against the library under the library lock (never both at once).
+    let (mut snap, live) = {
+        let t = tuner.0.lock().map_err(|e| e.to_string())?;
+        (t.snapshot(), t.live_setup_identity())
+    };
+    if let Some((track_id, identity)) = live {
+        if let Ok(lib) = library.0.lock() {
+            snap.matched_tune_id = lib.find_match(track_id, &identity).map(|t| t.id.clone());
+        }
+    }
+    Ok(snap)
 }
 
 /// Set the driver balance preference (-1 loose .. +1 stable). Returns the applied value.
@@ -530,6 +735,208 @@ pub fn set_driver_name(
         .lock()
         .map_err(|e| e.to_string())?
         .set_driver_name(race_number, &name, now_ms()))
+}
+
+// --- Tunes ---------------------------------------------------------------------
+
+/// The saved-setup library as lightweight summaries (no per-lap lists).
+#[tauri::command]
+pub fn tune_list(library: tauri::State<'_, TuneLibraryState>) -> Result<Vec<TuneSummary>, String> {
+    let lib = library.0.lock().map_err(|e| e.to_string())?;
+    Ok(lib.list().iter().map(TuneSummary::from_tune).collect())
+}
+
+/// One full tune (including its recorded laps), for the Setups detail view and the
+/// "Open in Tuner" baseline. None if the id is unknown.
+#[tauri::command]
+pub fn open_tune(
+    library: tauri::State<'_, TuneLibraryState>,
+    id: String,
+) -> Result<Option<Tune>, String> {
+    Ok(library
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&id)
+        .cloned())
+}
+
+/// Save the live setup from the Tuner into the library. Updates the existing tune
+/// if one already matches on this track, otherwise creates a new one. Returns the
+/// tune id, or None if there is no current setup to save.
+#[tauri::command]
+pub fn save_current_tune(
+    tuner: tauri::State<'_, TunerStore>,
+    library: tauri::State<'_, TuneLibraryState>,
+    store: tauri::State<'_, TuneStoreState>,
+    name: Option<String>,
+) -> Result<Option<String>, String> {
+    let live = {
+        let t = tuner.0.lock().map_err(|e| e.to_string())?;
+        t.live_setup_identity()
+    };
+    let Some((track_id, identity)) = live else {
+        return Ok(None);
+    };
+    let mut lib = library.0.lock().map_err(|e| e.to_string())?;
+    let id = lib.save_setup(track_id, identity, name, now_ms());
+    store.0.save_if_changed(&lib);
+    Ok(Some(id))
+}
+
+/// Delete a saved tune.
+#[tauri::command]
+pub fn delete_tune(
+    library: tauri::State<'_, TuneLibraryState>,
+    store: tauri::State<'_, TuneStoreState>,
+    id: String,
+) -> Result<bool, String> {
+    let mut lib = library.0.lock().map_err(|e| e.to_string())?;
+    let ok = lib.delete(&id);
+    store.0.save_if_changed(&lib);
+    Ok(ok)
+}
+
+/// Pin or unpin a tune.
+#[tauri::command]
+pub fn set_tune_pinned(
+    library: tauri::State<'_, TuneLibraryState>,
+    store: tauri::State<'_, TuneStoreState>,
+    id: String,
+    pinned: bool,
+) -> Result<bool, String> {
+    let mut lib = library.0.lock().map_err(|e| e.to_string())?;
+    let ok = lib.set_pinned(&id, pinned);
+    store.0.save_if_changed(&lib);
+    Ok(ok)
+}
+
+/// Rename a tune. A blank name is rejected (returns false).
+#[tauri::command]
+pub fn rename_tune(
+    library: tauri::State<'_, TuneLibraryState>,
+    store: tauri::State<'_, TuneStoreState>,
+    id: String,
+    name: String,
+) -> Result<bool, String> {
+    let mut lib = library.0.lock().map_err(|e| e.to_string())?;
+    let ok = lib.rename(&id, &name);
+    store.0.save_if_changed(&lib);
+    Ok(ok)
+}
+
+/// Set or clear a tune's free-text notes.
+#[tauri::command]
+pub fn set_tune_notes(
+    library: tauri::State<'_, TuneLibraryState>,
+    store: tauri::State<'_, TuneStoreState>,
+    id: String,
+    notes: String,
+) -> Result<bool, String> {
+    let mut lib = library.0.lock().map_err(|e| e.to_string())?;
+    let ok = lib.set_notes(&id, &notes);
+    store.0.save_if_changed(&lib);
+    Ok(ok)
+}
+
+// --- History -------------------------------------------------------------------
+
+/// Save the current Race Control session into the archive. Returns the new id.
+#[tauri::command]
+pub fn save_session(
+    race: tauri::State<'_, RaceStore>,
+    archive: tauri::State<'_, HistoryState>,
+    store: tauri::State<'_, HistoryStoreState>,
+    name: Option<String>,
+) -> Result<String, String> {
+    let snapshot = race.0.lock().map_err(|e| e.to_string())?.snapshot();
+    let value = serde_json::to_value(&snapshot).map_err(|e| e.to_string())?;
+    let mut a = archive.0.lock().map_err(|e| e.to_string())?;
+    let id = a.save(name.as_deref().unwrap_or(""), value, now_ms());
+    store.0.save_if_changed(&a);
+    Ok(id)
+}
+
+/// The saved sessions as lightweight summaries (no snapshot payload).
+#[tauri::command]
+pub fn history_list(archive: tauri::State<'_, HistoryState>) -> Result<Vec<SessionMeta>, String> {
+    let a = archive.0.lock().map_err(|e| e.to_string())?;
+    Ok(a.list().iter().map(SessionMeta::from_record).collect())
+}
+
+/// One saved session in full (including its snapshot), for re-opening the report.
+#[tauri::command]
+pub fn history_get(
+    archive: tauri::State<'_, HistoryState>,
+    id: String,
+) -> Result<Option<SessionRecord>, String> {
+    Ok(archive
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&id)
+        .cloned())
+}
+
+/// Delete a saved session.
+#[tauri::command]
+pub fn delete_session(
+    archive: tauri::State<'_, HistoryState>,
+    store: tauri::State<'_, HistoryStoreState>,
+    id: String,
+) -> Result<bool, String> {
+    let mut a = archive.0.lock().map_err(|e| e.to_string())?;
+    let ok = a.delete(&id);
+    store.0.save_if_changed(&a);
+    Ok(ok)
+}
+
+/// Pin or unpin a saved session (pinned sessions are exempt from retention pruning).
+#[tauri::command]
+pub fn set_session_pinned(
+    archive: tauri::State<'_, HistoryState>,
+    store: tauri::State<'_, HistoryStoreState>,
+    id: String,
+    pinned: bool,
+) -> Result<bool, String> {
+    let mut a = archive.0.lock().map_err(|e| e.to_string())?;
+    let ok = a.set_pinned(&id, pinned);
+    store.0.save_if_changed(&a);
+    Ok(ok)
+}
+
+/// Rename a saved session. A blank name is rejected (returns false).
+#[tauri::command]
+pub fn rename_session(
+    archive: tauri::State<'_, HistoryState>,
+    store: tauri::State<'_, HistoryStoreState>,
+    id: String,
+    name: String,
+) -> Result<bool, String> {
+    let mut a = archive.0.lock().map_err(|e| e.to_string())?;
+    let ok = a.rename(&id, &name);
+    store.0.save_if_changed(&a);
+    Ok(ok)
+}
+
+/// Set the history retention period in days (None = keep everything), pruning
+/// immediately. Returns the number of sessions removed by the prune.
+#[tauri::command]
+pub fn set_history_retention(
+    archive: tauri::State<'_, HistoryState>,
+    store: tauri::State<'_, HistoryStoreState>,
+    days: Option<u32>,
+) -> Result<usize, String> {
+    let mut a = archive.0.lock().map_err(|e| e.to_string())?;
+    let removed = a.set_retention(days, now_ms());
+    store.0.save_if_changed(&a);
+    Ok(removed)
+}
+
+/// The current history retention period in days, or None if everything is kept.
+#[tauri::command]
+pub fn history_retention(archive: tauri::State<'_, HistoryState>) -> Result<Option<u32>, String> {
+    Ok(archive.0.lock().map_err(|e| e.to_string())?.retention_days)
 }
 
 #[cfg(test)]
