@@ -185,7 +185,8 @@ impl HistoryArchive {
         };
         let cutoff = now_ms - days as f64 * MS_PER_DAY;
         let before = self.sessions.len();
-        self.sessions.retain(|s| s.pinned || s.saved_at_ms >= cutoff);
+        self.sessions
+            .retain(|s| s.pinned || s.saved_at_ms >= cutoff);
         let removed = before - self.sessions.len();
         if removed > 0 {
             self.rev += 1;
@@ -253,7 +254,10 @@ mod tests {
         assert_eq!(removed, 1);
         assert!(a.get(&old).is_none());
         assert!(a.get(&recent).is_some());
-        assert!(a.get(&old_pinned).is_some(), "pinned is exempt from retention");
+        assert!(
+            a.get(&old_pinned).is_some(),
+            "pinned is exempt from retention"
+        );
 
         // Clearing retention keeps everything thereafter.
         assert_eq!(a.set_retention(None, now), 0);

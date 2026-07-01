@@ -15,13 +15,14 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::engineer::Engineer;
+use crate::history::model::{SessionMeta, SessionRecord};
+use crate::history::store::{HistoryState, HistoryStoreState};
 use crate::packets::parse_packet;
 use crate::persist::{ProfileState, ProfileStore};
 use crate::racecontrol::state::Incident;
 use crate::racecontrol::{SessionSnapshot, SessionState};
 use crate::tuner::{Snapshot, TunerState};
-use crate::history::model::{SessionMeta, SessionRecord};
-use crate::history::store::{HistoryState, HistoryStoreState};
 use crate::tunes::model::{LapRecord, Tune, TuneLibrary, TuneSummary};
 use crate::tunes::store::{TuneLibraryState, TuneStore, TuneStoreState};
 
@@ -57,6 +58,17 @@ impl Default for RaceStore {
         RaceStore(Arc::new(Mutex::new(SessionState::new())))
     }
 }
+
+/// Tauri-managed flag: whether the voice race engineer runs inside the listener.
+/// The frontend toggles it via `engineer_set_enabled`; the hot loop reads it to
+/// decide whether to evaluate a frame and emit `engineer:callout` events. Shared
+/// with the worker thread as a plain `Arc<AtomicBool>` (cheap to read per packet).
+#[derive(Default)]
+pub struct EngineerState(pub Arc<AtomicBool>);
+
+/// How often the listener re-evaluates the engineer rules (2 Hz). Detection needs
+/// only a coarse cadence; this keeps the snapshot clone + rule pass off every packet.
+const ENGINEER_EVAL: Duration = Duration::from_millis(500);
 
 /// Wall-clock milliseconds, for the steward-action / stale-feed timestamps the
 /// Race Control state records.
@@ -224,6 +236,7 @@ fn spawn_listener(
     profile: Arc<ProfileStore>,
     library: Arc<Mutex<TuneLibrary>>,
     tune_store: Arc<TuneStore>,
+    engineer_enabled: Arc<AtomicBool>,
     forwards: Vec<SocketAddr>,
     log_path: Option<PathBuf>,
 ) -> Result<Listener, String> {
@@ -295,6 +308,10 @@ fn spawn_listener(
         let mut rebound_since_rx = false; // already rebound for the current silence
         let mut total_rx: u64 = 0;
         let mut last_log = Instant::now();
+        // Voice race-engineer detection state, evaluated on the ENGINEER_EVAL gate
+        // while `engineer_enabled` is set. Survives rebinds (like the counters above).
+        let mut engineer = Engineer::new();
+        let mut last_engineer_eval = Instant::now();
 
         let mut socket = initial;
         log_event(&log_path, &format!("listener bound on UDP {port}"));
@@ -453,8 +470,28 @@ fn spawn_listener(
                                     }
                                 }
                             }
-                            if let Ok(mut r) = race.lock() {
+                            // Ingest into Race Control, and — only while the engineer
+                            // is enabled and the eval gate has elapsed — snapshot under
+                            // the same lock so detection needs no second round-trip.
+                            let engineer_snap = if let Ok(mut r) = race.lock() {
                                 r.ingest(&packet, now_ms());
+                                if engineer_enabled.load(Ordering::Relaxed)
+                                    && last_engineer_eval.elapsed() >= ENGINEER_EVAL
+                                {
+                                    last_engineer_eval = Instant::now();
+                                    Some(r.snapshot())
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+                            // Run the rules + emit OFF the race lock. Each callout is
+                            // filtered by enabled category and spoken in the webview.
+                            if let Some(snap) = engineer_snap {
+                                for c in engineer.evaluate(&snap) {
+                                    let _ = app.emit("engineer:callout", &c);
+                                }
                             }
                         }
                         // Read timeout: idle tick, loop back to re-check the flags.
@@ -525,6 +562,7 @@ pub fn start_telemetry(
     profile: tauri::State<'_, ProfileState>,
     library: tauri::State<'_, TuneLibraryState>,
     tune_store: tauri::State<'_, TuneStoreState>,
+    engineer: tauri::State<'_, EngineerState>,
     app: AppHandle,
     port: u16,
     forwards: Vec<SocketAddr>,
@@ -559,6 +597,7 @@ pub fn start_telemetry(
         profile.0.clone(),
         library.0.clone(),
         tune_store.0.clone(),
+        engineer.0.clone(),
         forwards,
         log_path,
     )?;
@@ -571,6 +610,15 @@ pub fn start_telemetry(
 pub fn stop_telemetry(state: tauri::State<'_, TelemetryState>) -> Result<(), String> {
     *state.0.lock().map_err(|e| e.to_string())? = None;
     Ok(())
+}
+
+/// Enable or disable the voice race engineer's detection loop. While enabled, the
+/// listener evaluates the rules on the ENGINEER_EVAL cadence and emits
+/// `engineer:callout` events; while disabled it does no engineer work at all. A
+/// cheap atomic store, safe to call whenever the frontend setting changes.
+#[tauri::command]
+pub fn engineer_set_enabled(engineer: tauri::State<'_, EngineerState>, enabled: bool) {
+    engineer.0.store(enabled, Ordering::Relaxed);
 }
 
 /// Re-open UDP source selection: the listener drops its pinned host and locks onto

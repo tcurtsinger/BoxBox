@@ -1,28 +1,32 @@
 /**
- * Drives the voice race engineer. It watches the live race snapshot, runs the
- * (pure) callout rules over each frame transition, and speaks the results one at a
- * time through the scheduler + OS voice.
+ * Drives the voice race engineer: it turns callouts into spoken audio, one at a
+ * time, through the scheduler + OS voice. Runs at the shell level so it's active
+ * whenever BoxBox is running, regardless of which view is open.
  *
- * Runs at the shell level so it's active whenever BoxBox is receiving a feed,
- * regardless of which view is open. Sources:
- *   - real:  the Tauri `race_snapshot` command while a live feed is connected.
- *   - demo:  a scripted sample sequence in the browser preview or an explicit
- *            sample session, so the engineer can be heard without the game.
- *
- * Detection lives in the webview for now; when BoxBox is backgrounded (i.e. you're
- * in the game) its timers can throttle, so Phase 2 moves this loop into Rust and
- * leaves the webview to only speak what it's handed. See the plan.
+ * Two sources of callouts:
+ *   - real (Tauri): the Rust listener detects callouts on the live packet stream
+ *     and emits `engineer:callout` events (Phase 2). Detection in native code keeps
+ *     firing while BoxBox is backgrounded behind the game, where a webview poll
+ *     would throttle. The webview's only job here is to filter by enabled category
+ *     and speak.
+ *   - demo (browser preview / sample session): a scripted sample sequence run
+ *     through the SAME pure TS rules, so the engineer can be heard without the game.
  */
 import { useCallback, useEffect, useRef } from "react";
 import { useShell } from "../shell/shell-context";
 import type { RaceSnapshot } from "../modes/timing/liveGrid";
-import { deriveCallouts, extractPlayerFrame, PRIORITY, type PlayerFrame } from "./callouts";
+import {
+  deriveCallouts,
+  extractPlayerFrame,
+  PRIORITY,
+  type Callout,
+  type PlayerFrame,
+} from "./callouts";
 import { CalloutScheduler } from "./scheduler";
 import { Speaker } from "./speech";
 import { sampleFrames } from "./sampleScript";
 
 const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-const REAL_POLL_MS = 500; // 2 Hz is ample for engineer callouts
 const SAMPLE_STEP_MS = 2_200; // slow enough to hear each demo callout
 
 export function useRaceEngineer(): void {
@@ -59,29 +63,59 @@ export function useRaceEngineer(): void {
     });
   }, []);
 
-  // Fold one snapshot into a callout run. The first frame only sets the baseline.
-  const ingest = useCallback(
+  // Queue callouts that pass the enabled-category filter, then speak. Shared by the
+  // real (Rust event) and demo (TS rule) sources.
+  const enqueue = useCallback(
+    (callouts: Callout[]) => {
+      const cats = settingsRef.current.categories;
+      const on = callouts.filter((c) => cats[c.category]);
+      if (on.length) {
+        schedulerRef.current.push(on, Date.now());
+        pump();
+      }
+    },
+    [pump],
+  );
+
+  // Demo only: fold one sample snapshot into a callout run via the TS rules. The
+  // first frame just sets the baseline.
+  const ingestSample = useCallback(
     (snap: RaceSnapshot) => {
       const next = extractPlayerFrame(snap);
       if (!next) {
-        prevRef.current = null; // no local player (spectating): stay silent
+        prevRef.current = null;
         return;
       }
       const prev = prevRef.current;
       prevRef.current = next;
       if (!prev) return;
-      const callouts = deriveCallouts(prev, next, settingsRef.current.categories);
-      if (callouts.length) schedulerRef.current.push(callouts, Date.now());
-      pump();
+      enqueue(deriveCallouts(prev, next, settingsRef.current.categories));
     },
-    [pump],
+    [enqueue],
   );
+
+  // Keep the Rust detection loop's enabled flag in sync with the setting, so it only
+  // does engineer work (and emits events) while the engineer is on.
+  useEffect(() => {
+    if (!IN_TAURI) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        if (!cancelled) await invoke("engineer_set_enabled", { enabled: engineer.enabled });
+      } catch {
+        /* backend not ready / no listener yet: the next toggle re-syncs */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [engineer.enabled]);
 
   useEffect(() => {
     const scheduler = schedulerRef.current;
     const speaker = speakerRef.current;
 
-    // Fully idle when disabled.
     if (!engineer.enabled) {
       speaker.cancel();
       scheduler.clear();
@@ -89,47 +123,42 @@ export function useRaceEngineer(): void {
       return;
     }
 
-    const real = IN_TAURI && feed.state === "live" && feed.sample !== true;
-    // Demo the engine in the browser preview, or in an explicit sample session.
-    const demo = !IN_TAURI || feed.sample === true;
-
     let cancelled = false;
-    let timer: number | undefined;
 
-    if (real) {
+    if (IN_TAURI && feed.sample !== true) {
+      // Real: speak callouts the Rust listener emits (detection runs there now).
+      let unlisten: (() => void) | null = null;
       void (async () => {
-        const { invoke } = await import("@tauri-apps/api/core");
+        const { listen } = await import("@tauri-apps/api/event");
         if (cancelled) return;
-        const poll = async () => {
-          try {
-            const snap = await invoke<RaceSnapshot>("race_snapshot");
-            if (!cancelled) ingest(snap);
-          } catch {
-            /* transient (poisoned lock / shutdown): keep the last frame */
-          }
-        };
-        await poll();
-        timer = window.setInterval(poll, REAL_POLL_MS);
+        const un = await listen<Callout>("engineer:callout", (e) => enqueue([e.payload]));
+        if (cancelled) un();
+        else unlisten = un;
       })();
-    } else if (demo) {
-      const frames = sampleFrames();
-      let i = 0;
-      const step = () => {
-        if (cancelled) return;
-        ingest(frames[i % frames.length]);
-        i++;
+      return () => {
+        cancelled = true;
+        if (unlisten) unlisten();
+        speaker.cancel();
+        scheduler.clear();
       };
-      step();
-      timer = window.setInterval(step, SAMPLE_STEP_MS);
     }
-    // else: enabled but no feed — stay quiet until one arrives.
 
+    // Demo: step a scripted sequence through the TS rules (preview / sample session).
+    const frames = sampleFrames();
+    let i = 0;
+    const step = () => {
+      if (cancelled) return;
+      ingestSample(frames[i % frames.length]);
+      i++;
+    };
+    step();
+    const timer = window.setInterval(step, SAMPLE_STEP_MS);
     return () => {
       cancelled = true;
-      if (timer) clearInterval(timer);
+      clearInterval(timer);
       speaker.cancel();
       scheduler.clear();
       prevRef.current = null;
     };
-  }, [engineer.enabled, feed.state, feed.sample, ingest]);
+  }, [engineer.enabled, feed.sample, enqueue, ingestSample]);
 }

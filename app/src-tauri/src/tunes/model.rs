@@ -112,10 +112,19 @@ impl SetupIdentity {
             && approx(self.rear_camber, other.rear_camber)
             && approx(self.front_toe, other.front_toe)
             && approx(self.rear_toe, other.rear_toe)
-            && approx(self.front_left_tyre_pressure, other.front_left_tyre_pressure)
-            && approx(self.front_right_tyre_pressure, other.front_right_tyre_pressure)
+            && approx(
+                self.front_left_tyre_pressure,
+                other.front_left_tyre_pressure,
+            )
+            && approx(
+                self.front_right_tyre_pressure,
+                other.front_right_tyre_pressure,
+            )
             && approx(self.rear_left_tyre_pressure, other.rear_left_tyre_pressure)
-            && approx(self.rear_right_tyre_pressure, other.rear_right_tyre_pressure)
+            && approx(
+                self.rear_right_tyre_pressure,
+                other.rear_right_tyre_pressure,
+            )
     }
 }
 
@@ -523,7 +532,8 @@ mod tests {
         let mut moved = setup();
         moved.front_wing = 7;
         assert!(
-            lib.find_match(13, &SetupIdentity::from_setup(&moved)).is_none(),
+            lib.find_match(13, &SetupIdentity::from_setup(&moved))
+                .is_none(),
             "different wing, no match"
         );
     }
@@ -573,7 +583,10 @@ mod tests {
         }
         let t = lib.get(&id).unwrap();
         assert_eq!(t.practice.laps.len(), MAX_LAPS_PER_STORE, "list is capped");
-        assert_eq!(t.practice.best_ms, 70_000, "all-time best survives trimming");
+        assert_eq!(
+            t.practice.best_ms, 70_000,
+            "all-time best survives trimming"
+        );
     }
 
     #[test]
@@ -597,7 +610,12 @@ mod tests {
     #[test]
     fn library_round_trips_through_json_without_rev() {
         let mut lib = TuneLibrary::new();
-        lib.save_setup(13, SetupIdentity::from_setup(&setup()), Some("Quali".into()), 5.0);
+        lib.save_setup(
+            13,
+            SetupIdentity::from_setup(&setup()),
+            Some("Quali".into()),
+            5.0,
+        );
         let json = serde_json::to_string(&lib).unwrap();
         assert!(!json.contains("\"rev\""), "runtime rev is not persisted");
         let back: TuneLibrary = serde_json::from_str(&json).unwrap();

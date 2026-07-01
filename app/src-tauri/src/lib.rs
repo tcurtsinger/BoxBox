@@ -1,11 +1,12 @@
+mod engineer;
 mod export;
 mod history;
 mod packets;
 mod persist;
 mod racecontrol;
 mod telemetry;
-mod tunes;
 mod tuner;
+mod tunes;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use tauri::Manager;
 
 use history::store::{HistoryState, HistoryStore, HistoryStoreState};
 use persist::{ProfileState, ProfileStore};
-use telemetry::{RaceStore, TelemetryState, TunerStore};
+use telemetry::{EngineerState, RaceStore, TelemetryState, TunerStore};
 use tunes::store::{TuneLibraryState, TuneStore, TuneStoreState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -23,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(TelemetryState::default())
+        .manage(EngineerState::default())
         .manage(TunerStore::default())
         .manage(RaceStore::default())
         .manage(TuneLibraryState::default())
@@ -40,8 +42,10 @@ pub fn run() {
                     .unwrap_or_else(|| PathBuf::from(fallback))
             };
 
-            let profile =
-                Arc::new(ProfileStore::new(resolve("profile.json", "boxbox-profile.json")));
+            let profile = Arc::new(ProfileStore::new(resolve(
+                "profile.json",
+                "boxbox-profile.json",
+            )));
             let tuner = app.state::<TunerStore>().0.clone();
             if let Ok(mut t) = tuner.lock() {
                 profile.load_into(&mut t);
@@ -71,6 +75,7 @@ pub fn run() {
             telemetry::start_telemetry,
             telemetry::stop_telemetry,
             telemetry::reset_telemetry_source,
+            telemetry::engineer_set_enabled,
             telemetry::tuner_snapshot,
             telemetry::set_balance_preference,
             telemetry::apply_feedback,
