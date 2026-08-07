@@ -72,6 +72,13 @@ impl TuneStore {
         Some((rev, lib.clone()))
     }
 
+    /// Whether the library's current revision has reached disk. Lets a command
+    /// handler distinguish "save_if_changed returned false because nothing
+    /// changed / the flush thread already wrote it" from a FAILED write.
+    pub fn is_current(&self, lib: &TuneLibrary) -> bool {
+        self.last_saved.load(Ordering::Relaxed) >= lib.revision()
+    }
+
     /// Write a snapshot from `pending_save` to disk and record its revision as
     /// saved. Call WITHOUT the library lock held. A failed write leaves `last_saved`
     /// behind so the next change retries.

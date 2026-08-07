@@ -631,6 +631,7 @@ function RunCard({ matchedId, hasSetup }: { matchedId: string | null; hasSetup: 
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [savedId, setSavedId] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (!matchedId) {
@@ -673,9 +674,15 @@ function RunCard({ matchedId, hasSetup }: { matchedId: string | null; hasSetup: 
 
   const onSave = async () => {
     setSaving(true);
-    const id = await saveCurrentTune(name.trim() || undefined);
+    setSaveErr(null);
+    try {
+      const id = await saveCurrentTune(name.trim() || undefined);
+      if (id) setSavedId(id);
+    } catch (e) {
+      // A failed tunes.json write now surfaces instead of silently reverting.
+      setSaveErr(e instanceof Error ? e.message : String(e));
+    }
     setSaving(false);
-    if (id) setSavedId(id);
   };
 
   return (
@@ -703,6 +710,11 @@ function RunCard({ matchedId, hasSetup }: { matchedId: string | null; hasSetup: 
           <button type="button" className="btn btn-primary btn-sm" onClick={onSave} disabled={saving}>
             Save to library
           </button>
+          {saveErr && (
+            <span className="tune-save-error" role="alert">
+              {saveErr}
+            </span>
+          )}
         </span>
       )}
     </div>

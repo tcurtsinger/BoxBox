@@ -972,6 +972,17 @@ pub fn set_driver_name(
 
 // --- Tunes ---------------------------------------------------------------------
 
+/// Persist a just-mutated tune library, distinguishing "nothing changed / already
+/// written" from a FAILED write. The 250 ms flush thread retries failures — but it
+/// only exists while a listener runs, so a swallowed failure with no feed active
+/// would silently revert the change on the next launch (deleted tunes coming back).
+fn persist_tunes(store: &TuneStore, lib: &TuneLibrary) -> Result<(), String> {
+    if !store.save_if_changed(lib) && !store.is_current(lib) {
+        return Err("couldn't write tunes.json — the change is not saved to disk".into());
+    }
+    Ok(())
+}
+
 /// The saved-setup library as lightweight summaries (no per-lap lists).
 #[tauri::command]
 pub fn tune_list(library: tauri::State<'_, TuneLibraryState>) -> Result<Vec<TuneSummary>, String> {
@@ -1013,7 +1024,7 @@ pub fn save_current_tune(
     };
     let mut lib = library.0.lock().map_err(|e| e.to_string())?;
     let id = lib.save_setup(track_id, identity, name, now_ms());
-    store.0.save_if_changed(&lib);
+    persist_tunes(&store.0, &lib)?;
     Ok(Some(id))
 }
 
@@ -1052,7 +1063,7 @@ pub fn delete_tune(
 ) -> Result<bool, String> {
     let mut lib = library.0.lock().map_err(|e| e.to_string())?;
     let ok = lib.delete(&id);
-    store.0.save_if_changed(&lib);
+    persist_tunes(&store.0, &lib)?;
     Ok(ok)
 }
 
@@ -1066,7 +1077,7 @@ pub fn set_tune_pinned(
 ) -> Result<bool, String> {
     let mut lib = library.0.lock().map_err(|e| e.to_string())?;
     let ok = lib.set_pinned(&id, pinned);
-    store.0.save_if_changed(&lib);
+    persist_tunes(&store.0, &lib)?;
     Ok(ok)
 }
 
@@ -1080,7 +1091,7 @@ pub fn rename_tune(
 ) -> Result<bool, String> {
     let mut lib = library.0.lock().map_err(|e| e.to_string())?;
     let ok = lib.rename(&id, &name);
-    store.0.save_if_changed(&lib);
+    persist_tunes(&store.0, &lib)?;
     Ok(ok)
 }
 
@@ -1094,7 +1105,7 @@ pub fn set_tune_notes(
 ) -> Result<bool, String> {
     let mut lib = library.0.lock().map_err(|e| e.to_string())?;
     let ok = lib.set_notes(&id, &notes);
-    store.0.save_if_changed(&lib);
+    persist_tunes(&store.0, &lib)?;
     Ok(ok)
 }
 

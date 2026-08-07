@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShell } from "../../shell/shell-context";
 import { Segmented } from "../../shell/Segmented";
 import { SlidersIcon } from "../../shell/icons";
@@ -115,10 +115,17 @@ export function SetupsView() {
     await reload();
   }, [reload]);
 
+  const [listError, setListError] = useState<string | null>(null);
   const onSaveCurrent = useCallback(async () => {
-    const id = await saveCurrentTune();
-    await reload();
-    if (id) setSelectedId(id);
+    setListError(null);
+    try {
+      const id = await saveCurrentTune();
+      await reload();
+      if (id) setSelectedId(id);
+    } catch (e) {
+      // A failed tunes.json write now surfaces instead of silently reverting.
+      setListError(e instanceof Error ? e.message : String(e));
+    }
   }, [reload]);
 
   const matchedInList = !!matchedId && tunes.some((t) => t.id === matchedId);
@@ -165,6 +172,11 @@ export function SetupsView() {
                 Save current setup
               </button>
             ) : null}
+            {listError && (
+              <span className="tune-save-error" role="alert">
+                {listError}
+              </span>
+            )}
           </div>
         </header>
 
@@ -302,14 +314,48 @@ function TuneDetail({
   const [nameDraft, setNameDraft] = useState(tune.name);
   const [notesDraft, setNotesDraft] = useState(tune.notes);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Reset ephemeral edit state when a different tune is selected.
+  // Uncommitted drafts, paired with the tune they belong to AT INPUT TIME (so a
+  // flush after switching tunes can never write one tune's words onto another).
+  // Blur-only commits lost the draft when the window closed with focus still in
+  // the field; these flush on unmount / tune switch, plus a debounce for notes.
+  const pendingNotes = useRef<{ id: string; notes: string } | null>(null);
+  const pendingName = useRef<{ id: string; name: string } | null>(null);
+  const flushPending = () => {
+    const n = pendingNotes.current;
+    if (n) {
+      pendingNotes.current = null;
+      void setTuneNotes(n.id, n.notes);
+    }
+    const r = pendingName.current;
+    if (r && r.name.trim()) {
+      pendingName.current = null;
+      void renameTune(r.id, r.name.trim());
+    }
+  };
+  // Unmount (section switch, app teardown): last chance to keep the words.
+  useEffect(() => flushPending, []);
+
+  // Reset ephemeral edit state when a different tune is selected — flushing the
+  // previous tune's drafts first.
   useEffect(() => {
+    flushPending();
     setEditingName(false);
     setNameDraft(tune.name);
     setNotesDraft(tune.notes);
     setConfirmDelete(false);
+    setSaveError(null);
   }, [tune.id]);
+
+  // Debounced notes auto-commit: typed words reach disk within a second of the
+  // driver pausing, instead of only on blur.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- commitNotes reads the same notesDraft this effect keys on
+  useEffect(() => {
+    if (notesDraft.trim() === tune.notes) return;
+    const t = setTimeout(() => void commitNotes(), 800);
+    return () => clearTimeout(t);
+  }, [notesDraft, tune.notes, tune.id]);
 
   // A staged delete reverts on its own if not confirmed, so a stray click never
   // leaves the button armed.
@@ -319,30 +365,48 @@ function TuneDetail({
     return () => clearTimeout(t);
   }, [confirmDelete]);
 
+  // Surfaces a failed tunes.json write (the backend now reports it instead of
+  // silently reverting the change on the next launch).
+  const guarded = async (op: () => Promise<void>) => {
+    setSaveError(null);
+    try {
+      await op();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    }
+  };
   const commitName = async () => {
     setEditingName(false);
     const next = nameDraft.trim();
+    pendingName.current = null;
     if (next && next !== tune.name) {
-      await renameTune(tune.id, next);
-      await onReload();
+      await guarded(async () => {
+        await renameTune(tune.id, next);
+        await onReload();
+      });
     } else {
       setNameDraft(tune.name);
     }
   };
   const commitNotes = async () => {
     if (notesDraft.trim() !== tune.notes) {
-      await setTuneNotes(tune.id, notesDraft);
-      await onReload();
+      pendingNotes.current = null;
+      await guarded(async () => {
+        await setTuneNotes(tune.id, notesDraft);
+        await onReload();
+      });
     }
   };
-  const togglePin = async () => {
-    await setTunePinned(tune.id, !tune.pinned);
-    await onReload();
-  };
-  const remove = async () => {
-    await deleteTune(tune.id);
-    await onDeleted();
-  };
+  const togglePin = () =>
+    guarded(async () => {
+      await setTunePinned(tune.id, !tune.pinned);
+      await onReload();
+    });
+  const remove = () =>
+    guarded(async () => {
+      await deleteTune(tune.id);
+      await onDeleted();
+    });
 
   return (
     <div className="tune-detail">
@@ -353,7 +417,10 @@ function TuneDetail({
               className="field-input tune-name-input"
               value={nameDraft}
               autoFocus
-              onChange={(e) => setNameDraft(e.target.value)}
+              onChange={(e) => {
+                setNameDraft(e.target.value);
+                pendingName.current = { id: tune.id, name: e.target.value };
+              }}
               onBlur={commitName}
               onKeyDown={(e) => {
                 // Blur commits (once) — calling commitName here too could rename twice.
@@ -438,10 +505,18 @@ function TuneDetail({
           rows={3}
           value={notesDraft}
           placeholder="What this setup is for, how it drives, what to tweak…"
-          onChange={(e) => setNotesDraft(e.target.value)}
+          onChange={(e) => {
+            setNotesDraft(e.target.value);
+            pendingNotes.current = { id: tune.id, notes: e.target.value };
+          }}
           onBlur={commitNotes}
         />
       </label>
+      {saveError && (
+        <p className="tune-save-error" role="alert">
+          {saveError}
+        </p>
+      )}
     </div>
   );
 }

@@ -9,6 +9,8 @@ import { getTune, type Tune, type TimeStore } from "./tunesData";
 
 export type WearLeverKey = "frontToe" | "rearToe" | "frontAntiRollBar" | "rearAntiRollBar";
 export type BenchBasis = "timeTrial" | "practice";
+/** The estimator's prior→measured tier (Rust `Confidence`, lowercase serde). */
+export type WearConfidence = "prior" | "forming" | "measured";
 
 export interface BenchSide {
   id: string;
@@ -32,7 +34,8 @@ export interface BenchVerdict {
 
 /** One differing wear lever. `projectedDRate` is the change in that axle's wear
  *  rate (%/lap) going from A to B — positive means B wears the axle faster; null
- *  when the lever's sensitivity is unmeasured. */
+ *  unless the lever's sensitivity is MEASURED (a forming mean is near noise and
+ *  is listed with its tier instead of projected). */
 export interface WearDelta {
   lever: WearLeverKey;
   delta: number;
@@ -40,6 +43,7 @@ export interface WearDelta {
   projectedDRate: number | null;
   frontAxle: boolean;
   observations: number;
+  confidence: WearConfidence;
 }
 
 export interface BenchReport {
@@ -67,10 +71,14 @@ export async function benchCompare(aId: string, bId: string): Promise<BenchRepor
 
 /* --------------------------------------------- preview fallback (TS mirror) */
 
-/** Canned "measured" sensitivities for the preview, standing in for the Rust
- *  profile's wear estimator (%/lap per native lever unit). */
-const SAMPLE_WEAR: Partial<Record<WearLeverKey, { sensitivity: number; observations: number }>> = {
-  rearAntiRollBar: { sensitivity: 0.22, observations: 2 },
+/** Canned sensitivities for the preview, standing in for the Rust profile's
+ *  wear estimator (%/lap per native lever unit). Includes a forming lever so
+ *  the preview demos the tier badge. */
+const SAMPLE_WEAR: Partial<
+  Record<WearLeverKey, { sensitivity: number; observations: number; confidence: WearConfidence }>
+> = {
+  rearAntiRollBar: { sensitivity: 0.22, observations: 2, confidence: "measured" },
+  frontToe: { sensitivity: 12.0, observations: 1, confidence: "forming" },
 };
 
 const WEAR_LEVERS: { key: WearLeverKey; front: boolean }[] = [
@@ -135,7 +143,9 @@ function verdictOf(a: Tune, b: Tune): BenchVerdict {
 function buildReportTS(
   a: Tune,
   b: Tune,
-  wearMap: Partial<Record<WearLeverKey, { sensitivity: number; observations: number }>>,
+  wearMap: Partial<
+    Record<WearLeverKey, { sensitivity: number; observations: number; confidence: WearConfidence }>
+  >,
 ): BenchReport {
   const wear: WearDelta[] = [];
   let front: number | null = null;
@@ -144,7 +154,9 @@ function buildReportTS(
     const delta = (b.setup[key] as number) - (a.setup[key] as number);
     if (Math.abs(delta) <= LEVER_EPS) continue;
     const learned = wearMap[key];
-    const projected = learned ? learned.sensitivity * delta : null;
+    // Mirror of the Rust honesty rule: projections come only from MEASURED.
+    const measured = learned?.confidence === "measured" ? learned : undefined;
+    const projected = measured ? measured.sensitivity * delta : null;
     if (projected != null) {
       if (isFront) front = (front ?? 0) + projected;
       else rear = (rear ?? 0) + projected;
@@ -152,10 +164,11 @@ function buildReportTS(
     wear.push({
       lever: key,
       delta,
-      sensitivity: learned?.sensitivity ?? null,
+      sensitivity: measured?.sensitivity ?? null,
       projectedDRate: projected,
       frontAxle: isFront,
       observations: learned?.observations ?? 0,
+      confidence: learned?.confidence ?? "prior",
     });
   }
   return {

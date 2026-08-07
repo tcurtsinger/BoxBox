@@ -13,6 +13,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 
 use super::model::{TimeStore, Tune, TuneSession};
+use crate::tuner::suggest::Confidence;
 use crate::tuner::{LearnedWear, WearLever};
 
 /// One side of the comparison: the headline and consistency numbers for one tune.
@@ -60,6 +61,11 @@ pub struct WearDelta {
     pub projected_d_rate: Option<f64>,
     pub front_axle: bool,
     pub observations: u32,
+    /// The estimator's prior→measured tier for this lever. Projections come only
+    /// from `Measured`; a `Forming` lever (single or sign-conflicted samples) is
+    /// listed with its count but never projected — the app-wide confidence
+    /// coding, which Bench must not silently drop.
+    pub confidence: Confidence,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -205,7 +211,14 @@ pub fn build_report(
             continue;
         }
         let learned = wear_map.get(&lever);
-        let sensitivity = learned.and_then(|l| l.sensitivity);
+        let confidence = learned.map(|l| l.confidence).unwrap_or(Confidence::Prior);
+        // "Projected ONLY through measured sensitivities" (module honesty rule):
+        // a Forming mean — one sample, or sign-conflicted samples — is near
+        // noise, and rendering it as a solid number is indistinguishable from a
+        // real measurement.
+        let sensitivity = learned
+            .filter(|l| l.confidence == Confidence::Measured)
+            .and_then(|l| l.sensitivity);
         let projected = sensitivity.map(|s| s * delta);
         if let Some(p) = projected {
             let sum = if is_front(lever) {
@@ -222,6 +235,7 @@ pub fn build_report(
             projected_d_rate: projected,
             front_axle: is_front(lever),
             observations: learned.map(|l| l.observations).unwrap_or(0),
+            confidence,
         });
     }
 
@@ -409,6 +423,37 @@ mod tests {
             r.projected_rear_d_rate, None,
             "no measured rear lever -> no rear projection"
         );
+    }
+
+    #[test]
+    fn forming_sensitivity_is_listed_but_never_projected() {
+        let mut lib = TuneLibrary::new();
+        let a = tune(&mut lib, 13, setup(0.06, 9), &[], &[]);
+        let b = tune(&mut lib, 13, setup(0.08, 9), &[], &[]);
+
+        // Two sign-conflicted samples: the estimator calls this Forming — the
+        // mean is near noise, and rendering it as a solid projection would be
+        // indistinguishable from a real measurement.
+        let mut wear_map = HashMap::new();
+        wear_map.insert(
+            WearLever::FrontToe,
+            LearnedWear {
+                sensitivity: Some(2.5),
+                observations: 2,
+                confidence: Confidence::Forming,
+                agrees: None,
+            },
+        );
+
+        let r = build_report(&a, &b, &wear_map);
+        let toe = r.wear.iter().find(|w| w.lever == WearLever::FrontToe).unwrap();
+        assert_eq!(toe.confidence, Confidence::Forming, "tier surfaces to the UI");
+        assert_eq!(toe.observations, 2);
+        assert_eq!(
+            toe.projected_d_rate, None,
+            "a forming mean must not render as a solid projection"
+        );
+        assert_eq!(r.projected_front_d_rate, None);
     }
 
     #[test]

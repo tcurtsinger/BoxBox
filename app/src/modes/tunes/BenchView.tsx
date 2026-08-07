@@ -534,7 +534,10 @@ function WearPanel({ report }: { report: BenchReport }) {
           <ul className="bench-wear-levers">
             {measured.map((w) => (
               <li key={w.lever} className="bench-wear-lever">
-                <span>{WEAR_PARAM_LABEL[w.lever]}</span>
+                <span>
+                  {WEAR_PARAM_LABEL[w.lever]}
+                  <span className="bench-tier bench-tier-measured">Measured</span>
+                </span>
                 <span className="mono">
                   {fmtSigned(w.projectedDRate as number)} %/lap
                   <span className="bench-wear-obs">
@@ -546,8 +549,19 @@ function WearPanel({ report }: { report: BenchReport }) {
             ))}
             {unmeasured.map((w) => (
               <li key={w.lever} className="bench-wear-lever is-unmeasured">
-                <span>{WEAR_PARAM_LABEL[w.lever]}</span>
-                <span>differs — effect not measured yet</span>
+                <span>
+                  {WEAR_PARAM_LABEL[w.lever]}
+                  {w.confidence === "forming" && (
+                    <span className="bench-tier bench-tier-forming">Forming</span>
+                  )}
+                </span>
+                {/* A forming lever HAS samples, but they haven't settled on a
+                    direction — saying so beats implying nothing was measured. */}
+                <span>
+                  {w.confidence === "forming"
+                    ? `measuring — ${w.observations} sample${w.observations === 1 ? "" : "s"}, not settled yet`
+                    : "differs — effect not measured yet"}
+                </span>
               </li>
             ))}
           </ul>
