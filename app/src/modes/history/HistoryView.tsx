@@ -26,15 +26,23 @@ type OpenTarget =
  * session renders it through the same report as when it was live; opening the
  * current session shows the live report and offers to save it.
  */
+/** Only the real Tauri app has the Rust archive and its events. */
+const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
 export function HistoryView() {
   const { feed, sessionSaved, setSessionSaved } = useShell();
-  const hasFeed = feed.state === "live" || feed.state === "standby";
+  // The sample feed is frontend-only demo data; the Rust session behind
+  // `save_session` would be empty, so saving it would archive a junk record
+  // (and wrongly mark the next real session as saved).
+  const hasFeed =
+    (feed.state === "live" || feed.state === "standby") && feed.sample !== true;
 
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [ready, setReady] = useState(false);
   const [open, setOpen] = useState<OpenTarget | null>(null);
   const [savedDetail, setSavedDetail] = useState<SessionRecord | null>(null);
   const [saveName, setSaveName] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setSessions(await historyList());
@@ -42,6 +50,24 @@ export function HistoryView() {
   }, []);
   useEffect(() => {
     void reload();
+  }, [reload]);
+
+  // An automatic capture (official classification arrived) can land while this
+  // view is open: refresh the list so the new record appears on its own.
+  useEffect(() => {
+    if (!IN_TAURI) return;
+    let cancelled = false;
+    let dispose: (() => void) | undefined;
+    (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      const un = await listen("history:auto-saved", () => void reload());
+      if (cancelled) un();
+      else dispose = un;
+    })();
+    return () => {
+      cancelled = true;
+      dispose?.();
+    };
   }, [reload]);
 
   // Load the full record (with snapshot) when a saved session is opened.
@@ -60,11 +86,18 @@ export function HistoryView() {
   }, [open]);
 
   const onSave = useCallback(async () => {
-    const id = await saveSession(saveName.trim() || undefined);
+    setSaveError(null);
+    try {
+      await saveSession(saveName.trim() || undefined);
+    } catch (e) {
+      // Tauri rejects with the Rust error string (e.g. a failed disk write) —
+      // surface it instead of leaving a dead-looking button.
+      setSaveError(e instanceof Error ? e.message : String(e));
+      return;
+    }
     setSessionSaved(true);
     setSaveName("");
     await reload();
-    return id;
   }, [saveName, reload, setSessionSaved]);
 
   const sorted = useMemo(
@@ -99,6 +132,11 @@ export function HistoryView() {
           )}
           {open.kind === "current" && sessionSaved && (
             <span className="history-saved-flag">Saved ✓</span>
+          )}
+          {open.kind === "current" && saveError && (
+            <span className="history-save-error" role="alert">
+              {saveError}
+            </span>
           )}
         </div>
         {open.kind === "current" ? (
@@ -174,6 +212,11 @@ export function HistoryView() {
                 Open report
               </button>
             </div>
+            {saveError && (
+              <p className="history-save-error" role="alert">
+                {saveError}
+              </p>
+            )}
           </div>
         )}
 

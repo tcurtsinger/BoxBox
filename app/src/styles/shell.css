@@ -592,6 +592,12 @@ textarea {
   font-size: 13px;
   line-height: 1.5;
 }
+.dialog-error {
+  margin: 0;
+  color: var(--data-danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .field {
   display: flex;
   flex-direction: column;

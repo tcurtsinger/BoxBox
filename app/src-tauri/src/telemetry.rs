@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::engineer::Engineer;
-use crate::history::model::{SessionMeta, SessionRecord};
-use crate::history::store::{HistoryState, HistoryStoreState};
+use crate::history::model::{HistoryArchive, SessionMeta, SessionRecord};
+use crate::history::store::{HistoryState, HistoryStore, HistoryStoreState};
 use crate::packets::parse_packet;
 use crate::persist::{ProfileState, ProfileStore};
 use crate::racecontrol::state::Incident;
@@ -36,6 +36,23 @@ struct Heartbeat {
     id: u8,
     format: u16,
     session_time: f32,
+}
+
+/// Emitted when the game moves to a new session (UID change): the frontend uses
+/// it to re-arm the "save before closing?" guard for the fresh, unsaved session.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionChanged {
+    session_uid: String,
+}
+
+/// Emitted after an automatic history capture, so the frontend can mark the
+/// session saved and refresh an open History list.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AutoSaved {
+    session_uid: String,
+    id: String,
 }
 
 /// Tauri-managed Tuner engine: the live `TunerState` the listener thread feeds and
@@ -264,6 +281,8 @@ fn spawn_listener(
     profile: Arc<ProfileStore>,
     library: Arc<Mutex<TuneLibrary>>,
     tune_store: Arc<TuneStore>,
+    history: Arc<Mutex<HistoryArchive>>,
+    history_store: Arc<HistoryStore>,
     engineer_enabled: Arc<AtomicBool>,
     forwards: Vec<SocketAddr>,
     log_path: Option<PathBuf>,
@@ -502,8 +521,15 @@ fn spawn_listener(
                             // Ingest into Race Control, and — only while the engineer
                             // is enabled and the eval gate has elapsed — snapshot under
                             // the same lock so detection needs no second round-trip.
+                            let mut session_changed = None;
+                            let mut auto_archive_snap = None;
                             let engineer_snap = if let Ok(mut r) = race.lock() {
+                                let prev_uid = r.session_uid().to_string();
                                 r.ingest(&packet, now_ms());
+                                if !prev_uid.is_empty() && prev_uid != r.session_uid() {
+                                    session_changed = Some(r.session_uid().to_string());
+                                }
+                                auto_archive_snap = r.take_pending_auto_archive();
                                 if engineer_enabled.load(Ordering::Relaxed)
                                     && last_engineer_eval.elapsed() >= ENGINEER_EVAL
                                 {
@@ -515,6 +541,18 @@ fn spawn_listener(
                             } else {
                                 None
                             };
+                            // A new game session began: the frontend re-arms its
+                            // "session saved" close guard off this signal.
+                            if let Some(session_uid) = session_changed {
+                                let _ =
+                                    app.emit("race:session-changed", &SessionChanged { session_uid });
+                            }
+                            // The official classification arrived: archive the finished
+                            // session automatically (off the race lock) so the next
+                            // session's wipe or an app close can't destroy it.
+                            if let Some(snap) = auto_archive_snap {
+                                auto_archive_session(&app, &history, &history_store, &snap, &log_path);
+                            }
                             // Run the rules + emit OFF the race lock. Each callout is
                             // filtered by enabled category and spoken in the webview.
                             if let Some(snap) = engineer_snap {
@@ -581,6 +619,68 @@ fn spawn_listener(
     })
 }
 
+/// Archive a finished session (its official classification just arrived) into
+/// history without user action. Skipped when a complete record for the same
+/// session UID already exists (e.g. the user saved after the flag); a manual save
+/// made mid-session (no classification yet) does not block the capture. A failed
+/// disk write keeps the record in memory — a later successful write still lands
+/// it — and leaves evidence in the log.
+fn auto_archive_session(
+    app: &AppHandle,
+    archive: &Arc<Mutex<HistoryArchive>>,
+    store: &Arc<HistoryStore>,
+    snap: &SessionSnapshot,
+    log_path: &Option<PathBuf>,
+) {
+    let value = match serde_json::to_value(snap) {
+        Ok(v) => v,
+        Err(e) => {
+            log_event(log_path, &format!("auto-save: couldn't serialize session: {e}"));
+            return;
+        }
+    };
+    let Ok(mut a) = archive.lock() else {
+        return;
+    };
+    let complete_exists = a.list().iter().any(|r| {
+        r.snapshot.get("sessionUid").and_then(|v| v.as_str()) == Some(snap.session_uid.as_str())
+            && r.snapshot
+                .get("finalClassification")
+                .is_some_and(|v| !v.is_null())
+    });
+    if complete_exists {
+        return;
+    }
+    let id = a.save(&auto_session_name(snap), value, now_ms());
+    if !store.save_if_changed(&a) {
+        log_event(
+            log_path,
+            "auto-save: couldn't write history.json — session held in memory only",
+        );
+    }
+    let _ = app.emit(
+        "history:auto-saved",
+        &AutoSaved {
+            session_uid: snap.session_uid.clone(),
+            id,
+        },
+    );
+}
+
+/// "Suzuka — Race (auto)"-style display name for an automatic capture.
+fn auto_session_name(snap: &SessionSnapshot) -> String {
+    let session = snap
+        .session
+        .as_ref()
+        .map(|s| crate::tuner::labels::session_label(s.session_type));
+    match (snap.track_name.as_deref(), session) {
+        (Some(t), Some(s)) => format!("{t} — {s} (auto)"),
+        (Some(t), None) => format!("{t} (auto)"),
+        (None, Some(s)) => format!("{s} (auto)"),
+        (None, None) => "Session (auto)".into(),
+    }
+}
+
 /// Start (or re-point) the UDP listener on `port`. A no-op if already bound there.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -591,6 +691,8 @@ pub fn start_telemetry(
     profile: tauri::State<'_, ProfileState>,
     library: tauri::State<'_, TuneLibraryState>,
     tune_store: tauri::State<'_, TuneStoreState>,
+    history: tauri::State<'_, HistoryState>,
+    history_store: tauri::State<'_, HistoryStoreState>,
     engineer: tauri::State<'_, EngineerState>,
     app: AppHandle,
     port: u16,
@@ -635,6 +737,8 @@ pub fn start_telemetry(
         profile.0.clone(),
         library.0.clone(),
         tune_store.0.clone(),
+        history.0.clone(),
+        history_store.0.clone(),
         engineer.0.clone(),
         forwards,
         log_path,
@@ -967,8 +1071,11 @@ pub fn save_session(
     let id = a.save(name.as_deref().unwrap_or(""), value, now_ms());
     // The save just bumped the revision, so `false` here means the disk write
     // failed (disk full, file locked) — history has no background flush to retry,
-    // so a fake Ok would silently lose the session at app exit.
+    // so a fake Ok would silently lose the session at app exit. Roll the in-memory
+    // record back too: a phantom "saved" entry that isn't on disk would show in
+    // the list and vanish on restart.
     if !store.0.save_if_changed(&a) {
+        a.delete(&id);
         return Err("couldn't write history.json — the session is not saved to disk".into());
     }
     Ok(id)

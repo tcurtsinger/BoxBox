@@ -46,6 +46,9 @@ export interface Connection {
 
 const STORAGE_KEY = "boxbox.connection";
 
+/** Only the real Tauri app emits Rust session events; the preview has none. */
+const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
 const DEFAULT_CONNECTION: Connection = {
   port: 20777,
   format: "2026",
@@ -182,6 +185,36 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (feed.state === "no-feed" && sessionSaved) setSessionSaved(false);
   }, [feed.state, sessionSaved]);
+
+  // Rust announces session transitions. A new game session (UID change) re-arms
+  // the close guard — the feed never drops between sessions, so without this a
+  // save in Race 1 would leave Race 2 marked "saved" and closable without a
+  // prompt. An automatic capture (official classification arrived) marks the
+  // session saved so the guard doesn't nag about data that's already archived.
+  useEffect(() => {
+    if (!IN_TAURI) return;
+    let cancelled = false;
+    const disposers: Array<() => void> = [];
+    (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      const onChanged = await listen("race:session-changed", () => setSessionSaved(false));
+      if (cancelled) {
+        onChanged();
+        return;
+      }
+      disposers.push(onChanged);
+      const onAutoSaved = await listen("history:auto-saved", () => setSessionSaved(true));
+      if (cancelled) {
+        onAutoSaved();
+        return;
+      }
+      disposers.push(onAutoSaved);
+    })();
+    return () => {
+      cancelled = true;
+      for (const d of disposers) d();
+    };
+  }, []);
 
   // Persist the connection (port, format, forward config) so it survives
   // restarts. localStorage in the Tauri webview is durable per install.

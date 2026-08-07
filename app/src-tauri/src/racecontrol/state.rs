@@ -230,6 +230,12 @@ pub struct SessionState {
     // weekend's qualifying begins on a different track. P1.3.
     quali_segments: HashMap<u8, Vec<QualiSegmentEntry>>,
     quali_track_id: Option<i8>,
+    // Snapshot staged for automatic history capture, taken the moment the official
+    // FinalClassification (packet 8) first arrives for a session. Drained by the
+    // listener (telemetry.rs), which archives it off this state's lock. Deliberately
+    // NOT cleared by reset_for_session: it belongs to the outgoing session, and the
+    // next session's first packet must not wipe it before the listener drains it.
+    pending_auto_archive: Option<Box<SessionSnapshot>>,
 }
 
 // Bound the live incident log so an event flood can't grow memory without limit;
@@ -301,11 +307,32 @@ impl SessionState {
             Some(Body::Participants(p)) => self.ingest_participants(p),
             Some(Body::CarTelemetry(t)) => self.ingest_telemetry(t),
             Some(Body::CarStatus(s)) => self.ingest_status(s),
-            Some(Body::FinalClassification(f)) => self.final_classification = Some(f.clone()),
+            Some(Body::FinalClassification(f)) => {
+                // First arrival of the official result: stage an automatic history
+                // capture so the finished session survives the next session's UID
+                // wipe (and an app close) even if nobody clicks Save. A duplicate
+                // packet-8 resend doesn't re-stage.
+                let first = self.final_classification.is_none();
+                self.final_classification = Some(f.clone());
+                if first {
+                    self.pending_auto_archive = Some(Box::new(self.snapshot()));
+                }
+            }
             Some(Body::CarDamage(d)) => self.ingest_damage(d),
             Some(Body::CarTelemetry2(t)) => self.ingest_telemetry2(t),
             _ => {}
         }
+    }
+
+    /// The staged auto-archive snapshot, if the official classification arrived
+    /// since the last drain. Taken by the listener, which persists it to history.
+    pub fn take_pending_auto_archive(&mut self) -> Option<Box<SessionSnapshot>> {
+        self.pending_auto_archive.take()
+    }
+
+    /// The current game session's UID ("" before the first packet).
+    pub fn session_uid(&self) -> &str {
+        &self.session_uid
     }
 
     fn reset_for_session(&mut self, uid: String) {
@@ -989,6 +1016,17 @@ mod tests {
         pkt(3, uid, Body::Event(e))
     }
 
+    fn final_classification(uid: &str) -> ParsedPacket {
+        pkt(
+            8,
+            uid,
+            Body::FinalClassification(FinalClassificationData {
+                num_cars: 0,
+                classification: Vec::new(),
+            }),
+        )
+    }
+
     #[test]
     fn builds_grid_sorted_by_position() {
         let mut st = SessionState::new();
@@ -1180,6 +1218,37 @@ mod tests {
         let s = st.snapshot();
         assert_eq!(s.incidents.len(), 1);
         assert_eq!(s.incidents[0].label, "Safety Car");
+    }
+
+    #[test]
+    fn final_classification_stages_auto_archive_once() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        assert!(st.take_pending_auto_archive().is_none());
+
+        st.ingest(&final_classification("A"), 1.0);
+        let staged = st
+            .take_pending_auto_archive()
+            .expect("first packet 8 stages a capture");
+        assert_eq!(staged.session_uid, "A");
+        assert!(staged.final_classification.is_some());
+
+        // A duplicate packet-8 resend doesn't re-stage.
+        st.ingest(&final_classification("A"), 2.0);
+        assert!(st.take_pending_auto_archive().is_none());
+    }
+
+    #[test]
+    fn staged_auto_archive_survives_the_next_sessions_wipe() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&final_classification("A"), 1.0);
+        // The next session's first packet resets state before the listener drains.
+        st.ingest(&session("B", 15), 2.0);
+        let staged = st
+            .take_pending_auto_archive()
+            .expect("staged capture survives the reset");
+        assert_eq!(staged.session_uid, "A");
     }
 
     #[test]

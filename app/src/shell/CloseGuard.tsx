@@ -24,6 +24,7 @@ export function CloseGuard() {
 
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -65,16 +66,25 @@ export function CloseGuard() {
   };
   const onSave = async () => {
     setBusy(true);
+    setError(null);
     try {
       await saveSession();
       setSessionSaved(true);
-    } catch {
-      // Saving failed — still let the user close rather than trapping them.
+    } catch (e) {
+      // Saving failed (e.g. disk full): closing now would silently lose the
+      // session this dialog exists to protect. Stay open, show why, and leave
+      // "Close without saving" as the explicit way out.
+      setError(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+      return;
     }
     await destroy();
   };
   const onDiscard = () => void destroy();
-  const onCancel = () => setShow(false);
+  const onCancel = () => {
+    setError(null);
+    setShow(false);
+  };
 
   return (
     <dialog
@@ -92,6 +102,11 @@ export function CloseGuard() {
         <p className="dialog-intro">
           This session isn&rsquo;t saved to history yet. Save a snapshot before BoxBox closes?
         </p>
+        {error && (
+          <p className="dialog-error" role="alert">
+            {error} — free up space and retry, or close without saving.
+          </p>
+        )}
         <footer className="dialog-foot">
           <button type="button" className="btn btn-quiet" onClick={onDiscard} disabled={busy}>
             Close without saving
