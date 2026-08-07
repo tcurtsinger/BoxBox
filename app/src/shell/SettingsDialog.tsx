@@ -5,6 +5,9 @@ import { Segmented, type SegmentedOption } from "./Segmented";
 import { historyRetention, setHistoryRetention } from "../modes/history/historyData";
 import { listVoices, onVoicesReady, speakOnce } from "../engineer/speech";
 
+/** Feed controls talk to the Rust listener, which only exists inside Tauri. */
+const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
 const FORMAT_OPTIONS: SegmentedOption<"2026" | "2025">[] = [
   { value: "2026", label: "2026" },
   { value: "2025", label: "2025" },
@@ -72,7 +75,7 @@ export function SettingsDialog({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const { connection, setConnection, engineer, setEngineer } = useShell();
+  const { connection, setConnection, engineer, setEngineer, feed, resetFeed } = useShell();
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [port, setPort] = useState(String(connection.port));
   const [format, setFormat] = useState(connection.format);
@@ -209,6 +212,29 @@ export function SettingsDialog({
           />
           <p className="field-hint">F1 26 uses 2026; F1 25 falls back to 2025.</p>
         </div>
+
+        {IN_TAURI && (
+          <div className="field">
+            <span className="field-label">Feed</span>
+            <div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  resetFeed();
+                  onClose();
+                }}
+              >
+                Reset connection
+              </button>
+            </div>
+            <p className="field-hint">
+              {feed.state === "standby"
+                ? "The feed is on standby. Resetting returns to the setup screen and re-detects the telemetry source."
+                : "Returns to the setup screen and re-detects the telemetry source — use it after moving the game to another PC or if the feed looks stuck."}
+            </p>
+          </div>
+        )}
 
         <div className="field">
           <span className="field-label">Forward telemetry to</span>

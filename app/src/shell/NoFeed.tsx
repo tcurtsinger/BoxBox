@@ -14,7 +14,7 @@ export function NoFeed({
   /** Optional: offer a one-click sample dataset so the surface is viewable now. */
   onSample?: () => void;
 }) {
-  const { connection, setSettingsOpen } = useShell();
+  const { connection, feed, setSettingsOpen } = useShell();
   return (
     <div className="nofeed">
       <div className="nofeed-icon" aria-hidden="true">
@@ -24,6 +24,16 @@ export function NoFeed({
       <p className="nofeed-body">
         {context} appears here once BoxBox is receiving your game's UDP feed.
       </p>
+      {feed.formatWarning != null && (
+        <p className="nofeed-warn" role="alert">
+          Your game is sending UDP format{" "}
+          <span className="mono">{feed.formatWarning}</span>, which BoxBox
+          can&rsquo;t read — set <strong>UDP Format</strong> to{" "}
+          <span className="mono">2025</span> (or{" "}
+          <span className="mono">2026</span>) in the game&rsquo;s telemetry
+          settings.
+        </p>
+      )}
       <ol className="nofeed-steps">
         <li>
           In the F1 game, open <strong>Settings → Telemetry Settings</strong>.

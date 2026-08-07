@@ -66,6 +66,15 @@ coverage, or product-gap — not build breakage.
 
 ## P0 — Data loss and wrong information
 
+> **Status 2026-08-07: all five P0 clusters are fixed** — P0-1 `8ccf1f6`
+> (auto-capture on classification, re-armed close guard, surfaced save errors,
+> sample-save exclusion), P0-2 `79b0465` (penalty target, VSC wording, time
+> byte, restricted gate), P0-3 `64a91cb` (untracked-lever A/B cancels,
+> diagnosis reset on setup change, aero-damage taint), P0-4 `892ac50` (FLBK
+> decoded; tuner/engineer/race-control rewind handling), P0-5 (Reset
+> connection UI, per-run liveness, format-mismatch hint). The text below is
+> the original finding record.
+
 ### P0-1 · History loses race sessions (cluster)
 
 The most serious cluster in the audit. Four defects compound:

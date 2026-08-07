@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -24,6 +25,9 @@ export interface Feed {
   track?: string;
   /** True when the "live" data is the built-in sample, not a real UDP feed. */
   sample?: boolean;
+  /** Set while datagrams are arriving in a UDP format BoxBox can't read (e.g.
+   *  the game's UDP Format option is on 2023/2024) — drives the no-feed hint. */
+  formatWarning?: number;
 }
 
 export type RaceSection = "timing" | "incidents" | "review" | "history";
@@ -141,6 +145,12 @@ interface ShellState {
   setBenchSeed: (id: string | null) => void;
   feed: Feed;
   setFeed: (f: Feed) => void;
+  /** Bumped by `resetFeed`; the telemetry hook re-runs its connect effect (fresh
+   *  liveness state + a source re-scan) whenever it changes. */
+  feedEpoch: number;
+  /** Drop the current session display back to no-feed and re-detect the
+   *  telemetry source — the way out of "Standby — showing last data". */
+  resetFeed: () => void;
   raceSection: RaceSection;
   setRaceSection: (s: RaceSection) => void;
   /** Whether the current live session has been saved to history. Reset when the
@@ -175,6 +185,11 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const [benchSeed, setBenchSeed] = useState<string | null>(null);
   // Honest default: nothing is wired to the Rust feed yet, so there is no feed.
   const [feed, setFeed] = useState<Feed>({ state: "no-feed" });
+  const [feedEpoch, setFeedEpoch] = useState(0);
+  const resetFeed = useCallback(() => {
+    setFeed({ state: "no-feed" });
+    setFeedEpoch((e) => e + 1);
+  }, []);
   const [raceSection, setRaceSection] = useState<RaceSection>("timing");
   const [sessionSaved, setSessionSaved] = useState(false);
   const [connection, setConnection] = useState<Connection>(loadConnection);
@@ -254,6 +269,8 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setBenchSeed,
       feed,
       setFeed,
+      feedEpoch,
+      resetFeed,
       raceSection,
       setRaceSection,
       sessionSaved,
@@ -269,7 +286,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       incidents,
       setIncidents,
     }),
-    [mode, tunesSection, referenceTune, benchSeed, feed, raceSection, sessionSaved, connection, engineer, settingsOpen, selectedDriver, incidents],
+    [mode, tunesSection, referenceTune, benchSeed, feed, feedEpoch, resetFeed, raceSection, sessionSaved, connection, engineer, settingsOpen, selectedDriver, incidents],
   );
 
   return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>;

@@ -349,6 +349,27 @@ textarea {
   color: var(--muted);
   line-height: 1.55;
 }
+/* The game is sending a UDP format BoxBox can't read — the one actionable
+   diagnosis on this screen, so it reads as a caution, not body copy. */
+.nofeed-warn {
+  margin: 0 auto var(--space-xl);
+  max-width: 46ch;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in oklch, var(--data-caution) 45%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklch, var(--data-caution) 10%, transparent);
+  color: var(--data-caution);
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: left;
+}
+.nofeed-warn strong {
+  color: inherit;
+}
+.nofeed-warn .mono {
+  color: inherit;
+  font-weight: 600;
+}
 .nofeed-steps {
   display: flex;
   flex-direction: column;

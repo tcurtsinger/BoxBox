@@ -55,6 +55,18 @@ struct AutoSaved {
     id: String,
 }
 
+/// Emitted (rate-limited) when datagrams arrive in a UDP format BoxBox doesn't
+/// parse — the classic "app looks dead" cause: the game's UDP Format option is
+/// set to 2023/2024. The frontend surfaces the fix on the no-feed screen.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FormatMismatch {
+    format: u16,
+}
+
+/// How often the unknown-format warning may repeat (log + event).
+const FORMAT_WARN_EVERY: Duration = Duration::from_secs(30);
+
 /// Tauri-managed Tuner engine: the live `TunerState` the listener thread feeds and
 /// the commands read. Held behind an `Arc<Mutex>` so the worker thread and the
 /// command handlers share one instance, and it survives listener restarts (a port
@@ -349,6 +361,8 @@ fn spawn_listener(
         // Rate-limit forward-error logging so a wrong or unreachable target can't
         // flood the log at packet rate (the feed runs ~60Hz across many ids).
         let mut last_fwd_warn: Option<Instant> = None;
+        // Rate-limit the unknown-UDP-format warning (log + frontend event).
+        let mut last_format_warn: Option<Instant> = None;
         // Watchdog + diagnostics state, persisted across rebinds.
         let mut live = false; // a valid feed has been seen
         let mut last_rx; // last successful receive; (re)set per bind below
@@ -448,7 +462,36 @@ fn spawn_listener(
                                         source = Some(host);
                                         live = true;
                                     }
-                                    _ => continue,
+                                    _ => {
+                                        // Undecodable while unpinned. The classic cause
+                                        // is the game's "UDP Format" option set to an
+                                        // older format (2023/2024): without this, the
+                                        // app sits on "waiting for telemetry" forever
+                                        // with no diagnostic anywhere. The first two
+                                        // bytes of every F1 packet are the format year.
+                                        if n >= 2 {
+                                            let f = u16::from_le_bytes([buf[0], buf[1]]);
+                                            if (2014..=2099).contains(&f)
+                                                && !matches!(f, 2025 | 2026)
+                                                && last_format_warn.is_none_or(|t| {
+                                                    t.elapsed() >= FORMAT_WARN_EVERY
+                                                })
+                                            {
+                                                last_format_warn = Some(Instant::now());
+                                                log_event(
+                                                    &log_path,
+                                                    &format!(
+                                                        "datagrams from {host} use UDP format {f}; BoxBox reads 2025/2026 — change the game's Telemetry > UDP Format setting"
+                                                    ),
+                                                );
+                                                let _ = app.emit(
+                                                    "telemetry:format-mismatch",
+                                                    &FormatMismatch { format: f },
+                                                );
+                                            }
+                                        }
+                                        continue;
+                                    }
                                 }
                             }
                             last_from_source = Some(now);
