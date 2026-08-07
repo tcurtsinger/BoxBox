@@ -49,6 +49,9 @@ export interface ClassRow {
   penaltyTimeSec: number; // total time penalties applied
   numPenalties: number;
   tyreStints: string[]; // visual compounds in stint order, e.g. ["S", "M"]
+  /** Lap each stint ended on, aligned with `tyreStints` (empty when unknown —
+   *  provisional projections, qualifying rows, or pre-P2 saved snapshots). */
+  tyreStintEndLaps: number[];
   resultReason: number | null;
 }
 
@@ -111,6 +114,7 @@ export function buildClassification(grid: DriverRow[]): ClassRow[] {
     penaltyTimeSec: 0,
     numPenalties: 0,
     tyreStints: [],
+    tyreStintEndLaps: [],
     resultReason: null,
   }));
 }
@@ -300,6 +304,7 @@ export function buildReportJson(r: ReportData): string {
         pits: c.pits,
         points: c.points,
         tyreStints: c.tyreStints,
+        tyreStintEndLaps: c.tyreStintEndLaps,
         status: c.status,
         resultReason: c.resultReason,
         penaltyTimeSec: c.penaltyTimeSec,

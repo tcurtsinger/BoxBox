@@ -9,8 +9,8 @@ use serde::Serialize;
 
 use crate::packets::{
     Body, CarDamageData, CarStatusData, CarTelemetry2Data, CarTelemetryData, EventData,
-    FinalClassificationData, LapDataData, LiveryColour, ParsedPacket, ParticipantsData,
-    PowerUnitWear, SessionData,
+    FinalClassificationData, LapDataData, LapHistoryEntry, LiveryColour, ParsedPacket,
+    ParticipantsData, PowerUnitWear, SessionData, SessionHistoryData, TyreStintEntry,
 };
 
 use super::labels::{incident_label, infringement_type, is_real_penalty, penalty_type};
@@ -170,6 +170,11 @@ pub struct DriverState {
     pub engine_damage: u8,
     pub gearbox_damage: u8,
     pub power_unit_wear: PowerUnitWear,
+    // Session History (packet 11): the authoritative per-lap archive. The only
+    // source of laps completed before BoxBox connected and of per-lap validity
+    // (m_lapValidBitFlags) — live LapData reconstruction can see neither.
+    pub lap_history: Vec<LapHistoryEntry>,
+    pub stint_history: Vec<TyreStintEntry>,
 }
 
 /// One driver's final standing in a completed qualifying segment, preserved so a
@@ -343,9 +348,46 @@ impl SessionState {
                 }
             }
             Some(Body::CarDamage(d)) => self.ingest_damage(d),
+            Some(Body::SessionHistory(h)) => self.ingest_session_history(h),
             Some(Body::CarTelemetry2(t)) => self.ingest_telemetry2(t),
             _ => {}
         }
+    }
+
+    /// Fold one car's authoritative lap archive in. Bests become the min of the
+    /// live-tracked value and the archive's VALID laps, so laps completed before
+    /// the app connected count. (The live tracker already refuses deleted laps
+    /// via its invalid latch, so min-merging the two sources can't resurrect
+    /// one — the archive's valid-only min is a trustworthy floor.)
+    fn ingest_session_history(&mut self, h: &SessionHistoryData) {
+        let d = self.driver_mut(h.car_idx);
+        let mut best_lap = 0u32;
+        let (mut b1, mut b2, mut b3) = (0u32, 0u32, 0u32);
+        for lap in &h.laps {
+            if lap.lap_valid() && lap.lap_ms > 0 && (best_lap == 0 || lap.lap_ms < best_lap) {
+                best_lap = lap.lap_ms;
+            }
+            if lap.sector_valid(1) && lap.s1_ms > 0 && (b1 == 0 || lap.s1_ms < b1) {
+                b1 = lap.s1_ms;
+            }
+            if lap.sector_valid(2) && lap.s2_ms > 0 && (b2 == 0 || lap.s2_ms < b2) {
+                b2 = lap.s2_ms;
+            }
+            if lap.sector_valid(3) && lap.s3_ms > 0 && (b3 == 0 || lap.s3_ms < b3) {
+                b3 = lap.s3_ms;
+            }
+        }
+        let fold = |cur: &mut u32, archive: u32| {
+            if archive > 0 && (*cur == 0 || archive < *cur) {
+                *cur = archive;
+            }
+        };
+        fold(&mut d.best_lap_ms, best_lap);
+        fold(&mut d.best_s1_ms, b1);
+        fold(&mut d.best_s2_ms, b2);
+        fold(&mut d.best_s3_ms, b3);
+        d.lap_history = h.laps.clone();
+        d.stint_history = h.stints.clone();
     }
 
     /// The staged auto-archive snapshot, if the official classification arrived
@@ -1401,6 +1443,63 @@ mod tests {
         let d = st.snapshot().drivers[0].clone();
         assert_eq!(d.best_s1_ms, 28_000, "a deleted lap's sectors hold no best");
         assert_eq!(d.best_s3_ms, 29_000);
+    }
+
+    #[test]
+    fn session_history_supplies_bests_for_mid_session_joins() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 5), 0.0); // qualifying
+        st.ingest(&participants("A", vec![participant(0, "A", 1)]), 0.0);
+        // The app joined late: no live rollovers were seen. The archive carries
+        // a valid 78s lap, a faster-but-DELETED 77s lap, and the current partial
+        // lap with only a (valid) S1.
+        let hist = SessionHistoryData {
+            car_idx: 0,
+            num_laps: 3,
+            best_lap_num: 1,
+            best_s1_lap_num: 3,
+            best_s2_lap_num: 1,
+            best_s3_lap_num: 1,
+            laps: vec![
+                LapHistoryEntry {
+                    lap_ms: 78_000,
+                    s1_ms: 26_000,
+                    s2_ms: 26_000,
+                    s3_ms: 26_000,
+                    valid: 0x0F,
+                },
+                LapHistoryEntry {
+                    lap_ms: 77_000,
+                    s1_ms: 25_500,
+                    s2_ms: 26_000,
+                    s3_ms: 25_500,
+                    valid: 0x00,
+                },
+                LapHistoryEntry {
+                    lap_ms: 0,
+                    s1_ms: 25_000,
+                    s2_ms: 0,
+                    s3_ms: 0,
+                    valid: 0x03,
+                },
+            ],
+            stints: vec![TyreStintEntry {
+                end_lap: 255,
+                actual_compound: 16,
+                visual_compound: 16,
+            }],
+        };
+        st.ingest(&pkt(11, "A", Body::SessionHistory(hist)), 0.0);
+
+        let d = st.snapshot().drivers[0].clone();
+        assert_eq!(
+            d.best_lap_ms, 78_000,
+            "the valid archive lap counts; the deleted 77s must not"
+        );
+        assert_eq!(d.best_s1_ms, 25_000, "the partial lap's valid S1 counts");
+        assert_eq!(d.best_s2_ms, 26_000);
+        assert_eq!(d.lap_history.len(), 3, "archive serialized for reports");
+        assert_eq!(d.stint_history[0].end_lap, 255);
     }
 
     #[test]

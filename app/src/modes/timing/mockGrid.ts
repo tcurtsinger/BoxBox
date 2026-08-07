@@ -114,6 +114,17 @@ export interface DriverRow {
   live?: LiveDetail;
 }
 
+/** One archived lap from Session History (packet 11) — the authoritative
+ *  record, including laps driven before BoxBox connected. `valid` bit flags:
+ *  0x01 lap, 0x02/0x04/0x08 sectors 1-3. */
+export interface LapHistoryEntry {
+  lapMS: number;
+  s1MS: number;
+  s2MS: number;
+  s3MS: number;
+  valid: number;
+}
+
 /** Wheel arrays are in the F1 packet order [RL, RR, FL, FR]. */
 export interface LiveDetail {
   tyreSurfaceTemp: number[]; // °C
@@ -125,6 +136,9 @@ export interface LiveDetail {
   /** Corner-cutting warning count (LapData) — the track-limits strike counter. */
   cornerCuttingWarnings: number;
   totalWarnings: number;
+  /** Authoritative per-lap archive (Session History); empty until packet 11
+   *  arrives for this car. */
+  lapHistory: LapHistoryEntry[];
 }
 
 function sectorsFor(

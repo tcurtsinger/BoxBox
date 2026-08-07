@@ -936,6 +936,126 @@ fn parse_car_damage(rd: &mut Reader, header: &PacketHeader) -> CarDamageData {
     CarDamageData { cars }
 }
 
+// --- Session History (id 11) ---------------------------------------------------
+// One car per packet (the game cycles through the field): the authoritative
+// per-lap archive — lap + sector times with validity bit flags — plus the tyre
+// stint history. This is the ONLY packet that carries laps completed before the
+// app connected, and the only authoritative per-lap validity record
+// (m_lapValidBitFlags); live LapData reconstruction can't see either.
+
+/// One completed (or in-progress) lap from the history archive. Sector times are
+/// composed from the spec's minutes+ms parts into whole ms, like LapData.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LapHistoryEntry {
+    #[serde(rename = "lapMS")]
+    pub lap_ms: u32,
+    #[serde(rename = "s1MS")]
+    pub s1_ms: u32,
+    #[serde(rename = "s2MS")]
+    pub s2_ms: u32,
+    #[serde(rename = "s3MS")]
+    pub s3_ms: u32,
+    /// 0x01 lap valid, 0x02 sector 1 valid, 0x04 sector 2 valid, 0x08 sector 3.
+    pub valid: u8,
+}
+
+impl LapHistoryEntry {
+    pub fn lap_valid(&self) -> bool {
+        self.valid & 0x01 != 0
+    }
+    pub fn sector_valid(&self, sector: u8) -> bool {
+        match sector {
+            1 => self.valid & 0x02 != 0,
+            2 => self.valid & 0x04 != 0,
+            3 => self.valid & 0x08 != 0,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TyreStintEntry {
+    /// Lap the stint ended on (255 = the current stint).
+    pub end_lap: u8,
+    pub actual_compound: u8,
+    pub visual_compound: u8,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHistoryData {
+    pub car_idx: u8,
+    /// Laps in the archive, including the current partial lap (lap time 0).
+    pub num_laps: u8,
+    pub best_lap_num: u8,
+    pub best_s1_lap_num: u8,
+    pub best_s2_lap_num: u8,
+    pub best_s3_lap_num: u8,
+    /// Only the first `num_laps` entries (the wire carries 100 fixed slots).
+    pub laps: Vec<LapHistoryEntry>,
+    pub stints: Vec<TyreStintEntry>,
+}
+
+const MAX_HISTORY_LAPS: usize = 100;
+const MAX_HISTORY_STINTS: usize = 8;
+const LAP_HISTORY_STRIDE: usize = 14;
+const STINT_HISTORY_STRIDE: usize = 3;
+
+fn parse_session_history(rd: &mut Reader) -> SessionHistoryData {
+    let car_idx = rd.u8();
+    // Caps are trust boundaries: a hostile count can't over-allocate or misalign
+    // the reads — the fixed wire layout is skipped past regardless.
+    let num_laps = rd.u8().min(MAX_HISTORY_LAPS as u8);
+    let num_tyre_stints = rd.u8().min(MAX_HISTORY_STINTS as u8);
+    let best_lap_num = rd.u8();
+    let best_s1_lap_num = rd.u8();
+    let best_s2_lap_num = rd.u8();
+    let best_s3_lap_num = rd.u8();
+
+    let mut laps = Vec::with_capacity(num_laps as usize);
+    for _ in 0..num_laps {
+        let lap_ms = rd.u32();
+        let s1ms = rd.u16();
+        let s1min = rd.u8();
+        let s2ms = rd.u16();
+        let s2min = rd.u8();
+        let s3ms = rd.u16();
+        let s3min = rd.u8();
+        let valid = rd.u8();
+        laps.push(LapHistoryEntry {
+            lap_ms,
+            s1_ms: s1min as u32 * 60000 + s1ms as u32,
+            s2_ms: s2min as u32 * 60000 + s2ms as u32,
+            s3_ms: s3min as u32 * 60000 + s3ms as u32,
+            valid,
+        });
+    }
+    rd.skip((MAX_HISTORY_LAPS - num_laps as usize) * LAP_HISTORY_STRIDE);
+
+    let mut stints = Vec::with_capacity(num_tyre_stints as usize);
+    for _ in 0..num_tyre_stints {
+        stints.push(TyreStintEntry {
+            end_lap: rd.u8(),
+            actual_compound: rd.u8(),
+            visual_compound: rd.u8(),
+        });
+    }
+    rd.skip((MAX_HISTORY_STINTS - num_tyre_stints as usize) * STINT_HISTORY_STRIDE);
+
+    SessionHistoryData {
+        car_idx,
+        num_laps,
+        best_lap_num,
+        best_s1_lap_num,
+        best_s2_lap_num,
+        best_s3_lap_num,
+        laps,
+        stints,
+    }
+}
+
 // --- Event (id 3) -------------------------------------------------------------
 // A 4-char code followed by a code-specific union. Optional fields are omitted
 // from the JSON when absent (matching the TS optional keys).
@@ -1308,6 +1428,7 @@ pub enum Body {
     CarStatus(CarStatusData),
     FinalClassification(FinalClassificationData),
     CarDamage(CarDamageData),
+    SessionHistory(SessionHistoryData),
     MotionEx(MotionExData),
     TimeTrial(TimeTrialData),
     CarTelemetry2(CarTelemetry2Data),
@@ -1357,6 +1478,7 @@ pub fn parse_packet(buf: &[u8]) -> Option<ParsedPacket> {
             &mut rd, &header,
         ))),
         10 => Some(Body::CarDamage(parse_car_damage(&mut rd, &header))),
+        11 => Some(Body::SessionHistory(parse_session_history(&mut rd))),
         13 => Some(Body::MotionEx(parse_motion_ex(&mut rd, &header))),
         14 => Some(Body::TimeTrial(parse_time_trial(&mut rd, &header))),
         16 => Some(Body::CarTelemetry2(parse_car_telemetry2(&mut rd, &header))),
@@ -1460,6 +1582,51 @@ mod tests {
         assert_eq!(e.code, "FLBK");
         assert_eq!(e.flashback_frame_identifier, Some(7042));
         assert_eq!(e.flashback_session_time, Some(83.5));
+    }
+
+    #[test]
+    fn session_history_decodes_laps_and_stints() {
+        let mut buf = header_bytes(2025, 11);
+        buf.push(3); // carIdx
+        buf.push(2); // numLaps (1 complete + the current partial)
+        buf.push(1); // numTyreStints
+        buf.extend_from_slice(&[1, 1, 1, 1]); // best lap / sector lap numbers
+        // Lap 1: 88s = 28 + 31 + 29, everything valid (0x0F).
+        buf.extend_from_slice(&88_000u32.to_le_bytes());
+        buf.extend_from_slice(&28_000u16.to_le_bytes());
+        buf.push(0);
+        buf.extend_from_slice(&31_000u16.to_le_bytes());
+        buf.push(0);
+        buf.extend_from_slice(&29_000u16.to_le_bytes());
+        buf.push(0);
+        buf.push(0x0F);
+        // Lap 2 (partial): S1 = 1:05.000 via the minutes part; nothing else yet.
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        buf.extend_from_slice(&5_000u16.to_le_bytes());
+        buf.push(1);
+        buf.extend_from_slice(&[0; 6]);
+        buf.push(0x01);
+        // 98 empty lap slots, then one stint (current, soft), then empty stints.
+        buf.resize(buf.len() + 98 * 14, 0);
+        buf.extend_from_slice(&[255, 16, 16]);
+        buf.resize(1460, 0);
+        assert_eq!(buf.len(), 1460);
+
+        let p = parse_packet(&buf).expect("valid session history");
+        let Some(Body::SessionHistory(h)) = p.data else {
+            panic!("history body expected")
+        };
+        assert_eq!(h.car_idx, 3);
+        assert_eq!(h.laps.len(), 2, "only numLaps entries are kept");
+        assert_eq!(h.laps[0].lap_ms, 88_000);
+        assert_eq!(h.laps[0].s2_ms, 31_000);
+        assert!(h.laps[0].lap_valid());
+        assert!(h.laps[0].sector_valid(3));
+        assert_eq!(h.laps[1].s1_ms, 65_000, "minutes part composes into ms");
+        assert!(!h.laps[1].sector_valid(2));
+        assert_eq!(h.stints.len(), 1);
+        assert_eq!(h.stints[0].end_lap, 255);
+        assert_eq!(h.stints[0].visual_compound, 16);
     }
 
     #[test]

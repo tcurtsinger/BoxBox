@@ -28,6 +28,8 @@ export interface LapRow {
   label: string;
   time: string;
   best: boolean;
+  /** The game deleted this lap (Session History valid bit clear). */
+  deleted?: boolean;
 }
 
 export interface DriverDetail {
@@ -75,6 +77,24 @@ function liveSections(live: LiveDetail): { corners: Corner[]; damage: Damage[] }
   return { corners, damage };
 }
 
+/** The last few completed laps from the authoritative Session History archive,
+ *  newest first. Empty until packet 11 has arrived for this car. */
+function liveLaps(row: DriverRow): LapRow[] {
+  const history = row.live?.lapHistory ?? [];
+  const out: LapRow[] = [];
+  for (let i = history.length - 1; i >= 0 && out.length < 5; i--) {
+    const lap = history[i];
+    if (lap.lapMS <= 0) continue; // the current partial lap
+    out.push({
+      label: `Lap ${i + 1}`,
+      time: fmtLap(lap.lapMS),
+      best: row.bestMs > 0 && lap.lapMS === row.bestMs,
+      deleted: (lap.valid & 0x01) === 0,
+    });
+  }
+  return out;
+}
+
 /** Synthesized tyres/damage/laps for the sample grid (no feed behind it). */
 function sampleSections(row: DriverRow): {
   corners: Corner[];
@@ -115,12 +135,13 @@ function sampleSections(row: DriverRow): {
 
 export function buildDriverDetail(row: DriverRow): DriverDetail {
   // Live rows show only real data: tyres/damage from the feed (hidden entirely
-  // when the driver restricts telemetry — they'd arrive as fake zeros), and no
-  // recent-laps section (the feed doesn't carry per-lap history yet).
+  // when the driver restricts telemetry — they'd arrive as fake zeros) and the
+  // authoritative recent laps from Session History (packet 11). Lap times are
+  // public timing data, so they show even for restricted drivers.
   const { corners, damage, laps } = row.live
     ? row.restricted
-      ? { corners: [], damage: [], laps: [] }
-      : { ...liveSections(row.live), laps: [] }
+      ? { corners: [], damage: [], laps: liveLaps(row) }
+      : { ...liveSections(row.live), laps: liveLaps(row) }
     : sampleSections(row);
 
   const stats: Stat[] = [

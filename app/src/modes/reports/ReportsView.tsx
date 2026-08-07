@@ -140,7 +140,7 @@ export function ReportContent({
                   )}
                   {!isQualifying && (
                     <span className="cls-tyres-cell" role="gridcell">
-                      <TyreStints stints={c.tyreStints} />
+                      <TyreStints stints={c.tyreStints} endLaps={c.tyreStintEndLaps} />
                     </span>
                   )}
                 </div>
@@ -261,15 +261,25 @@ function GridDelta({ gridPos, pos }: { gridPos: number; pos: number }) {
 }
 
 /** A tyre-stint sequence as compound chips (S/M/H/I/W), in stint order. */
-function TyreStints({ stints }: { stints: string[] }) {
+function TyreStints({ stints, endLaps }: { stints: string[]; endLaps: number[] }) {
   if (stints.length === 0) return <span className="cls-tyres-empty">—</span>;
   return (
     <span className="cls-tyres">
-      {stints.map((s, i) => (
-        <span key={i} className={`cls-tyre tyre-${s.toLowerCase()}`}>
-          {s}
-        </span>
-      ))}
+      {stints.map((s, i) => {
+        // 255 = the stint still on the car at the flag (spec sentinel).
+        const end = endLaps[i];
+        const title =
+          end != null && end > 0 && end < 255 ? `${s} — until lap ${end}` : `${s} — final stint`;
+        return (
+          <span
+            key={i}
+            className={`cls-tyre tyre-${s === "?" ? "unk" : s.toLowerCase()}`}
+            title={title}
+          >
+            {s}
+          </span>
+        );
+      })}
     </span>
   );
 }

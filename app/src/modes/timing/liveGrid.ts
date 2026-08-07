@@ -7,7 +7,14 @@
  * Team colour comes from the car's real livery (Participants packet); the team
  * name is a best-effort id→name map (the EA constructor ids, refined by capture).
  */
-import type { DriverRow, BestState, SectorState, Compound, FlagKey } from "./mockGrid";
+import type {
+  DriverRow,
+  BestState,
+  SectorState,
+  Compound,
+  FlagKey,
+  LapHistoryEntry,
+} from "./mockGrid";
 import type { ClassRow } from "../reports/reportsData";
 import type { RawIncident } from "../incidents/liveIncidents";
 
@@ -37,6 +44,9 @@ export interface LiveDriver {
   resultStatus?: number;
   totalWarnings?: number;
   cornerCuttingWarnings?: number;
+  /** Session History (packet 11): authoritative lap archive + stints. */
+  lapHistory?: LapHistoryEntry[];
+  stintHistory?: { endLap: number; actualCompound: number; visualCompound: number }[];
   deltaToLeaderMS: number;
   deltaToCarAheadMS: number;
   pitStatus: number;
@@ -78,6 +88,9 @@ export interface FinalClassificationEntry {
   numPenalties: number;
   numTyreStints: number;
   tyreStintsVisual: number[];
+  /** Lap each stint ended on (Rust has always serialized this; the frontend
+   *  used to drop it from saved reports). Optional: older saved snapshots. */
+  tyreStintsEndLaps?: number[];
 }
 
 /** One driver's final standing in a completed qualifying segment (Rust P1.3). */
@@ -275,6 +288,7 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
         gearboxDamage: d.gearboxDamage ?? 0,
         cornerCuttingWarnings: d.cornerCuttingWarnings ?? 0,
         totalWarnings: d.totalWarnings ?? 0,
+        lapHistory: d.lapHistory ?? [],
       },
     };
   });
@@ -349,6 +363,7 @@ export function toFinalClassification(snap: RaceSnapshot): ClassRow[] | null {
         penaltyTimeSec: c.penaltiesTime,
         numPenalties: c.numPenalties,
         tyreStints: c.tyreStintsVisual.slice(0, c.numTyreStints).map(stintCompound),
+        tyreStintEndLaps: (c.tyreStintsEndLaps ?? []).slice(0, c.numTyreStints),
         resultReason: c.resultReason,
       };
     });
@@ -409,6 +424,7 @@ export function toQualifyingClassification(snap: RaceSnapshot): ClassRow[] | nul
     penaltyTimeSec: 0,
     numPenalties: 0,
     tyreStints: [],
+    tyreStintEndLaps: [],
     resultReason: null,
   });
 

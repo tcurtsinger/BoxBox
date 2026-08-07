@@ -106,8 +106,14 @@ export function DriverPanel() {
             <h3 className="dp-section-title">Recent laps</h3>
             <div className="dp-laps">
               {detail.laps.map((l) => (
-                <div className={`dp-lap${l.best ? " is-best" : ""}`} key={l.label}>
-                  <span className="dp-lap-label">{l.label}</span>
+                <div
+                  className={`dp-lap${l.best ? " is-best" : ""}${l.deleted ? " is-deleted" : ""}`}
+                  key={l.label}
+                >
+                  <span className="dp-lap-label">
+                    {l.label}
+                    {l.deleted && <span className="dp-lap-deleted">deleted</span>}
+                  </span>
                   <span className="dp-lap-time mono">{l.time}</span>
                 </div>
               ))}
