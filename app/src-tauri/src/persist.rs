@@ -106,29 +106,72 @@ pub fn lock_ignoring_poison(lock: &Mutex<()>) -> std::sync::MutexGuard<'_, ()> {
 }
 
 /// Read a JSON data file. Missing file -> None. An unparsable file is quarantined
-/// (renamed to `.json.corrupt`) instead of silently ignored, so the next save
-/// can't overwrite data the user could still recover by hand.
+/// (renamed to a timestamped `.json.corrupt-<epoch>`) instead of silently
+/// ignored, so the next save can't overwrite data the user could still recover
+/// by hand — and a second corruption can't overwrite the first quarantine.
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
     let bytes = std::fs::read(path).ok()?;
     match serde_json::from_slice(&bytes) {
         Ok(value) => Some(value),
         Err(_) => {
-            let _ = std::fs::rename(path, path.with_extension("json.corrupt"));
+            let _ = std::fs::rename(path, quarantine_path(path, "corrupt"));
             None
         }
     }
 }
 
-/// Atomic JSON write: sibling temp file then rename, so a crash mid-write can't
-/// corrupt an existing file (atomic replace on the same volume). The temp path is
-/// fixed, so callers must serialize concurrent writes (the stores' write lock).
+/// Read a version-stamped JSON data file, refusing a silent downgrade: a file
+/// written by a NEWER build (its `version` above what this build knows) would
+/// deserialize leniently (serde drops unknown fields) and the next save would
+/// rewrite it minus the newer data. Instead the file is preserved untouched as
+/// `.json.newer-<epoch>` and the caller starts fresh — upgrading the app again
+/// finds the preserved copy.
+pub fn read_json_versioned<T: DeserializeOwned>(path: &Path, current_version: u32) -> Option<T> {
+    #[derive(serde::Deserialize)]
+    struct VersionOnly {
+        #[serde(default)]
+        version: u32,
+    }
+    let bytes = std::fs::read(path).ok()?;
+    if let Ok(v) = serde_json::from_slice::<VersionOnly>(&bytes) {
+        if v.version > current_version {
+            let _ = std::fs::rename(path, quarantine_path(path, "newer"));
+            return None;
+        }
+    }
+    match serde_json::from_slice(&bytes) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            let _ = std::fs::rename(path, quarantine_path(path, "corrupt"));
+            None
+        }
+    }
+}
+
+fn quarantine_path(path: &Path, kind: &str) -> PathBuf {
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    path.with_extension(format!("json.{kind}-{epoch}"))
+}
+
+/// Atomic + durable JSON write: sibling temp file, fsync, then rename, so a
+/// crash mid-write can't corrupt an existing file (atomic replace on the same
+/// volume) and an OS crash right after the rename can't leave a zero-length
+/// file whose data blocks never hit the platter. The temp path is fixed, so
+/// callers must serialize concurrent writes (the stores' write lock).
 pub fn write_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
+    use std::io::Write;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let json = serde_json::to_vec_pretty(value).map_err(std::io::Error::other)?;
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, &json)?;
+    let mut f = std::fs::File::create(&tmp)?;
+    f.write_all(&json)?;
+    f.sync_all()?;
+    drop(f);
     std::fs::rename(&tmp, path)
 }
 
@@ -173,10 +216,10 @@ mod tests {
         let mut state = TunerState::new();
         store.load_into(&mut state);
 
-        // The unparsable file moved aside instead of being silently discarded.
+        // The unparsable file moved aside (timestamped, so a second corruption
+        // can't overwrite the first quarantine) instead of being discarded.
         assert!(!path.exists(), "corrupt file no longer at the live path");
-        let quarantined = path.with_extension("json.corrupt");
-        assert!(quarantined.exists(), "corrupt file quarantined");
+        let quarantined = find_with_marker(&dir, ".json.corrupt-");
         assert_eq!(std::fs::read(&quarantined).unwrap(), b"{ not valid json");
 
         // A subsequent save writes a fresh file without touching the quarantine.
@@ -184,6 +227,46 @@ mod tests {
         assert!(store.save_if_changed(&state));
         assert!(path.exists());
         assert!(quarantined.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn find_with_marker(dir: &std::path::Path, marker: &str) -> PathBuf {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|p| p.to_string_lossy().contains(marker))
+            .unwrap_or_else(|| panic!("no file matching {marker} in {dir:?}"))
+    }
+
+    #[test]
+    fn newer_versioned_file_is_preserved_not_downgraded() {
+        let dir = std::env::temp_dir().join(format!("boxbox-newer-{}", std::process::id()));
+        let path = dir.join("data.json");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A future build wrote version 99 with fields this build doesn't know.
+        std::fs::write(&path, br#"{ "version": 99, "futureField": true }"#).unwrap();
+
+        #[derive(serde::Deserialize)]
+        struct V1 {
+            #[serde(default)]
+            #[allow(dead_code)]
+            version: u32,
+        }
+        let loaded: Option<V1> = read_json_versioned(&path, 1);
+        assert!(loaded.is_none(), "a newer file must not load leniently");
+        assert!(!path.exists(), "moved aside so the next save can't downgrade it");
+        let kept = find_with_marker(&dir, ".json.newer-");
+        assert!(
+            std::fs::read_to_string(&kept).unwrap().contains("futureField"),
+            "the newer build's data is preserved byte-for-byte"
+        );
+
+        // A same-or-older version loads normally.
+        std::fs::write(&path, br#"{ "version": 1 }"#).unwrap();
+        assert!(read_json_versioned::<V1>(&path, 1).is_some());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

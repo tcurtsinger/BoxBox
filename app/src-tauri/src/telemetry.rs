@@ -751,7 +751,7 @@ pub fn start_telemetry(
     port: u16,
     forwards: Vec<SocketAddr>,
 ) -> Result<(), String> {
-    let mut slot = state.0.lock().map_err(|e| e.to_string())?;
+    let mut slot = state.0.lock().unwrap_or_else(|p| p.into_inner());
     // Diagnostic log beside the profile, so a stall the user can't reproduce on
     // demand leaves evidence (rebinds, recv errors, panics, liveness) they can send.
     let log_path = app
@@ -803,7 +803,7 @@ pub fn start_telemetry(
 /// Stop the UDP listener, if running.
 #[tauri::command]
 pub fn stop_telemetry(state: tauri::State<'_, TelemetryState>) -> Result<(), String> {
-    *state.0.lock().map_err(|e| e.to_string())? = None;
+    *state.0.lock().unwrap_or_else(|p| p.into_inner()) = None;
     Ok(())
 }
 
@@ -822,7 +822,7 @@ pub fn engineer_set_enabled(engineer: tauri::State<'_, EngineerState>, enabled: 
 /// without restarting the listener (P1.2). A no-op if no listener is running.
 #[tauri::command]
 pub fn reset_telemetry_source(state: tauri::State<'_, TelemetryState>) -> Result<(), String> {
-    if let Some(listener) = state.0.lock().map_err(|e| e.to_string())?.as_ref() {
+    if let Some(listener) = state.0.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
         listener.reset.store(true, Ordering::Relaxed);
     }
     Ok(())
@@ -837,7 +837,7 @@ pub fn tuner_snapshot(
     // Build the snapshot and read the live setup identity under the tuner lock, then
     // match it against the library under the library lock (never both at once).
     let (mut snap, live) = {
-        let t = tuner.0.lock().map_err(|e| e.to_string())?;
+        let t = tuner.0.lock().unwrap_or_else(|p| p.into_inner());
         (t.snapshot(), t.live_setup_identity())
     };
     if let Some((track_id, identity)) = live {
@@ -855,7 +855,7 @@ pub fn set_balance_preference(
     profile: tauri::State<'_, ProfileState>,
     value: f64,
 ) -> Result<f64, String> {
-    let mut t = tuner.0.lock().map_err(|e| e.to_string())?;
+    let mut t = tuner.0.lock().unwrap_or_else(|p| p.into_inner());
     let applied = t.set_balance_preference(value);
     profile.0.save_if_changed(&t);
     Ok(applied)
@@ -869,18 +869,24 @@ pub fn apply_feedback(
     profile: tauri::State<'_, ProfileState>,
     thumb: f64,
 ) -> Result<f64, String> {
-    let mut t = tuner.0.lock().map_err(|e| e.to_string())?;
+    let mut t = tuner.0.lock().unwrap_or_else(|p| p.into_inner());
     let pref = t.apply_feedback(thumb);
     profile.0.save_if_changed(&t);
     Ok(pref)
 }
 
 // --- Race Control --------------------------------------------------------------
+//
+// Command handlers take state mutexes with `unwrap_or_else(into_inner)`: a
+// panicked writer (already caught + rebound by the listener's catch_unwind) must
+// degrade to one possibly-stale frame, not permanently brick every command until
+// restart — per-packet ingest self-heals on the next frame. The same policy the
+// persist stores ship as `lock_ignoring_poison`.
 
 /// The current Race Control snapshot (timing grid + incident log + session info).
 #[tauri::command]
 pub fn race_snapshot(race: tauri::State<'_, RaceStore>) -> Result<SessionSnapshot, String> {
-    Ok(race.0.lock().map_err(|e| e.to_string())?.snapshot())
+    Ok(race.0.lock().unwrap_or_else(|p| p.into_inner()).snapshot())
 }
 
 /// Steward: promote a logged feed item into the review queue.
@@ -892,7 +898,7 @@ pub fn flag_for_review(
     Ok(race
         .0
         .lock()
-        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|p| p.into_inner())
         .flag_for_review(&id, now_ms()))
 }
 
@@ -905,7 +911,7 @@ pub fn approve_incident(
 ) -> Result<Option<Incident>, String> {
     race.0
         .lock()
-        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|p| p.into_inner())
         .approve_incident(&id, outcome, now_ms())
 }
 
@@ -918,7 +924,7 @@ pub fn dismiss_incident(
     Ok(race
         .0
         .lock()
-        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|p| p.into_inner())
         .dismiss_incident(&id, now_ms()))
 }
 
@@ -932,7 +938,7 @@ pub fn set_incident_note(
     Ok(race
         .0
         .lock()
-        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|p| p.into_inner())
         .set_incident_note(&id, note, now_ms()))
 }
 
@@ -945,7 +951,7 @@ pub fn reopen_incident(
     Ok(race
         .0
         .lock()
-        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|p| p.into_inner())
         .reopen_incident(&id, now_ms()))
 }
 
@@ -961,7 +967,7 @@ pub fn log_manual_incident(
     Ok(race
         .0
         .lock()
-        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|p| p.into_inner())
         .log_manual_incident(car_indices, code, label, note, now_ms()))
 }
 
@@ -976,7 +982,7 @@ pub fn set_driver_name(
     Ok(race
         .0
         .lock()
-        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|p| p.into_inner())
         .set_driver_name(race_number, &name, now_ms()))
 }
 
@@ -996,7 +1002,7 @@ fn persist_tunes(store: &TuneStore, lib: &TuneLibrary) -> Result<(), String> {
 /// The saved-setup library as lightweight summaries (no per-lap lists).
 #[tauri::command]
 pub fn tune_list(library: tauri::State<'_, TuneLibraryState>) -> Result<Vec<TuneSummary>, String> {
-    let lib = library.0.lock().map_err(|e| e.to_string())?;
+    let lib = library.0.lock().unwrap_or_else(|p| p.into_inner());
     Ok(lib.list().iter().map(TuneSummary::from_tune).collect())
 }
 
@@ -1010,7 +1016,7 @@ pub fn open_tune(
     Ok(library
         .0
         .lock()
-        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|p| p.into_inner())
         .get(&id)
         .cloned())
 }
@@ -1026,13 +1032,13 @@ pub fn save_current_tune(
     name: Option<String>,
 ) -> Result<Option<String>, String> {
     let live = {
-        let t = tuner.0.lock().map_err(|e| e.to_string())?;
+        let t = tuner.0.lock().unwrap_or_else(|p| p.into_inner());
         t.live_setup_identity()
     };
     let Some((track_id, identity)) = live else {
         return Ok(None);
     };
-    let mut lib = library.0.lock().map_err(|e| e.to_string())?;
+    let mut lib = library.0.lock().unwrap_or_else(|p| p.into_inner());
     let id = lib.save_setup(track_id, identity, name, now_ms());
     persist_tunes(&store.0, &lib)?;
     Ok(Some(id))
@@ -1051,14 +1057,14 @@ pub fn bench_compare(
     b_id: String,
 ) -> Result<Option<BenchReport>, String> {
     let (a, b) = {
-        let lib = library.0.lock().map_err(|e| e.to_string())?;
+        let lib = library.0.lock().unwrap_or_else(|p| p.into_inner());
         (lib.get(&a_id).cloned(), lib.get(&b_id).cloned())
     };
     let (Some(a), Some(b)) = (a, b) else {
         return Ok(None);
     };
     let wear_map = {
-        let t = tuner.0.lock().map_err(|e| e.to_string())?;
+        let t = tuner.0.lock().unwrap_or_else(|p| p.into_inner());
         t.wear_map()
     };
     Ok(Some(build_report(&a, &b, &wear_map)))
@@ -1071,7 +1077,7 @@ pub fn delete_tune(
     store: tauri::State<'_, TuneStoreState>,
     id: String,
 ) -> Result<bool, String> {
-    let mut lib = library.0.lock().map_err(|e| e.to_string())?;
+    let mut lib = library.0.lock().unwrap_or_else(|p| p.into_inner());
     let ok = lib.delete(&id);
     persist_tunes(&store.0, &lib)?;
     Ok(ok)
@@ -1085,7 +1091,7 @@ pub fn set_tune_pinned(
     id: String,
     pinned: bool,
 ) -> Result<bool, String> {
-    let mut lib = library.0.lock().map_err(|e| e.to_string())?;
+    let mut lib = library.0.lock().unwrap_or_else(|p| p.into_inner());
     let ok = lib.set_pinned(&id, pinned);
     persist_tunes(&store.0, &lib)?;
     Ok(ok)
@@ -1099,7 +1105,7 @@ pub fn rename_tune(
     id: String,
     name: String,
 ) -> Result<bool, String> {
-    let mut lib = library.0.lock().map_err(|e| e.to_string())?;
+    let mut lib = library.0.lock().unwrap_or_else(|p| p.into_inner());
     let ok = lib.rename(&id, &name);
     persist_tunes(&store.0, &lib)?;
     Ok(ok)
@@ -1113,7 +1119,7 @@ pub fn set_tune_notes(
     id: String,
     notes: String,
 ) -> Result<bool, String> {
-    let mut lib = library.0.lock().map_err(|e| e.to_string())?;
+    let mut lib = library.0.lock().unwrap_or_else(|p| p.into_inner());
     let ok = lib.set_notes(&id, &notes);
     persist_tunes(&store.0, &lib)?;
     Ok(ok)
@@ -1129,9 +1135,9 @@ pub fn save_session(
     store: tauri::State<'_, HistoryStoreState>,
     name: Option<String>,
 ) -> Result<String, String> {
-    let snapshot = race.0.lock().map_err(|e| e.to_string())?.snapshot();
+    let snapshot = race.0.lock().unwrap_or_else(|p| p.into_inner()).snapshot();
     let value = serde_json::to_value(&snapshot).map_err(|e| e.to_string())?;
-    let mut a = archive.0.lock().map_err(|e| e.to_string())?;
+    let mut a = archive.0.lock().unwrap_or_else(|p| p.into_inner());
     let id = a.save(name.as_deref().unwrap_or(""), value, now_ms());
     // The save just bumped the revision, so `false` here means the disk write
     // failed (disk full, file locked) — history has no background flush to retry,
@@ -1148,7 +1154,7 @@ pub fn save_session(
 /// The saved sessions as lightweight summaries (no snapshot payload).
 #[tauri::command]
 pub fn history_list(archive: tauri::State<'_, HistoryState>) -> Result<Vec<SessionMeta>, String> {
-    let a = archive.0.lock().map_err(|e| e.to_string())?;
+    let a = archive.0.lock().unwrap_or_else(|p| p.into_inner());
     Ok(a.list().iter().map(SessionMeta::from_record).collect())
 }
 
@@ -1161,7 +1167,7 @@ pub fn history_get(
     Ok(archive
         .0
         .lock()
-        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|p| p.into_inner())
         .get(&id)
         .cloned())
 }
@@ -1173,7 +1179,7 @@ pub fn delete_session(
     store: tauri::State<'_, HistoryStoreState>,
     id: String,
 ) -> Result<bool, String> {
-    let mut a = archive.0.lock().map_err(|e| e.to_string())?;
+    let mut a = archive.0.lock().unwrap_or_else(|p| p.into_inner());
     let ok = a.delete(&id);
     store.0.save_if_changed(&a);
     Ok(ok)
@@ -1187,7 +1193,7 @@ pub fn set_session_pinned(
     id: String,
     pinned: bool,
 ) -> Result<bool, String> {
-    let mut a = archive.0.lock().map_err(|e| e.to_string())?;
+    let mut a = archive.0.lock().unwrap_or_else(|p| p.into_inner());
     let ok = a.set_pinned(&id, pinned);
     store.0.save_if_changed(&a);
     Ok(ok)
@@ -1201,7 +1207,7 @@ pub fn rename_session(
     id: String,
     name: String,
 ) -> Result<bool, String> {
-    let mut a = archive.0.lock().map_err(|e| e.to_string())?;
+    let mut a = archive.0.lock().unwrap_or_else(|p| p.into_inner());
     let ok = a.rename(&id, &name);
     store.0.save_if_changed(&a);
     Ok(ok)
@@ -1215,7 +1221,7 @@ pub fn set_history_retention(
     store: tauri::State<'_, HistoryStoreState>,
     days: Option<u32>,
 ) -> Result<usize, String> {
-    let mut a = archive.0.lock().map_err(|e| e.to_string())?;
+    let mut a = archive.0.lock().unwrap_or_else(|p| p.into_inner());
     let removed = a.set_retention(days, now_ms());
     store.0.save_if_changed(&a);
     Ok(removed)
@@ -1224,7 +1230,7 @@ pub fn set_history_retention(
 /// The current history retention period in days, or None if everything is kept.
 #[tauri::command]
 pub fn history_retention(archive: tauri::State<'_, HistoryState>) -> Result<Option<u32>, String> {
-    Ok(archive.0.lock().map_err(|e| e.to_string())?.retention_days)
+    Ok(archive.0.lock().unwrap_or_else(|p| p.into_inner()).retention_days)
 }
 
 #[cfg(test)]

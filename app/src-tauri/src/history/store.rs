@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::model::HistoryArchive;
-use crate::persist::{lock_ignoring_poison, read_json, write_json};
+use super::model::{HistoryArchive, HISTORY_VERSION};
+use crate::persist::{lock_ignoring_poison, read_json_versioned, write_json};
 
 /// Tauri-managed in-memory archive, shared by the command handlers.
 pub struct HistoryState(pub Arc<Mutex<HistoryArchive>>);
@@ -83,7 +83,9 @@ impl HistoryStore {
 }
 
 fn read_archive(path: &std::path::Path) -> Option<HistoryArchive> {
-    read_json(path)
+    // Version-guarded: a history.json written by a newer build is preserved
+    // aside rather than loaded leniently and rewritten minus its newer fields.
+    read_json_versioned(path, HISTORY_VERSION)
 }
 
 #[cfg(test)]

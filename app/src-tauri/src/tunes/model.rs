@@ -259,6 +259,9 @@ impl TuneSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TuneLibrary {
+    /// Defaulted so a hand-edited file that dropped the field isn't quarantined
+    /// wholesale (0 reads as "older than every real version").
+    #[serde(default)]
     pub version: u32,
     #[serde(default)]
     seq: u64,

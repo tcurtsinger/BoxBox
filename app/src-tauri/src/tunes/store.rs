@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::model::TuneLibrary;
-use crate::persist::{lock_ignoring_poison, read_json, write_json};
+use super::model::{TuneLibrary, TUNES_VERSION};
+use crate::persist::{lock_ignoring_poison, read_json_versioned, write_json};
 
 /// Tauri-managed in-memory library, shared by the command handlers and (Phase 2)
 /// the listener thread that records laps.
@@ -99,7 +99,9 @@ impl TuneStore {
 }
 
 fn read_library(path: &std::path::Path) -> Option<TuneLibrary> {
-    read_json(path)
+    // Version-guarded: a tunes.json written by a newer build is preserved aside
+    // rather than loaded leniently and rewritten minus its newer fields.
+    read_json_versioned(path, TUNES_VERSION)
 }
 
 #[cfg(test)]
