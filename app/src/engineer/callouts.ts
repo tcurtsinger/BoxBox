@@ -40,7 +40,6 @@ const LAP_DELTA_SPEAK_MS = 3_000; // only read a delta-to-best within this of yo
 const CORNER_NAMES = ["rear-left", "rear-right", "front-left", "front-right"];
 
 const SESSION_EVENT_CODES = new Set(["SCAR", "RDFL", "CHQF"]);
-const PLAYER_EVENT_CODES = new Set(["COLL", "PENA"]);
 
 /** The slice of a snapshot the rules reason over, resolved to the player's car. */
 export interface PlayerFrame {
@@ -54,11 +53,11 @@ export interface PlayerFrame {
   tyreWear: number[]; // per corner, [RL, RR, FL, FR]
   fiaFlag: number; // -1 unknown, 0 none, 1 green, 2 blue, 3 yellow, 4 red
   intervalAheadSec: number | null; // null when leading
-  restricted: boolean; // player's telemetry is restricted (values unreliable)
-  /** Session-wide events (safety car, red/chequered flag), by incident id. */
-  sessionEvents: { id: string; code: string }[];
-  /** Events involving the player's car (contact, penalty), by incident id. */
-  playerEvents: { id: string; code: string; timeSec: number | null }[];
+  /** Session-wide events (safety car, red/chequered flag), by incident id.
+   *  safetyCarType: 1 = full safety car, 2 = virtual (spec: SafetyCar union). */
+  sessionEvents: { id: string; code: string; safetyCarType: number | null }[];
+  /** Events applying to the player's car (contact, penalty), by incident id. */
+  playerEvents: { id: string; code: string; penaltyType: number | null }[];
 }
 
 function minBestLap(drivers: LiveDriver[]): number {
@@ -71,14 +70,22 @@ function minBestLap(drivers: LiveDriver[]): number {
 
 function playerEvents(incidents: RawIncident[], idx: number): PlayerFrame["playerEvents"] {
   return incidents
-    .filter((i) => PLAYER_EVENT_CODES.has(i.code) && i.carIndices.includes(idx))
-    .map((i) => ({ id: i.id, code: i.code, timeSec: i.detail?.time ?? null }));
+    .filter((i) => {
+      // Contact involves both cars, so membership is the right test. A penalty
+      // applies to exactly one car — the event's vehicleIdx ("car the penalty
+      // is applied to", spec Penalty union); carIndices also holds the OTHER
+      // car involved, and being hit by a penalised car isn't "your penalty".
+      if (i.code === "COLL") return i.carIndices.includes(idx);
+      if (i.code === "PENA") return i.detail?.vehicleIdx === idx;
+      return false;
+    })
+    .map((i) => ({ id: i.id, code: i.code, penaltyType: i.detail?.penaltyType ?? null }));
 }
 
 function sessionEvents(incidents: RawIncident[]): PlayerFrame["sessionEvents"] {
   return incidents
     .filter((i) => SESSION_EVENT_CODES.has(i.code))
-    .map((i) => ({ id: i.id, code: i.code }));
+    .map((i) => ({ id: i.id, code: i.code, safetyCarType: i.detail?.safetyCarType ?? null }));
 }
 
 /**
@@ -102,7 +109,6 @@ export function extractPlayerFrame(snap: RaceSnapshot): PlayerFrame | null {
     tyreWear: d.tyreWear ?? [],
     fiaFlag: d.fiaFlags,
     intervalAheadSec: d.position <= 1 ? null : d.deltaToCarAheadMS / 1000,
-    restricted: !d.telemetryPublic,
     sessionEvents: sessionEvents(snap.incidents),
     playerEvents: playerEvents(snap.incidents, idx),
   };
@@ -138,20 +144,20 @@ function fuelTyresCallouts(prev: PlayerFrame, next: PlayerFrame): Callout[] {
     });
   }
 
-  // Per-corner wear crossing the "going off" line (skip if telemetry is restricted,
-  // where wear arrives zeroed). A fresh set (wear drops) re-arms the callout.
-  if (!next.restricted) {
-    const corners = Math.min(next.tyreWear.length, CORNER_NAMES.length);
-    for (let c = 0; c < corners; c++) {
-      const before = prev.tyreWear[c] ?? 0;
-      if (crossedAbove(before, next.tyreWear[c], TYRE_OFF_PCT)) {
-        out.push({
-          category: "fuelTyres",
-          priority: PRIORITY.strategy,
-          text: `Your ${CORNER_NAMES[c]} is starting to go off, ${Math.round(next.tyreWear[c])} percent.`,
-          key: `tyre-off-${c}`,
-        });
-      }
+  // Per-corner wear crossing the "going off" line. A fresh set (wear drops)
+  // re-arms the callout. Never gated on the in-game "restricted telemetry"
+  // option: that hides a driver's data from OTHER viewers — the player's own
+  // feed always carries their real wear (Developer Notes).
+  const corners = Math.min(next.tyreWear.length, CORNER_NAMES.length);
+  for (let c = 0; c < corners; c++) {
+    const before = prev.tyreWear[c] ?? 0;
+    if (crossedAbove(before, next.tyreWear[c], TYRE_OFF_PCT)) {
+      out.push({
+        category: "fuelTyres",
+        priority: PRIORITY.strategy,
+        text: `Your ${CORNER_NAMES[c]} is starting to go off, ${Math.round(next.tyreWear[c])} percent.`,
+        key: `tyre-off-${c}`,
+      });
     }
   }
   return out;
@@ -214,6 +220,16 @@ function lapTimeCallouts(prev: PlayerFrame, next: PlayerFrame): Callout[] {
   return [];
 }
 
+// Spoken text per penaltyType (spec appendix); anything else gets the generic
+// line. Kept in lockstep with engineer.rs.
+const PENALTY_TEXT: Record<number, string> = {
+  0: "Drive-through penalty for you.",
+  1: "Stop-go penalty for you.",
+  2: "You've picked up a grid penalty.",
+  4: "You've picked up a time penalty.",
+  6: "Black flag — you've been disqualified.",
+};
+
 const FLAG_TEXT: Record<number, { text: string; priority: number; key: string }> = {
   2: { text: "Blue flags — let the faster car through.", priority: PRIORITY.position, key: "flag-blue" },
   3: { text: "Yellow flag — caution, be ready to slow.", priority: PRIORITY.safety, key: "flag-yellow" },
@@ -232,24 +248,36 @@ function flagIncidentCallouts(prev: PlayerFrame, next: PlayerFrame): Callout[] {
     }
   }
 
-  // Newly-appeared session events (safety car, red/chequered flag).
+  // Newly-appeared session events (safety car, red/chequered flag). A VSC is a
+  // materially different procedure from a full safety car — announce which.
   const seenSession = new Set(prev.sessionEvents.map((e) => e.id));
   for (const e of next.sessionEvents) {
     if (seenSession.has(e.id)) continue;
-    if (e.code === "SCAR") out.push({ category: "flagsIncidents", priority: PRIORITY.safety, text: "Safety car, safety car.", key: `ev-${e.id}` });
-    else if (e.code === "RDFL") out.push({ category: "flagsIncidents", priority: PRIORITY.safety, text: "Red flag — session stopped.", key: `ev-${e.id}` });
+    if (e.code === "SCAR") {
+      const text =
+        e.safetyCarType === 2
+          ? "Virtual safety car deployed — stick to the delta."
+          : "Safety car, safety car.";
+      out.push({ category: "flagsIncidents", priority: PRIORITY.safety, text, key: `ev-${e.id}` });
+    } else if (e.code === "RDFL") out.push({ category: "flagsIncidents", priority: PRIORITY.safety, text: "Red flag — session stopped.", key: `ev-${e.id}` });
     else if (e.code === "CHQF") out.push({ category: "flagsIncidents", priority: PRIORITY.info, text: "Chequered flag.", key: `ev-${e.id}` });
   }
 
-  // Newly-appeared events involving the player (contact, penalty).
+  // Newly-appeared events applying to the player (contact, penalty). The event's
+  // `time` byte is "time gained / time spent" (spec) — never the sanction — so
+  // the penalty TYPE is what gets spoken.
   const seenPlayer = new Set(prev.playerEvents.map((e) => e.id));
   for (const e of next.playerEvents) {
     if (seenPlayer.has(e.id)) continue;
     if (e.code === "COLL") {
       out.push({ category: "flagsIncidents", priority: PRIORITY.safety, text: "Contact — check the car over.", key: `ev-${e.id}` });
     } else if (e.code === "PENA") {
-      const secs = e.timeSec != null && e.timeSec > 0 ? ` — ${e.timeSec} seconds` : "";
-      out.push({ category: "flagsIncidents", priority: PRIORITY.safety, text: `You've picked up a penalty${secs}.`, key: `ev-${e.id}` });
+      out.push({
+        category: "flagsIncidents",
+        priority: PRIORITY.safety,
+        text: PENALTY_TEXT[e.penaltyType ?? -1] ?? "You've picked up a penalty.",
+        key: `ev-${e.id}`,
+      });
     }
   }
   return out;

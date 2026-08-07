@@ -31,7 +31,6 @@ const LAP_DELTA_SPEAK_MS: u32 = 3_000;
 const CORNER_NAMES: [&str; 4] = ["rear-left", "rear-right", "front-left", "front-right"];
 
 const SESSION_EVENT_CODES: [&str; 3] = ["SCAR", "RDFL", "CHQF"];
-const PLAYER_EVENT_CODES: [&str; 2] = ["COLL", "PENA"];
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -71,7 +70,15 @@ impl Callout {
 struct PlayerEvent {
     id: String,
     code: String,
-    time_sec: Option<f64>,
+    penalty_type: Option<u8>,
+}
+
+#[derive(Debug, Clone)]
+struct SessionEvent {
+    id: String,
+    code: String,
+    /// From the SCAR event: 1 = full safety car, 2 = virtual (spec: SafetyCar union).
+    safety_car_type: Option<u8>,
 }
 
 /// The slice of a snapshot the rules reason over, resolved to the player's car.
@@ -86,8 +93,7 @@ pub struct PlayerFrame {
     pub tyre_wear: Vec<f32>,
     pub fia_flag: i8,
     pub interval_ahead: Option<f32>,
-    pub restricted: bool,
-    session_events: Vec<(String, String)>, // (incident id, code)
+    session_events: Vec<SessionEvent>,
     player_events: Vec<PlayerEvent>,
 }
 
@@ -115,16 +121,30 @@ pub fn extract_player_frame(snap: &SessionSnapshot) -> Option<PlayerFrame> {
         .incidents
         .iter()
         .filter(|i| SESSION_EVENT_CODES.contains(&i.code.as_str()))
-        .map(|i| (i.id.clone(), i.code.clone()))
+        .map(|i| SessionEvent {
+            id: i.id.clone(),
+            code: i.code.clone(),
+            safety_car_type: i.detail.get("safetyCarType").map(|v| *v as u8),
+        })
         .collect();
     let player_events = snap
         .incidents
         .iter()
-        .filter(|i| PLAYER_EVENT_CODES.contains(&i.code.as_str()) && i.car_indices.contains(&idx))
+        .filter(|i| match i.code.as_str() {
+            // Contact involves both cars, so membership is the right test.
+            "COLL" => i.car_indices.contains(&idx),
+            // A penalty applies to exactly one car — the event's vehicleIdx
+            // (spec: Penalty union, "Vehicle index of the car the penalty is
+            // applied to"). car_indices also carries otherVehicleIdx, the car
+            // on the receiving end; being hit by a penalised car must not be
+            // announced as "your penalty".
+            "PENA" => i.detail.get("vehicleIdx").copied() == Some(idx as f64),
+            _ => false,
+        })
         .map(|i| PlayerEvent {
             id: i.id.clone(),
             code: i.code.clone(),
-            time_sec: i.detail.get("time").copied(),
+            penalty_type: i.detail.get("penaltyType").map(|v| *v as u8),
         })
         .collect();
     Some(PlayerFrame {
@@ -137,7 +157,6 @@ pub fn extract_player_frame(snap: &SessionSnapshot) -> Option<PlayerFrame> {
         tyre_wear: d.tyre_wear.clone(),
         fia_flag: d.fia_flags,
         interval_ahead: interval,
-        restricted: !d.telemetry_public,
         session_events,
         player_events,
     })
@@ -168,21 +187,23 @@ fn fuel_tyres(prev: &PlayerFrame, next: &PlayerFrame, out: &mut Vec<Callout>) {
         ));
     }
 
-    if !next.restricted {
-        let corners = next.tyre_wear.len().min(CORNER_NAMES.len());
-        for (c, corner_name) in CORNER_NAMES.iter().enumerate().take(corners) {
-            let before = prev.tyre_wear.get(c).copied().unwrap_or(0.0);
-            if crossed_above(before, next.tyre_wear[c], TYRE_OFF_PCT) {
-                out.push(Callout::new(
-                    Category::FuelTyres,
-                    P_STRATEGY,
-                    format!(
-                        "Your {corner_name} is starting to go off, {} percent.",
-                        next.tyre_wear[c].round() as i32
-                    ),
-                    format!("tyre-off-{c}"),
-                ));
-            }
+    // The player's own feed always carries their real wear — the in-game
+    // "restricted telemetry" option only hides a driver's data from OTHER
+    // viewers (Developer Notes: "the player can always see their own data") —
+    // so wear callouts are never gated on it.
+    let corners = next.tyre_wear.len().min(CORNER_NAMES.len());
+    for (c, corner_name) in CORNER_NAMES.iter().enumerate().take(corners) {
+        let before = prev.tyre_wear.get(c).copied().unwrap_or(0.0);
+        if crossed_above(before, next.tyre_wear[c], TYRE_OFF_PCT) {
+            out.push(Callout::new(
+                Category::FuelTyres,
+                P_STRATEGY,
+                format!(
+                    "Your {corner_name} is starting to go off, {} percent.",
+                    next.tyre_wear[c].round() as i32
+                ),
+                format!("tyre-off-{c}"),
+            ));
         }
     }
 }
@@ -285,17 +306,21 @@ fn flags_incidents(prev: &PlayerFrame, next: &PlayerFrame, out: &mut Vec<Callout
         }
     }
 
-    let seen: HashSet<&str> = prev
-        .session_events
-        .iter()
-        .map(|(id, _)| id.as_str())
-        .collect();
-    for (id, code) in &next.session_events {
-        if seen.contains(id.as_str()) {
+    let seen: HashSet<&str> = prev.session_events.iter().map(|e| e.id.as_str()).collect();
+    for e in &next.session_events {
+        if seen.contains(e.id.as_str()) {
             continue;
         }
-        let key = format!("ev-{id}");
-        match code.as_str() {
+        let key = format!("ev-{}", e.id);
+        match e.code.as_str() {
+            // A VSC is a materially different procedure from a full safety car
+            // (no bunching, delta rules) — announce which one deployed.
+            "SCAR" if e.safety_car_type == Some(2) => out.push(Callout::new(
+                Category::FlagsIncidents,
+                P_SAFETY,
+                "Virtual safety car deployed — stick to the delta.",
+                key,
+            )),
             "SCAR" => out.push(Callout::new(
                 Category::FlagsIncidents,
                 P_SAFETY,
@@ -332,16 +357,18 @@ fn flags_incidents(prev: &PlayerFrame, next: &PlayerFrame, out: &mut Vec<Callout
                 key,
             )),
             "PENA" => {
-                let secs = match e.time_sec {
-                    Some(t) if t > 0.0 => format!(" — {} seconds", t as i64),
-                    _ => String::new(),
+                // The event's `time` byte is "time gained, or time spent doing
+                // action" (spec: Penalty union) — NOT the sanction — so it is
+                // never spoken as one. The penalty type is the trustworthy fact.
+                let text = match e.penalty_type {
+                    Some(0) => "Drive-through penalty for you.",
+                    Some(1) => "Stop-go penalty for you.",
+                    Some(2) => "You've picked up a grid penalty.",
+                    Some(4) => "You've picked up a time penalty.",
+                    Some(6) => "Black flag — you've been disqualified.",
+                    _ => "You've picked up a penalty.",
                 };
-                out.push(Callout::new(
-                    Category::FlagsIncidents,
-                    P_SAFETY,
-                    format!("You've picked up a penalty{secs}."),
-                    key,
-                ));
+                out.push(Callout::new(Category::FlagsIncidents, P_SAFETY, text, key));
             }
             _ => {}
         }
@@ -414,7 +441,6 @@ mod tests {
             tyre_wear: vec![10.0, 10.0, 10.0, 10.0],
             fia_flag: 0,
             interval_ahead: Some(2.0),
-            restricted: false,
             session_events: vec![],
             player_events: vec![],
         }
@@ -475,12 +501,50 @@ mod tests {
     }
 
     #[test]
-    fn silent_on_tyre_wear_when_restricted() {
+    fn own_tyre_wear_speaks_even_with_restricted_telemetry_setting() {
+        // The restricted setting hides data from OTHER viewers; the player's own
+        // feed is always real, so their engineer must not go silent on tyres.
         let (mut p, mut n) = (frame(), frame());
         p.tyre_wear = vec![10.0, 10.0, 40.0, 10.0];
         n.tyre_wear = vec![10.0, 10.0, 55.0, 10.0];
-        n.restricted = true;
-        assert!(!texts(p, n).iter().any(|t| t.contains("go off")));
+        assert!(texts(p, n).iter().any(|t| t.contains("go off")));
+    }
+
+    #[test]
+    fn vsc_is_announced_as_virtual_not_full_safety_car() {
+        let (p, mut n) = (frame(), frame());
+        n.session_events = vec![SessionEvent {
+            id: "s1".into(),
+            code: "SCAR".into(),
+            safety_car_type: Some(2),
+        }];
+        let out = texts(p, n);
+        assert!(out.iter().any(|t| t.contains("Virtual safety car")));
+        assert!(!out.iter().any(|t| t == "Safety car, safety car."));
+    }
+
+    #[test]
+    fn full_safety_car_keeps_the_double_call() {
+        let (p, mut n) = (frame(), frame());
+        n.session_events = vec![SessionEvent {
+            id: "s1".into(),
+            code: "SCAR".into(),
+            safety_car_type: Some(1),
+        }];
+        assert!(texts(p, n).iter().any(|t| t == "Safety car, safety car."));
+    }
+
+    #[test]
+    fn penalty_text_uses_the_type_never_the_time_byte() {
+        let (p, mut n) = (frame(), frame());
+        n.player_events = vec![PlayerEvent {
+            id: "p1".into(),
+            code: "PENA".into(),
+            penalty_type: Some(4),
+        }];
+        let out = texts(p, n);
+        assert!(out.iter().any(|t| t.contains("time penalty")));
+        assert!(!out.iter().any(|t| t.contains("seconds")));
     }
 
     #[test]
@@ -563,10 +627,79 @@ mod tests {
         n.player_events = vec![PlayerEvent {
             id: "c1".into(),
             code: "COLL".into(),
-            time_sec: None,
+            penalty_type: None,
         }];
         assert!(texts(p, n.clone()).iter().any(|t| t.contains("Contact")));
         // Same incident already seen → no repeat.
         assert!(!texts(n.clone(), n).iter().any(|t| t.contains("Contact")));
+    }
+
+    #[test]
+    fn another_cars_penalty_is_not_attributed_to_the_player() {
+        use crate::racecontrol::state::{
+            DriverState, Incident, IncidentSource, IncidentStatus, SessionCategory,
+        };
+        use crate::racecontrol::SessionSnapshot;
+        use std::collections::HashMap;
+
+        // Penalty applied to car 3; the player (car 0) is the OTHER car involved,
+        // so both indices appear in car_indices — exactly the shape the state
+        // builds from a PENA event.
+        let pena = |penalised: u8, other: u8| -> Incident {
+            let mut detail = HashMap::new();
+            detail.insert("vehicleIdx".to_string(), penalised as f64);
+            detail.insert("otherVehicleIdx".to_string(), other as f64);
+            detail.insert("penaltyType".to_string(), 4.0);
+            Incident {
+                id: "1".into(),
+                source: IncidentSource::Auto,
+                session_time: 10.0,
+                lap_num: Some(3),
+                code: "PENA".into(),
+                label: "Corner cutting, gained time".into(),
+                car_indices: vec![penalised, other],
+                detail,
+                status: IncidentStatus::Logged,
+                note: String::new(),
+                ruling: None,
+            }
+        };
+        let snap = |incidents: Vec<Incident>| -> SessionSnapshot {
+            let mut d = DriverState::default();
+            d.index = 0;
+            d.telemetry_public = true;
+            SessionSnapshot {
+                format: 2025,
+                game_year: 25,
+                session_uid: "A".into(),
+                session_time: 10.0,
+                session: None,
+                session_category: SessionCategory::Race,
+                track_name: None,
+                is_spectating: false,
+                spectator_car_index: 255,
+                player_car_index: 0,
+                num_active_cars: 1,
+                drivers: vec![d],
+                incidents,
+                event_tally: HashMap::new(),
+                final_classification: None,
+                quali_segments: vec![],
+                packet_count: 1,
+                last_update: 0.0,
+                last_packet_at: 0.0,
+            }
+        };
+
+        // Car 3 penalised, player merely involved: no player event extracted.
+        let f = extract_player_frame(&snap(vec![pena(3, 0)])).unwrap();
+        assert!(
+            f.player_events.is_empty(),
+            "another car's penalty must not become the player's"
+        );
+        // Player penalised: extracted, with the penalty type carried through.
+        let f = extract_player_frame(&snap(vec![pena(0, 3)])).unwrap();
+        assert_eq!(f.player_events.len(), 1);
+        assert_eq!(f.player_events[0].penalty_type, Some(4));
     }
 }

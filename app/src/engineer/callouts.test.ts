@@ -23,7 +23,6 @@ function frame(over: Partial<PlayerFrame> = {}): PlayerFrame {
     tyreWear: [10, 10, 10, 10],
     fiaFlag: 0,
     intervalAheadSec: 2.0,
-    restricted: false,
     sessionEvents: [],
     playerEvents: [],
     ...over,
@@ -66,10 +65,6 @@ describe("fuel & tyre callouts", () => {
     expect(out.some((t) => /front-left/i.test(t) && /go off/i.test(t))).toBe(true);
   });
 
-  it("stays silent on tyre wear when telemetry is restricted", () => {
-    const out = texts(frame({ tyreWear: [10, 10, 40, 10] }), frame({ tyreWear: [10, 10, 55, 10], restricted: true }));
-    expect(out.some((t) => /go off/i.test(t))).toBe(false);
-  });
 });
 
 describe("gap & position callouts", () => {
@@ -89,10 +84,29 @@ describe("flag & incident callouts", () => {
 
   it("announces new contact involving the player once", () => {
     const prev = frame({ playerEvents: [] });
-    const next = frame({ playerEvents: [{ id: "c1", code: "COLL", timeSec: null }] });
+    const next = frame({ playerEvents: [{ id: "c1", code: "COLL", penaltyType: null }] });
     expect(texts(prev, next).some((t) => /contact/i.test(t))).toBe(true);
     // The same incident already seen → no repeat.
     expect(texts(next, next).some((t) => /contact/i.test(t))).toBe(false);
+  });
+
+  it("announces a VSC as virtual, not a full safety car", () => {
+    const next = frame({ sessionEvents: [{ id: "s1", code: "SCAR", safetyCarType: 2 }] });
+    const out = texts(frame(), next);
+    expect(out.some((t) => /virtual safety car/i.test(t))).toBe(true);
+    expect(out).not.toContain("Safety car, safety car.");
+  });
+
+  it("keeps the double call for a full safety car", () => {
+    const next = frame({ sessionEvents: [{ id: "s1", code: "SCAR", safetyCarType: 1 }] });
+    expect(texts(frame(), next)).toContain("Safety car, safety car.");
+  });
+
+  it("speaks the penalty type, never the time byte as a sanction", () => {
+    const next = frame({ playerEvents: [{ id: "p1", code: "PENA", penaltyType: 4 }] });
+    const out = texts(frame(), next);
+    expect(out.some((t) => /time penalty/i.test(t))).toBe(true);
+    expect(out.some((t) => /seconds/i.test(t))).toBe(false);
   });
 });
 

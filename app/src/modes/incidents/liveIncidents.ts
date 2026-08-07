@@ -65,7 +65,9 @@ function resolveCar(index: number, byIndex: Map<number, IncidentDriver>): CarRef
 function formatDetail(detail: Record<string, number>): string {
   const parts: string[] = [];
   if (detail.severity != null) parts.push(`Severity ${detail.severity}`);
-  if (detail.time != null) parts.push(`${detail.time}s`);
+  // The event's time byte is "time gained, or time spent doing action" (spec:
+  // Penalty union) — NOT the sanction, so a bare "3s" would read as the penalty.
+  if (detail.time != null) parts.push(`time ${detail.time}s`);
   if (detail.placesGained != null) {
     parts.push(`${detail.placesGained} place${detail.placesGained === 1 ? "" : "s"} gained`);
   }
