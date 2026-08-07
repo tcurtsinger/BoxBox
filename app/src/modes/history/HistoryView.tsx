@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useShell } from "../../shell/shell-context";
 import { HistoryIcon } from "../../shell/icons";
 import { ReportsView, ReportContent } from "../reports/ReportsView";
-import { reportFromSnapshot } from "../reports/reportsData";
+import { CATEGORY_LABEL, reportFromSnapshot } from "../reports/reportsData";
+import { useSharedRaceState } from "../timing/RaceStateContext";
 import {
   deleteSession,
   fmtSavedAt,
@@ -31,6 +32,10 @@ const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in windo
 
 export function HistoryView() {
   const { feed, sessionSaved, setSessionSaved } = useShell();
+  // The real session's identity comes from the shared race snapshot — the feed
+  // object only ever carried track/session labels for the sample loaders, so
+  // every real session used to show "—" here.
+  const { session } = useSharedRaceState();
   // The sample feed is frontend-only demo data; the Rust session behind
   // `save_session` would be empty, so saving it would archive a junk record
   // (and wrongly mark the next real session as saved).
@@ -184,8 +189,10 @@ export function HistoryView() {
             <div className="history-current-main">
               <span className="history-kicker">Current session</span>
               <span className="history-current-track">
-                {feed.track ?? "—"}
-                {feed.session ? ` · ${feed.session}` : ""}
+                {session.track}
+                {session.category && CATEGORY_LABEL[session.category]
+                  ? ` · ${CATEGORY_LABEL[session.category]}`
+                  : ""}
               </span>
               <span className={`history-current-note${sessionSaved ? " is-saved" : ""}`}>
                 {sessionSaved ? "Saved to history" : "Not saved yet"}

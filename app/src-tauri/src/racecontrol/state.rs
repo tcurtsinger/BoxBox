@@ -622,11 +622,12 @@ impl SessionState {
         put_u8("numLights", e.num_lights);
         put_u8("overtakingVehicleIdx", e.overtaking_vehicle_idx);
         put_u8("beingOvertakenVehicleIdx", e.being_overtaken_vehicle_idx);
+        // No 255 sentinel on floats: the spec defines 255 = "not set" for u8
+        // fields only, so a legitimate 255.0 (a 255 km/h speed trap, a 4:15.0
+        // lap) must not vanish from the detail.
         let mut put_f32 = |k: &str, v: Option<f32>| {
             if let Some(v) = v {
-                if v != 255.0 {
-                    detail.insert(k.to_string(), v as f64);
-                }
+                detail.insert(k.to_string(), v as f64);
             }
         };
         put_f32("speed", e.speed);

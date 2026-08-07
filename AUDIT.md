@@ -197,6 +197,15 @@ Doc: the spec provides `flashbackFrameIdentifier`/`flashbackSessionTime` and not
 
 ## P1 — Wrong, visible, not destructive
 
+> **Status 2026-08-07: all P1 clusters are fixed** — P1-1 `d97d5d5` (real
+> sector states, session-best purple, retired rows, index-keyed selection,
+> F2/classic compounds, fmtSec), P1-2 `d97e717` (TLIM incidents + panel
+> counter + callouts), P1-3 `dd34520` (tunes write-failure surfacing, Bench
+> confidence gate, draft flush), P1-4/P1-5 (65536 recv buffer + WSAEMSGSIZE
+> non-fatal, History current-session identity, retention confirm + removed
+> count, float-sentinel removal). The text below is the original finding
+> record.
+
 ### P1-1 · Timing tower honesty (violates DESIGN.md's own Meaning-Not-Mood rule)
 
 - **Sector "colours" are synthesized.** For live data all three sector pills go purple

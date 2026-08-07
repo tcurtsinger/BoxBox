@@ -619,6 +619,15 @@ textarea {
   font-size: 12px;
   line-height: 1.5;
 }
+.retention-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.retention-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
 .field {
   display: flex;
   flex-direction: column;

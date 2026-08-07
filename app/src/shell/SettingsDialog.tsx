@@ -84,8 +84,12 @@ export function SettingsDialog({
     toDrafts(connection.forwardTargets),
   );
   // History retention applies immediately (not via the connection Apply); null =
-  // keep everything. Loaded from the backend when the dialog opens.
+  // keep everything. Loaded from the backend when the dialog opens. Tightening
+  // it deletes sessions permanently, so that arm goes through a confirm step —
+  // a misclick on "30 days" used to wipe months of history silently.
   const [retention, setRetention] = useState<number | null>(null);
+  const [pendingRetention, setPendingRetention] = useState<number | null>(null);
+  const [retentionNote, setRetentionNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -312,17 +316,67 @@ export function SettingsDialog({
           <span className="field-label">Keep saved sessions</span>
           <Segmented
             options={RETENTION_OPTIONS}
-            value={retention == null ? "all" : String(retention)}
+            value={
+              pendingRetention != null
+                ? String(pendingRetention)
+                : retention == null
+                  ? "all"
+                  : String(retention)
+            }
             onChange={(v) => {
+              setRetentionNote(null);
               const days = v === "all" ? null : Number(v);
-              setRetention(days);
-              void setHistoryRetention(days);
+              // Loosening (or no change) can't delete anything — apply directly.
+              // Tightening arms a confirm instead of pruning on the click.
+              if (days == null || (retention != null && days >= retention)) {
+                setPendingRetention(null);
+                setRetention(days);
+                void setHistoryRetention(days);
+              } else {
+                setPendingRetention(days);
+              }
             }}
             ariaLabel="History retention"
           />
-          <p className="field-hint">
-            Auto-delete saved sessions older than this. Pinned sessions are always kept.
-          </p>
+          {pendingRetention != null ? (
+            <div className="retention-confirm">
+              <p className="field-hint field-hint-error">
+                Permanently deletes unpinned sessions older than {pendingRetention} days.
+              </p>
+              <div className="retention-confirm-actions">
+                <button
+                  type="button"
+                  className="btn btn-danger btn-sm"
+                  onClick={() => {
+                    const days = pendingRetention;
+                    setPendingRetention(null);
+                    setRetention(days);
+                    void setHistoryRetention(days).then((removed) => {
+                      setRetentionNote(
+                        removed > 0
+                          ? `${removed} session${removed === 1 ? "" : "s"} removed.`
+                          : "No sessions were old enough to remove.",
+                      );
+                    });
+                  }}
+                >
+                  Apply retention
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-quiet btn-sm"
+                  onClick={() => setPendingRetention(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="field-hint">
+              {retentionNote ??
+                "Auto-delete saved sessions older than this. Pinned sessions are always kept."}
+            </p>
+          )}
         </div>
 
         <div className="field">

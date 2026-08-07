@@ -347,7 +347,12 @@ fn spawn_listener(
     });
 
     let handle = std::thread::spawn(move || {
-        let mut buf = [0u8; 2048];
+        // Sized for the largest possible UDP datagram, not just the largest F1
+        // packet (1470 B): on Windows, recv_from into a too-small buffer fails
+        // with WSAEMSGSIZE — a hard error that used to rebind the socket, so any
+        // LAN device spraying big datagrams at the shared sim port caused a
+        // rebind per datagram (log spam + windows where real packets were lost).
+        let mut buf = vec![0u8; 65536];
         // The F1 feed comes from exactly one host (the game PC or console). Lock
         // onto the first host we hear a COMPLETE, valid packet from and ignore
         // datagrams from any other host, so a stray or spoofed LAN sender can't
@@ -608,6 +613,11 @@ fn spawn_listener(
                         Err(ref e)
                             if e.kind() == std::io::ErrorKind::WouldBlock
                                 || e.kind() == std::io::ErrorKind::TimedOut => {}
+                        // Windows WSAEMSGSIZE (10040): a datagram bigger than the
+                        // buffer was truncated-and-dropped. Can't be F1 traffic
+                        // (max 1470 B, and the buffer holds any legal UDP size) —
+                        // foreign junk is not a reason to drop and rebind the port.
+                        Err(ref e) if e.raw_os_error() == Some(10040) => {}
                         // A hard receive error can leave the socket wedged; rebind it
                         // rather than spin retrying the same broken socket.
                         Err(e) => {
