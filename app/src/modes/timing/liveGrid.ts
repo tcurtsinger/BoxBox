@@ -273,6 +273,8 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
         rearWingDamage: d.rearWingDamage ?? 0,
         engineDamage: d.engineDamage ?? 0,
         gearboxDamage: d.gearboxDamage ?? 0,
+        cornerCuttingWarnings: d.cornerCuttingWarnings ?? 0,
+        totalWarnings: d.totalWarnings ?? 0,
       },
     };
   });

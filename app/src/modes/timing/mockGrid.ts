@@ -122,6 +122,9 @@ export interface LiveDetail {
   rearWingDamage: number;
   engineDamage: number;
   gearboxDamage: number;
+  /** Corner-cutting warning count (LapData) — the track-limits strike counter. */
+  cornerCuttingWarnings: number;
+  totalWarnings: number;
 }
 
 function sectorsFor(

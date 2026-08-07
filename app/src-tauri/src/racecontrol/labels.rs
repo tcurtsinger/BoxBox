@@ -22,8 +22,9 @@ pub fn incident_label(code: &str) -> Option<&'static str> {
     })
 }
 
-/// penaltyType values that are real sporting penalties worth logging. Warnings,
-/// reminders, lap invalidations, etc. stay out of the feed (tallied only).
+/// penaltyType values that are real sporting penalties. Warnings (5) and lap
+/// invalidations (10–15) are logged separately under the TLIM code; reminders
+/// and the rest stay out of the feed (tallied only).
 pub fn is_real_penalty(penalty_type: u8) -> bool {
     matches!(penalty_type, 0 | 1 | 2 | 4 | 6 | 17)
 }

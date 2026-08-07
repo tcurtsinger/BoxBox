@@ -580,6 +580,16 @@ impl SessionState {
         let Some(label) = self.event_incident_label(e) else {
             return;
         };
+        // Track-limit warnings / deleted laps surface under the app's native
+        // TLIM code (the tone the feed already speaks) rather than raw PENA.
+        let code = if e.code == "PENA"
+            && e.penalty_type
+                .is_some_and(|pt| pt == 5 || (10..=15).contains(&pt))
+        {
+            "TLIM".to_string()
+        } else {
+            e.code.clone()
+        };
 
         // 255 is the F1 "no value" sentinel; drop it from car lists (deduped) and
         // from detail so it never surfaces (e.g. a penalty with no time).
@@ -633,7 +643,7 @@ impl SessionState {
         // spammed events can't fill the log (P2.2).
         if let Some(last) = self.incidents.last() {
             if last.source == IncidentSource::Auto
-                && last.code == e.code
+                && last.code == code
                 && last.car_indices == car_indices
                 && last.lap_num == lap_num
                 && last.detail == detail
@@ -652,7 +662,7 @@ impl SessionState {
             source: IncidentSource::Auto,
             session_time,
             lap_num,
-            code: e.code.clone(),
+            code,
             label,
             car_indices,
             detail,
@@ -700,6 +710,23 @@ impl SessionState {
                             .to_string(),
                     )
                 }
+                // Warnings (5) and lap invalidations (10–15): the off-track
+                // events the Incidents section advertises ("off-tracks across
+                // the grid") — previously tallied invisibly while the demo
+                // showed TLIM rows. Logged under the TLIM code (caution tone);
+                // the label carries the exact infringement.
+                Some(5) => Some(format!(
+                    "Warning — {}",
+                    e.infringement_type
+                        .and_then(infringement_type)
+                        .unwrap_or("driving standards")
+                )),
+                Some(pt) if (10..=15).contains(&pt) => Some(format!(
+                    "Lap deleted — {}",
+                    e.infringement_type
+                        .and_then(infringement_type)
+                        .unwrap_or("track limits")
+                )),
                 _ => None,
             }
         } else {
@@ -1205,7 +1232,7 @@ mod tests {
     }
 
     #[test]
-    fn penalty_filtering_keeps_real_only() {
+    fn penalties_and_warnings_log_under_distinct_codes() {
         let mut st = SessionState::new();
         st.ingest(&session("A", 15), 0.0);
         // Real: time penalty (type 4), infringement 7 (corner cutting gained time).
@@ -1216,7 +1243,7 @@ mod tests {
             vehicle_idx: Some(5),
             ..Default::default()
         };
-        // Filtered: a warning (type 5) is tallied but not logged.
+        // A warning (type 5) is logged too — under the TLIM code, caution tone.
         let warn = EventData {
             code: "PENA".into(),
             penalty_type: Some(5),
@@ -1228,9 +1255,66 @@ mod tests {
         st.ingest(&event("A", warn), 0.0);
 
         let s = st.snapshot();
-        assert_eq!(s.incidents.len(), 1, "only the real penalty is logged");
+        assert_eq!(s.incidents.len(), 2, "penalty AND warning both surface");
+        assert_eq!(s.incidents[0].code, "PENA");
         assert_eq!(s.incidents[0].label, "Corner cutting, gained time");
-        assert_eq!(s.event_tally.get("PENA"), Some(&2), "both are tallied");
+        assert_eq!(s.incidents[1].code, "TLIM");
+        assert!(s.incidents[1].label.starts_with("Warning — "));
+        assert_eq!(s.event_tally.get("PENA"), Some(&2), "both tallied as PENA");
+    }
+
+    #[test]
+    fn track_limit_warnings_and_deleted_laps_surface_as_tlim() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 5), 0.0); // qualifying
+        // Corner-cutting warning (type 5, infringement 27 = corner cutting ran wide).
+        st.ingest(
+            &event(
+                "A",
+                EventData {
+                    code: "PENA".into(),
+                    penalty_type: Some(5),
+                    infringement_type: Some(27),
+                    vehicle_idx: Some(3),
+                    ..Default::default()
+                },
+            ),
+            0.0,
+        );
+        // Lap invalidated (type 10).
+        st.ingest(
+            &event(
+                "A",
+                EventData {
+                    code: "PENA".into(),
+                    penalty_type: Some(10),
+                    infringement_type: Some(7),
+                    vehicle_idx: Some(3),
+                    ..Default::default()
+                },
+            ),
+            1.0,
+        );
+        let s = st.snapshot();
+        assert_eq!(s.incidents.len(), 2, "both surface in the live feed now");
+        assert_eq!(s.incidents[0].code, "TLIM");
+        assert!(s.incidents[0].label.starts_with("Warning — "));
+        assert_eq!(s.incidents[1].code, "TLIM");
+        assert!(s.incidents[1].label.starts_with("Lap deleted — "));
+        // A reminder (type 3) still stays out of the feed.
+        st.ingest(
+            &event(
+                "A",
+                EventData {
+                    code: "PENA".into(),
+                    penalty_type: Some(3),
+                    vehicle_idx: Some(3),
+                    ..Default::default()
+                },
+            ),
+            2.0,
+        );
+        assert_eq!(st.snapshot().incidents.len(), 2);
     }
 
     #[test]

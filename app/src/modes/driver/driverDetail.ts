@@ -136,6 +136,15 @@ export function buildDriverDetail(row: DriverRow): DriverDetail {
     { label: "Fuel", value: row.restricted ? "Restricted" : `${fmtFuel(row.fuel)} lap` },
     { label: "ERS charge", value: row.restricted ? "Restricted" : `${Math.round(row.batt)}%` },
   ];
+  // Track-limit strikes are public timing data (not gated by restricted
+  // telemetry); live rows only — the sample doesn't carry them.
+  if (row.live) {
+    const cc = row.live.cornerCuttingWarnings ?? 0;
+    stats.push({
+      label: "Track limits",
+      value: cc > 0 ? `${cc} warning${cc === 1 ? "" : "s"}` : "None",
+    });
+  }
 
   return { stats, corners, damage, laps };
 }

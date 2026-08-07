@@ -137,8 +137,9 @@ pub fn extract_player_frame(snap: &SessionSnapshot) -> Option<PlayerFrame> {
             // (spec: Penalty union, "Vehicle index of the car the penalty is
             // applied to"). car_indices also carries otherVehicleIdx, the car
             // on the receiving end; being hit by a penalised car must not be
-            // announced as "your penalty".
-            "PENA" => i.detail.get("vehicleIdx").copied() == Some(idx as f64),
+            // announced as "your penalty". TLIM (warnings / deleted laps)
+            // carries the same shape.
+            "PENA" | "TLIM" => i.detail.get("vehicleIdx").copied() == Some(idx as f64),
             _ => false,
         })
         .map(|i| PlayerEvent {
@@ -369,6 +370,15 @@ fn flags_incidents(prev: &PlayerFrame, next: &PlayerFrame, out: &mut Vec<Callout
                     _ => "You've picked up a penalty.",
                 };
                 out.push(Callout::new(Category::FlagsIncidents, P_SAFETY, text, key));
+            }
+            // Track limits: a warning is worth hearing before it becomes a
+            // penalty; a deleted lap matters immediately in qualifying.
+            "TLIM" => {
+                let text = match e.penalty_type {
+                    Some(5) => "Track limits — that's a warning.",
+                    _ => "Lap time deleted.",
+                };
+                out.push(Callout::new(Category::FlagsIncidents, P_INFO, text, key));
             }
             _ => {}
         }
@@ -694,6 +704,25 @@ mod tests {
         assert!(texts(p, n.clone()).iter().any(|t| t.contains("Contact")));
         // Same incident already seen → no repeat.
         assert!(!texts(n.clone(), n).iter().any(|t| t.contains("Contact")));
+    }
+
+    #[test]
+    fn track_limit_events_get_their_own_callouts() {
+        let (p, mut n) = (frame(), frame());
+        n.player_events = vec![PlayerEvent {
+            id: "w1".into(),
+            code: "TLIM".into(),
+            penalty_type: Some(5),
+        }];
+        assert!(texts(p, n).iter().any(|t| t.contains("warning")));
+
+        let (p, mut n) = (frame(), frame());
+        n.player_events = vec![PlayerEvent {
+            id: "w2".into(),
+            code: "TLIM".into(),
+            penalty_type: Some(10),
+        }];
+        assert!(texts(p, n).iter().any(|t| t == "Lap time deleted."));
     }
 
     #[test]

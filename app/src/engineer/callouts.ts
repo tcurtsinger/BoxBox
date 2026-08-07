@@ -75,8 +75,9 @@ function playerEvents(incidents: RawIncident[], idx: number): PlayerFrame["playe
       // applies to exactly one car — the event's vehicleIdx ("car the penalty
       // is applied to", spec Penalty union); carIndices also holds the OTHER
       // car involved, and being hit by a penalised car isn't "your penalty".
+      // TLIM (warnings / deleted laps) carries the same shape.
       if (i.code === "COLL") return i.carIndices.includes(idx);
-      if (i.code === "PENA") return i.detail?.vehicleIdx === idx;
+      if (i.code === "PENA" || i.code === "TLIM") return i.detail?.vehicleIdx === idx;
       return false;
     })
     .map((i) => ({ id: i.id, code: i.code, penaltyType: i.detail?.penaltyType ?? null }));
@@ -276,6 +277,15 @@ function flagIncidentCallouts(prev: PlayerFrame, next: PlayerFrame): Callout[] {
         category: "flagsIncidents",
         priority: PRIORITY.safety,
         text: PENALTY_TEXT[e.penaltyType ?? -1] ?? "You've picked up a penalty.",
+        key: `ev-${e.id}`,
+      });
+    } else if (e.code === "TLIM") {
+      // A warning is worth hearing before it becomes a penalty; a deleted lap
+      // matters immediately in qualifying.
+      out.push({
+        category: "flagsIncidents",
+        priority: PRIORITY.info,
+        text: e.penaltyType === 5 ? "Track limits — that's a warning." : "Lap time deleted.",
         key: `ev-${e.id}`,
       });
     }

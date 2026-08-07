@@ -108,6 +108,13 @@ describe("flag & incident callouts", () => {
     expect(out.some((t) => /time penalty/i.test(t))).toBe(true);
     expect(out.some((t) => /seconds/i.test(t))).toBe(false);
   });
+
+  it("calls track-limit warnings and deleted laps distinctly", () => {
+    const warn = frame({ playerEvents: [{ id: "w1", code: "TLIM", penaltyType: 5 }] });
+    expect(texts(frame(), warn).some((t) => /warning/i.test(t))).toBe(true);
+    const del = frame({ playerEvents: [{ id: "w2", code: "TLIM", penaltyType: 10 }] });
+    expect(texts(frame(), del)).toContain("Lap time deleted.");
+  });
 });
 
 describe("category gating", () => {
