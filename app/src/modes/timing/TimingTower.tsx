@@ -51,6 +51,14 @@ export function TimingTower() {
                 : ""}
             </span>
           )}
+          {session.rain && (
+            <span
+              className="tt-rain mono"
+              title={`Forecast${session.rain.approx ? " (approximate)" : ""}: rain in about ${session.rain.inMin} minutes`}
+            >
+              Rain ~{session.rain.inMin}m · {session.rain.pct}%
+            </span>
+          )}
           {sample && <span className="tt-tag">Sample</span>}
         </div>
         {sample && (

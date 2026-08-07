@@ -275,6 +275,20 @@ fn parse_motion(rd: &mut Reader, header: &PacketHeader) -> MotionData {
 
 // --- Session (id 1) -----------------------------------------------------------
 
+/// One weather-forecast sample: conditions expected `time_offset_min` minutes
+/// from now in the given session (spec: WeatherForecastSample; weather 0 clear,
+/// 1 light cloud, 2 overcast, 3 light rain, 4 heavy rain, 5 storm).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeatherSample {
+    pub session_type: u8,
+    pub time_offset_min: u8,
+    pub weather: u8,
+    pub track_temp: i8,
+    pub air_temp: i8,
+    pub rain_pct: u8,
+}
+
 /// One active-aero activation zone, as a fraction (0..1) of the lap.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -314,6 +328,10 @@ pub struct SessionData {
     pub spectator_car_index: u8,
     pub num_marshal_zones: u8,
     pub safety_car_status: u8,
+    /// Weather forecast samples (up to 64, spanning the weekend's sessions) and
+    /// the forecast accuracy (0 = perfect, 1 = approximate).
+    pub weather_forecast: Vec<WeatherSample>,
+    pub forecast_accuracy: Option<u8>,
     /// The game's own pit-window recommendation for the player's current
     /// strategy (0 / None = no window). From the Session tail.
     pub pit_stop_window_ideal_lap: Option<u8>,
@@ -359,6 +377,8 @@ fn parse_session(rd: &mut Reader, header: &PacketHeader) -> SessionData {
     // The 2026 pack then carries the active-aero / DRS activation zones. The
     // whole tail is optional: a session truncated here still delivers the
     // critical early fields (track, type, laps) above.
+    let mut weather_forecast = Vec::new();
+    let mut forecast_accuracy = None;
     let mut pit_stop_window_ideal_lap = None;
     let mut pit_stop_window_latest_lap = None;
     let mut pit_stop_rejoin_position = None;
@@ -369,7 +389,29 @@ fn parse_session(rd: &mut Reader, header: &PacketHeader) -> SessionData {
     let mut active_aero_zones_partial = Vec::new();
     let mut drs_zones = Vec::new();
     if rd.remaining() >= 555 {
-        rd.skip(528); // networkGame .. sessionLinkIdentifier
+        rd.skip(1); // networkGame
+        let num_samples = (rd.u8() as usize).min(64);
+        for _ in 0..num_samples {
+            let session_type = rd.u8();
+            let time_offset_min = rd.u8();
+            let weather = rd.u8();
+            let track_temp = rd.i8();
+            rd.skip(1); // track temp change direction
+            let air_temp = rd.i8();
+            rd.skip(1); // air temp change direction
+            let rain_pct = rd.u8();
+            weather_forecast.push(WeatherSample {
+                session_type,
+                time_offset_min,
+                weather,
+                track_temp,
+                air_temp,
+                rain_pct,
+            });
+        }
+        rd.skip((64 - num_samples) * 8); // unused fixed slots
+        forecast_accuracy = Some(rd.u8());
+        rd.skip(13); // aiDifficulty + 3×u32 link identifiers
         let ideal = rd.u8();
         let latest = rd.u8();
         let rejoin = rd.u8();
@@ -418,6 +460,8 @@ fn parse_session(rd: &mut Reader, header: &PacketHeader) -> SessionData {
         spectator_car_index,
         num_marshal_zones,
         safety_car_status,
+        weather_forecast,
+        forecast_accuracy,
         pit_stop_window_ideal_lap,
         pit_stop_window_latest_lap,
         pit_stop_rejoin_position,
@@ -1683,6 +1727,16 @@ mod tests {
         buf[29 + 125 + 554] = 1; // equalCarPerformance = On
         buf[29 + 125 + 554 + 6] = 1; // tyreTemperature = Surface & Carcass
 
+        // One forecast sample: race (15), +10 min, heavy rain (4), 75% rain.
+        buf[29 + 126] = 1; // numWeatherForecastSamples
+        buf[29 + 127] = 15;
+        buf[29 + 128] = 10;
+        buf[29 + 129] = 4;
+        buf[29 + 130] = 28; // track temp
+        buf[29 + 132] = 22; // air temp
+        buf[29 + 134] = 75; // rain %
+        buf[29 + 639] = 1; // forecastAccuracy = approximate
+
         let p = parse_packet(&buf).expect("valid session");
         let Some(Body::Session(s)) = p.data else {
             panic!("session body expected")
@@ -1692,6 +1746,14 @@ mod tests {
         assert_eq!(s.pit_stop_rejoin_position, Some(3));
         assert_eq!(s.equal_car_performance, Some(1));
         assert_eq!(s.tyre_temperature_sim, Some(1));
+        assert_eq!(s.weather_forecast.len(), 1);
+        let f = &s.weather_forecast[0];
+        assert_eq!(
+            (f.session_type, f.time_offset_min, f.weather, f.rain_pct),
+            (15, 10, 4, 75)
+        );
+        assert_eq!((f.track_temp, f.air_temp), (28, 22));
+        assert_eq!(s.forecast_accuracy, Some(1));
 
         // Zeroed window = no recommendation, not "lap 0".
         let mut none = header_bytes(2025, 1);

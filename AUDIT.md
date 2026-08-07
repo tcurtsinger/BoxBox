@@ -304,11 +304,15 @@ Fix: 65536-byte buffer or classify 10040 as non-fatal.
 > eventTally off the 4 Hz snapshot → item 9-partial, item 5-partial). Items 2,
 > 3, 4 were already closed by the P0 fixes.
 >
-> **Still open:** Motion/TyreSets/LapPositions/LobbyInfo packets (item 7),
-> weather forecast + marshal zones + gameMode/ruleSet (rest of item 6), the
-> tuner robustness backlog (item 8: spectator guard, stint identity, diff-floor
-> in-game verification, S/F-line corners, pit-lane trace filter, per-car
-> profiles), the Rust/TS engineer rule-set contract test (rest of item 9), and
+> **Third pass:** Motion (packet 0) + a live track map (`046a4b7`), tuner
+> ingest hygiene — spectator guard, pit-lane trace filter, actual-compound/
+> tyre-age set identity (`98270de`), and the weather forecast → "Rain ~Nm · P%"
+> tower chip (this commit).
+>
+> **Still open:** TyreSets/LapPositions/LobbyInfo packets (rest of item 7),
+> marshal zones + gameMode/ruleSet (rest of item 6), diff-floor in-game
+> verification + S/F-line corner mapping + per-car/track profiles (rest of
+> item 8), the Rust/TS engineer rule-set contract test (rest of item 9), and
 > the history-archive growth refactor (rest of item 10).
 
 Ordered by value, not effort.

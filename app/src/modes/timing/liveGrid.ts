@@ -115,10 +115,20 @@ export interface RaceSnapshot {
   trackName: string | null;
   session: {
     totalLaps: number;
+    sessionType?: number;
     /** The game's pit-window recommendation for the player (Session tail);
      *  absent/null = no window. */
     pitStopWindowIdealLap?: number | null;
     pitStopWindowLatestLap?: number | null;
+    /** Weather forecast samples for the weekend (Session tail). */
+    weatherForecast?: {
+      sessionType: number;
+      timeOffsetMin: number;
+      weather: number; // 0 clear … 3 light rain, 4 heavy rain, 5 storm
+      rainPct: number;
+    }[];
+    /** 0 = perfect forecast, 1 = approximate. */
+    forecastAccuracy?: number | null;
   } | null;
   sessionCategory: string;
   numActiveCars: number;
@@ -311,6 +321,29 @@ export interface SessionInfo {
   category?: string;
   /** The game's own pit-window recommendation (player strategy), when one is on. */
   pitWindow?: { ideal: number; latest: number } | null;
+  /** The soonest meaningful rain in this session's forecast, if any. */
+  rain?: { inMin: number; pct: number; approx: boolean } | null;
+}
+
+// Forecast weather 3+ = rain; below that, a high rain percentage still warns.
+const RAIN_WEATHER = 3;
+const RAIN_PCT_MIN = 40;
+
+function nextRain(snap: RaceSnapshot): SessionInfo["rain"] {
+  const s = snap.session;
+  const samples = s?.weatherForecast;
+  if (!s || !samples || samples.length === 0) return null;
+  const cur = s.sessionType ?? 0;
+  const hit = samples
+    .filter((f) => f.timeOffsetMin > 0 && (cur === 0 || f.sessionType === cur))
+    .sort((a, b) => a.timeOffsetMin - b.timeOffsetMin)
+    .find((f) => f.weather >= RAIN_WEATHER || f.rainPct >= RAIN_PCT_MIN);
+  if (!hit) return null;
+  return {
+    inMin: hit.timeOffsetMin,
+    pct: hit.rainPct,
+    approx: (s.forecastAccuracy ?? 0) === 1,
+  };
 }
 
 /** Track + lap counter for the tower header. */
@@ -324,6 +357,7 @@ export function sessionInfo(snap: RaceSnapshot): SessionInfo {
     totalLaps: snap.session?.totalLaps ?? 0,
     category: snap.sessionCategory,
     pitWindow: ideal > 0 ? { ideal, latest: latest > 0 ? latest : ideal } : null,
+    rain: nextRain(snap),
   };
 }
 

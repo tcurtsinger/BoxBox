@@ -412,6 +412,15 @@
   font-weight: 600;
   color: var(--data-info);
 }
+/* Incoming rain from the forecast — caution, it changes everyone's strategy. */
+.tt-rain {
+  padding: 1px 8px;
+  border: 1px solid color-mix(in oklch, var(--data-caution) 45%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--data-caution);
+}
 
 /* Car out of the session (DNF/DSQ/NC/RET): unmistakably not running. */
 .tt-row.is-out {
