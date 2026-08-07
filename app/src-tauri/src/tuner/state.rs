@@ -39,6 +39,9 @@ use crate::tunes::model::{SetupIdentity, TuneSession};
 const MIN_LAP_SAMPLES: usize = 50;
 const MIN_LAP_COVERAGE: f64 = 0.5; // fraction of track length the trace must span
 const MIN_WINDOW_SAMPLES: u32 = 30;
+// Aero damage (%) on any wing/floor/diffuser surface past which laps stop
+// shaping advice — below this a scuff barely moves the balance.
+const AERO_DAMAGE_PCT: u8 = 10;
 const FEEDBACK_STEP: f64 = 0.34;
 const TEMP_EMA_ALPHA: f64 = 0.05;
 const TEMP_SPEED_FLOOR: u16 = 50;
@@ -164,6 +167,23 @@ impl SetupField {
     }
 }
 
+/// Setup inputs OUTSIDE the 16 tracked levers that still shift balance and wear:
+/// tyre pressures, fuel load, ballast, engine braking. A change here can't be
+/// attributed to any tracked lever, so open A/B measurements must cancel — their
+/// effect would otherwise be booked against whatever lever was being watched and
+/// persisted to the profile as a false sensitivity — and the wear stint must
+/// rebaseline (pressures and fuel mass are first-order wear inputs). Fuel uses a
+/// small epsilon so float jitter can't masquerade as a garage change.
+fn untracked_setup_inputs_changed(old: &CarSetupEntry, next: &CarSetupEntry) -> bool {
+    old.front_left_tyre_pressure != next.front_left_tyre_pressure
+        || old.front_right_tyre_pressure != next.front_right_tyre_pressure
+        || old.rear_left_tyre_pressure != next.rear_left_tyre_pressure
+        || old.rear_right_tyre_pressure != next.rear_right_tyre_pressure
+        || old.ballast != next.ballast
+        || old.engine_braking != next.engine_braking
+        || (old.fuel_load - next.fuel_load).abs() > 0.05
+}
+
 fn suggest_value(s: &CarSetupEntry, key: SuggestKey) -> f64 {
     match key {
         SuggestKey::FrontWing => s.front_wing as f64,
@@ -219,6 +239,11 @@ struct LastChange {
     /// `clean_laps` at the moment of the change. The change becomes "rateable"
     /// once `clean_laps` has advanced past this (>=1 clean lap on the new value).
     clean_lap_at_change: u32,
+    /// The delta the advice engine was suggesting for this lever AT APPLY TIME
+    /// (None = no live suggestion then). The diagnosis resets the moment the
+    /// setup changes, so the "matched" cue must capture the advice as the driver
+    /// saw it — a ramp keeps the suggestion captured at its first click.
+    suggested_delta: Option<i32>,
 }
 
 /// A clean Time Trial / Practice lap queued for the tune library: the lap time plus
@@ -292,6 +317,14 @@ pub struct TunerState {
     // `last_change` so the UI can defer the "how did it feel?" prompt until the
     // driver has run at least one clean lap on the new value.
     clean_laps: u32,
+
+    // Aero damage (Car Damage id 10). While the car carries meaningful wing /
+    // floor / diffuser damage its balance is the damage's, not the setup's:
+    // laps driven like this read as sudden understeer/oversteer and must not
+    // shape advice or learned gains. `aero_damaged` tracks the current state;
+    // `lap_damaged` latches for the lap in progress (like `lap_invalidated`).
+    aero_damaged: bool,
+    lap_damaged: bool,
 
     // Tyre wear (Car Damage id 10) + temps (Car Telemetry id 6).
     wear: Option<TyreReading>,
@@ -475,6 +508,7 @@ impl TunerState {
         self.lap_distance = 0.0;
         self.current_lap_num = -1;
         self.lap_invalidated = false;
+        self.lap_damaged = self.aero_damaged;
         self.lap_trace = Vec::new();
         self.lap_diag = HashMap::new();
         self.slip_balance = None;
@@ -534,6 +568,23 @@ impl TunerState {
 
     fn ingest_damage(&mut self, d: &CarDamageData, idx: usize) {
         let Some(mine) = d.cars.get(idx) else { return };
+
+        // Meaningful aero damage (any wing / floor / diffuser surface past a
+        // scuff) rewrites the car's balance: without this gate a lost front-wing
+        // endplate reads as "sudden mid understeer" and the tuner suggests wing
+        // for a car that needs a pit repair, permanently polluting the cumulative
+        // diagnosis. Taints the lap (like an invalid lap) and stops the wear
+        // stint from A/B-learning; display wear keeps counting.
+        self.aero_damaged = mine.front_left_wing_damage >= AERO_DAMAGE_PCT
+            || mine.front_right_wing_damage >= AERO_DAMAGE_PCT
+            || mine.rear_wing_damage >= AERO_DAMAGE_PCT
+            || mine.floor_damage >= AERO_DAMAGE_PCT
+            || mine.diffuser_damage >= AERO_DAMAGE_PCT;
+        if self.aero_damaged {
+            self.lap_damaged = true;
+            self.wear_stint_clean = false;
+        }
+
         let w = tyres_from_packet(&mine.tyres_wear);
         // A fresh set (wear dropped vs the last reading) restarts the stint; the
         // first reading just seeds the baseline.
@@ -633,6 +684,9 @@ impl TunerState {
             self.lap_trace = Vec::new();
             self.lap_diag = HashMap::new();
             self.lap_invalidated = false;
+            // Damage persists across laps until repaired, so a new lap starts
+            // tainted whenever the car is still carrying aero damage.
+            self.lap_damaged = self.aero_damaged;
         }
         if lap.current_lap_invalid {
             self.lap_invalidated = true;
@@ -728,9 +782,10 @@ impl TunerState {
         }
 
         // Commit this lap's staged corner diagnosis only if it stayed clean: a cut,
-        // spin or off-track lap must not shape setup advice or persistent gains.
+        // spin, off-track or aero-damaged lap must not shape setup advice or
+        // persistent gains — a damaged car's balance is the damage, not the setup.
         // Reaching here also means the lap was complete enough (the checks above).
-        if !self.lap_invalidated {
+        if !self.lap_invalidated && !self.lap_damaged {
             // A clean, complete lap: advances the rateable gate for `last_change`.
             self.clean_laps += 1;
             let staged = std::mem::take(&mut self.lap_diag);
@@ -786,17 +841,22 @@ impl TunerState {
             .copied()
             .filter(|k| k.value(old) != k.value(next))
             .collect();
-        if changed_fields.is_empty() {
+        let untracked = untracked_setup_inputs_changed(old, next);
+        if changed_fields.is_empty() && !untracked {
             return;
         }
 
-        // The single changed tracked lever, if exactly one.
+        // The single changed tracked lever, if exactly one — and never when an
+        // untracked input (pressures, fuel, ballast, engine braking) moved in
+        // the same garage visit: the A/B would book that input's effect against
+        // the lever, and two consistent poisoned samples would persist a false
+        // sensitivity to the profile.
         let changed_tracked: Vec<SetupField> = changed_fields
             .iter()
             .copied()
             .filter(|k| k.as_suggest().is_some())
             .collect();
-        let single: Option<SetupField> = if changed_tracked.len() == 1 {
+        let single: Option<SetupField> = if !untracked && changed_tracked.len() == 1 {
             Some(changed_tracked[0])
         } else {
             None
@@ -813,10 +873,10 @@ impl TunerState {
                         pending.delta_clicks += delta;
                     }
                     self.note_change(single, old, next, true);
-                    self.window_diag = HashMap::new();
+                    self.reset_diag_for_new_setup();
                     // The same click may also be ramping a wear lever (the ARBs
                     // are both): keep the wear A/B's click count honest too.
-                    self.on_setup_change_wear(&changed_fields, old, next);
+                    self.on_setup_change_wear(&changed_fields, old, next, untracked);
                     return;
                 }
             }
@@ -842,19 +902,34 @@ impl TunerState {
             }
         }
         self.note_change_opt(single, old, next, false);
+        self.reset_diag_for_new_setup();
+        self.on_setup_change_wear(&changed_fields, old, next, untracked);
+    }
+
+    /// Drop every balance measurement made under the outgoing setup: the rolling
+    /// window, the cumulative per-corner diagnosis for this track, and the
+    /// in-flight lap's staged samples. Without the cumulative reset, advice keeps
+    /// recommending the fix the driver just applied — the lifetime average takes
+    /// many laps to outvote history, and a trusting driver re-applies and
+    /// overshoots. Corner GEOMETRY (corner_maps) survives; only diagnosis resets.
+    fn reset_diag_for_new_setup(&mut self) {
         self.window_diag = HashMap::new();
-        self.on_setup_change_wear(&changed_fields, old, next);
+        self.corner_diag.remove(&self.track_id);
+        self.lap_diag = HashMap::new();
     }
 
     /// Wear A/B bookkeeping for a setup change, shared by the garage-ramp coalesce
-    /// path and the main path of `on_setup_change`.
+    /// path and the main path of `on_setup_change`. `untracked` = an input outside
+    /// the tracked levers (pressures, fuel, ballast, engine braking) also changed,
+    /// which confounds any attribution to a single wear lever.
     fn on_setup_change_wear(
         &mut self,
         changed_fields: &[SetupField],
         old: &CarSetupEntry,
         next: &CarSetupEntry,
+        untracked: bool,
     ) {
-        let wear_key: Option<WearLever> = if changed_fields.len() == 1 {
+        let wear_key: Option<WearLever> = if !untracked && changed_fields.len() == 1 {
             changed_fields[0].as_wear()
         } else {
             None
@@ -905,11 +980,13 @@ impl TunerState {
             }
         }
 
-        // Rebaseline the wear stint only when a wear-affecting field changed. A
-        // diff / brake-bias / wing tweak (common mid-run, especially from the
-        // wheel) must NOT reset it, or the stint never survives the laps the wear
-        // advice needs — it would sit on "building wear data" forever (P2.2).
-        if self.wear.is_some() && changed_fields.iter().any(|f| f.affects_wear()) {
+        // Rebaseline the wear stint only when a wear-affecting field changed —
+        // including the untracked inputs (pressures, fuel mass, ballast), which
+        // are first-order wear levers. A diff / brake-bias / wing tweak (common
+        // mid-run, especially from the wheel) must NOT reset it, or the stint
+        // never survives the laps the wear advice needs — it would sit on
+        // "building wear data" forever (P2.2).
+        if self.wear.is_some() && (untracked || changed_fields.iter().any(|f| f.affects_wear())) {
             self.wear_baseline = self.wear;
             self.wear_laps = 0;
             self.wear_stint_clean = true; // the new setup's stint starts clean
@@ -979,10 +1056,19 @@ impl TunerState {
         let Some(direction) = change_direction(lever, delta) else {
             return;
         };
-        let from = if coalesce && self.last_change.as_ref().map(|lc| lc.lever) == Some(lever) {
+        let same_ramp = coalesce && self.last_change.as_ref().map(|lc| lc.lever) == Some(lever);
+        let from = if same_ramp {
             self.last_change.as_ref().unwrap().from_value
         } else {
             single.value(old)
+        };
+        // Capture the live suggestion for this lever now — the diagnosis resets
+        // right after this change registers, so it can't be re-read later. Later
+        // clicks of the same ramp keep the first click's capture.
+        let suggested_delta = if same_ramp {
+            self.last_change.as_ref().unwrap().suggested_delta
+        } else {
+            self.advice_delta_for(lever)
         };
         self.last_change = Some(LastChange {
             lever,
@@ -990,7 +1076,39 @@ impl TunerState {
             to_value: single.value(next),
             direction,
             clean_lap_at_change: self.clean_laps,
+            suggested_delta,
         });
+    }
+
+    /// The delta the advice engine is suggesting RIGHT NOW for `lever`, if any.
+    /// Read at apply time (before the setup-change diagnosis reset) so the
+    /// "matched" cue reflects the advice as the driver saw it.
+    fn advice_delta_for(&self, lever: SuggestKey) -> Option<i32> {
+        let setup = self.setup.as_ref()?;
+        if !self.setup_is_current() {
+            return None;
+        }
+        let corners = self.corner_maps.get(&self.track_id)?;
+        if corners.is_empty() {
+            return None;
+        }
+        let empty: HashMap<u32, PhaseTriple> = HashMap::new();
+        let buckets = self.corner_diag.get(&self.track_id).unwrap_or(&empty);
+        let diagnosis = build_corner_diagnosis(corners, buckets);
+        if diagnosis.is_empty() {
+            return None;
+        }
+        let advice = suggest_setup(
+            &diagnosis,
+            |k| suggest_value(setup, k),
+            self.balance_preference,
+            &self.estimator.as_map(),
+        )?;
+        advice
+            .suggestions
+            .iter()
+            .find(|s| s.key == lever)
+            .map(|s| s.delta)
     }
 
     // The stored setup counts as "received" only while it still matches the live
@@ -1089,20 +1207,16 @@ impl TunerState {
             _ => None,
         };
 
-        // (a) "matched" + (b) "rateable" for the last setup change. Built before
-        // the struct literal so it can borrow `setup_advice` (which the struct then
-        // moves). A stale setup nulls the change so it can't be shown or rated.
+        // (a) "matched" + (b) "rateable" for the last setup change. A stale setup
+        // nulls the change so it can't be shown or rated.
         let last_change = if setup_current {
             self.last_change.as_ref().map(|lc| {
-                // The suggested delta is diagnosis-driven, so it doesn't shrink the
-                // instant a lever moves; the driver "matched" the recommendation
-                // when the delta they applied equals one a live suggestion still
-                // makes for that lever — an immediate, deterministic check.
-                let matched = setup_advice.as_ref().is_some_and(|adv| {
-                    adv.suggestions.iter().any(|s| {
-                        s.key == lc.lever && (lc.to_value - lc.from_value).round() as i32 == s.delta
-                    })
-                });
+                // "Matched" = the net delta applied equals the suggestion captured
+                // AT APPLY TIME (the diagnosis reset on the change, so live advice
+                // can't be consulted after the fact).
+                let matched = lc
+                    .suggested_delta
+                    .is_some_and(|d| (lc.to_value - lc.from_value).round() as i32 == d);
                 // Rateable only once a clean lap has finalized since the change.
                 let rateable = self.clean_laps > lc.clean_lap_at_change;
                 LastChangeOut {
@@ -1979,6 +2093,84 @@ mod tests {
         st.ingest(&damage(4.5, 4.5, 9.0, 9.0));
         st.ingest(&lapdata(10.0, 7, 0));
         assert_eq!(st.profile_revision(), 1, "ramped change still learns");
+    }
+
+    #[test]
+    fn pressure_change_cancels_the_wear_ab_and_rebaselines() {
+        let mut st = TunerState::new();
+        wear_baseline_then_change(&mut st); // front-toe A/B open
+        assert!(st.wear_pending.is_some(), "precondition: A/B open");
+
+        // Front-right pressure changes in the garage — an untracked lever whose
+        // wear effect would otherwise be booked against the open toe A/B and
+        // persisted as a false sensitivity.
+        let mut pkt = setups_toe(0.04); // toe unchanged vs the live setup
+        if let Some(Body::CarSetups(d)) = pkt.data.as_mut() {
+            d.cars[0].front_right_tyre_pressure += 1.0;
+        }
+        st.ingest(&pkt);
+
+        assert!(
+            st.wear_pending.is_none(),
+            "a pressure change confounds the toe A/B — cancel, don't learn"
+        );
+        assert_eq!(
+            st.wear_laps, 0,
+            "pressures are a first-order wear input: the stint rebaselines"
+        );
+    }
+
+    #[test]
+    fn setup_change_resets_cumulative_corner_diagnosis() {
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&setups());
+        // Cumulative diagnosis accumulated under the old setup.
+        st.corner_diag
+            .entry(st.track_id)
+            .or_default()
+            .entry(1)
+            .or_default();
+
+        let mut changed = setups();
+        if let Some(Body::CarSetups(d)) = changed.data.as_mut() {
+            d.cars[0].front_wing += 2;
+        }
+        st.ingest(&changed);
+
+        assert!(
+            st.corner_diag.get(&st.track_id).is_none(),
+            "advice must re-earn its evidence on the new setup, not keep \
+             recommending the fix that was just applied"
+        );
+    }
+
+    #[test]
+    fn aero_damage_keeps_laps_out_of_diagnosis_until_repaired() {
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&setups());
+
+        // Front wing damage before the lap: the whole lap is tainted.
+        let mut dmg = damage(0.0, 0.0, 0.0, 0.0);
+        if let Some(Body::CarDamage(d)) = dmg.data.as_mut() {
+            d.cars[0].front_left_wing_damage = 30;
+        }
+        st.ingest(&dmg);
+        drive_lap(&mut st, 1, true);
+        roll_over(&mut st, 2, 90_000);
+        assert_eq!(st.clean_laps, 0, "a damaged lap must not count as clean");
+
+        // Repaired mid-lap 2: lap 2 started damaged, so it stays tainted...
+        st.ingest(&damage(0.0, 0.0, 0.0, 0.0));
+        drive_lap(&mut st, 2, true);
+        roll_over(&mut st, 3, 90_000);
+        assert_eq!(st.clean_laps, 0, "the repair lap itself stays tainted");
+
+        // ...but the first fully-repaired lap counts again.
+        drive_lap(&mut st, 3, true);
+        roll_over(&mut st, 4, 90_000);
+        assert_eq!(st.clean_laps, 1, "post-repair laps shape advice again");
     }
 
     #[test]
