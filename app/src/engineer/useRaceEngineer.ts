@@ -36,6 +36,7 @@ export function useRaceEngineer(): void {
   const speakerRef = useRef(new Speaker());
   const prevRef = useRef<PlayerFrame | null>(null);
   const speakingPriorityRef = useRef(0);
+  const retryRef = useRef<number | null>(null);
   // Latest settings, read inside the stable callbacks without re-subscribing.
   const settingsRef = useRef(engineer);
   settingsRef.current = engineer;
@@ -43,6 +44,10 @@ export function useRaceEngineer(): void {
   // Speak the next queued callout when idle; a waiting safety call pre-empts a
   // lower-priority one already being spoken.
   const pump = useCallback(() => {
+    if (retryRef.current != null) {
+      clearTimeout(retryRef.current);
+      retryRef.current = null;
+    }
     const sched = schedulerRef.current;
     const speaker = speakerRef.current;
     if (
@@ -54,7 +59,14 @@ export function useRaceEngineer(): void {
     }
     if (speaker.isSpeaking) return;
     const c = sched.take(Date.now());
-    if (!c) return;
+    if (!c) {
+      // Everything queued is still in its category cooldown. Without a retry it
+      // would only speak on the NEXT enqueue — possibly minutes later and stale.
+      if (sched.topPriority() > 0) {
+        retryRef.current = window.setTimeout(pump, 1_000);
+      }
+      return;
+    }
     speakingPriorityRef.current = c.priority;
     const s = settingsRef.current;
     speaker.speak(c.text, { voiceURI: s.voiceURI, rate: s.rate, volume: s.volume }, () => {
@@ -115,10 +127,17 @@ export function useRaceEngineer(): void {
   useEffect(() => {
     const scheduler = schedulerRef.current;
     const speaker = speakerRef.current;
+    const clearRetry = () => {
+      if (retryRef.current != null) {
+        clearTimeout(retryRef.current);
+        retryRef.current = null;
+      }
+    };
 
     if (!engineer.enabled) {
       speaker.cancel();
       scheduler.clear();
+      clearRetry();
       prevRef.current = null;
       return;
     }
@@ -140,6 +159,7 @@ export function useRaceEngineer(): void {
         if (unlisten) unlisten();
         speaker.cancel();
         scheduler.clear();
+        clearRetry();
       };
     }
 
@@ -158,6 +178,7 @@ export function useRaceEngineer(): void {
       clearInterval(timer);
       speaker.cancel();
       scheduler.clear();
+      clearRetry();
       prevRef.current = null;
     };
   }, [engineer.enabled, feed.sample, enqueue, ingestSample]);

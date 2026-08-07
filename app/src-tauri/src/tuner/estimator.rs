@@ -33,7 +33,9 @@ pub fn lever_channel(lever: SuggestKey) -> (Channel, i32) {
         SuggestKey::RearWing => (Channel::Mid, 1),
         SuggestKey::FrontAntiRollBar => (Channel::Mid, 1),
         SuggestKey::OffThrottle => (Channel::Mid, 1),
-        SuggestKey::OnThrottle => (Channel::Exit, 1),
+        // Raising the on-throttle diff (more locked) makes the exit snappier, so a
+        // +1 click moves the exit channel toward oversteer (negative).
+        SuggestKey::OnThrottle => (Channel::Exit, -1),
         SuggestKey::RearAntiRollBar => (Channel::Exit, -1),
         SuggestKey::BrakeBias => (Channel::Entry, 1),
     }

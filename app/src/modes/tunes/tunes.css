@@ -76,17 +76,16 @@
   color: var(--ink);
   font-weight: 600;
 }
-.setups-sort {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-sm);
+/* The sort segmented lives in the list column, directly above what it sorts;
+   full-width so the segments lock to the column grid. */
+.setups-sortseg {
+  display: flex;
+  align-self: stretch;
 }
-.setups-sort-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--faint);
+.setups-sortseg .seg-opt {
+  flex: 1;
+  padding-inline: 4px;
+  text-align: center;
 }
 
 /* Status dots, shared by list rows and detail. */
@@ -145,9 +144,14 @@
 /* ---- Master list + detail ----------------------------------------------- */
 .setups-body {
   display: grid;
-  grid-template-columns: minmax(240px, 320px) 1fr;
-  gap: var(--space-lg);
+  grid-template-columns: minmax(260px, 320px) 1fr;
+  gap: var(--space-xl);
   align-items: start;
+}
+.setups-listcol {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
 }
 .setups-list {
   margin: 0;
@@ -155,7 +159,7 @@
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-xs);
 }
 .tune-row {
   width: 100%;
@@ -335,7 +339,9 @@
   color: var(--faint);
 }
 .timestat-best {
-  font-size: 1.75rem;
+  /* The view's glance value (Display tier): the recorded bests are what a
+     driver opens a saved tune to read. */
+  font-size: var(--text-display);
   font-weight: 600;
   line-height: 1.1;
   letter-spacing: var(--tracking-tight);
@@ -383,6 +389,12 @@
 .setup-row-ro {
   grid-template-columns: 1fr 64px 48px;
 }
+/* Section rhythm: identity + recorded bests sit tight (the payoff a driver
+   opens a tune for); the reference sheet and notes step back on a wider beat. */
+.tune-sheet,
+.tune-notes-field {
+  margin-top: var(--space-sm); /* + the column's 16px gap = a 24px section step */
+}
 .tune-notes-field {
   display: flex;
   flex-direction: column;
@@ -390,6 +402,7 @@
 }
 .tune-notes {
   width: 100%;
+  max-width: 72ch; /* notes are prose; don't let the field run the panel's full ~110ch */
   min-height: 64px;
   resize: vertical;
   font-family: inherit;
@@ -543,5 +556,322 @@
   color: var(--muted);
 }
 .ref-note strong {
+  color: var(--ink);
+}
+
+/* ======================================================================== */
+/* Bench — compare two saved setups                                          */
+/* ======================================================================== */
+.bench-pickers {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+.bench-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 220px;
+  /* A long tune name must not stretch the select and break the picker row;
+     the native control ellipsizes its closed value when constrained. */
+  max-width: 340px;
+}
+.bench-select {
+  width: 100%;
+}
+.bench-picker-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+/* "Comparing the car you're in": the app's running-state vocabulary. */
+.bench-picker-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--data-good);
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 10.5px;
+}
+.bench-vs {
+  padding-bottom: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.bench-track {
+  padding-bottom: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* The report is a two-column comparison canvas: the verdict and the wear
+   projection span both columns; the Pace and Setup-differences tables — sibling
+   A-vs-B reads — sit side by side so the eye can connect pace to the levers
+   that caused it. */
+.bench-report {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-xl);
+  align-items: start;
+}
+.bench-verdict {
+  grid-column: 1 / -1;
+}
+/* Right column: the diff table with its derived wear projection beneath it. */
+.bench-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  min-width: 0;
+}
+@media (max-width: 980px) {
+  .bench-report {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- Verdict ------------------------------------------------------------ */
+.bench-verdict {
+  padding: var(--space-lg) var(--space-xl);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.bench-verdict-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xl);
+  flex-wrap: wrap;
+}
+.bench-verdict-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.bench-verdict-line {
+  margin: 0;
+  font-size: var(--text-headline);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  color: var(--ink);
+  overflow-wrap: break-word; /* an 80-char unbroken tune name wraps, not overflows */
+}
+.bench-verdict-basis {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.bench-verdict-none {
+  font-size: var(--text-body);
+  font-weight: 450;
+  letter-spacing: normal;
+  color: var(--muted);
+}
+/* The page's glance value (Display tier): the measured gap, as a data readout. */
+.bench-verdict-gap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.bench-gap-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.bench-gap-value {
+  font-size: var(--text-display);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: var(--tracking-tight);
+  color: var(--data-good);
+}
+.bench-caveats {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+.bench-caveat {
+  padding: 3px 10px;
+  border: 1px solid color-mix(in oklch, var(--data-caution) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--data-caution) 9%, transparent);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* ---- Tables (pace + setup differences) ----------------------------------- */
+.bench-table {
+  width: 100%;
+  max-width: 560px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.bench-table th,
+.bench-table td {
+  padding: 6px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-soft);
+}
+.bench-table thead th {
+  /* Clamp: tune names cap at 80 chars upstream; a long one must not blow the
+     column grid (the full name is in the title tooltip). */
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.bench-table tbody th {
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.bench-table td {
+  color: var(--ink);
+}
+.bench-table td.is-best {
+  color: var(--data-good);
+  font-weight: 600;
+}
+/* Non-hue companion to the green (Redundant-Encoding Rule): a trailing dot in
+   the app's status-dot vocabulary, inheriting the cell colour. */
+.bench-best-mark {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 7px;
+  vertical-align: 2px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.bench-row-meta td,
+.bench-row-meta th {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.bench-note {
+  margin: 0;
+  max-width: 52ch; /* same proportional-glyph math as .bench-wear-foot */
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* ---- Wear projection ------------------------------------------------------ */
+.bench-wear {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+/* Equal halves of the column (the same 50/50 beat as the tables above). */
+.bench-wear-axles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+  max-width: 560px;
+}
+.bench-axle {
+  min-width: 0; /* let the ellipsis engage; grid min-width:auto would blow the track */
+  padding: var(--space-md) var(--space-lg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bench-axle-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.bench-axle-value {
+  font-size: 15px;
+  color: var(--ink);
+}
+.bench-axle-none {
+  font-size: 13px;
+  color: var(--muted);
+}
+.bench-axle-who {
+  display: block; /* deliberate second line, not an incidental wrap */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.bench-wear-levers {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+}
+.bench-wear-lever {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 13px;
+  color: var(--ink);
+}
+.bench-wear-lever.is-unmeasured,
+.bench-wear-obs {
+  color: var(--faint);
+  font-size: 12px;
+}
+.bench-wear-foot {
+  margin: 0;
+  /* Geist's proportional glyphs run ~1.5 characters per ch reference, so 52ch
+     ≈ 75 real characters/line; 70ch measured ~93 and read as a wall. */
+  max-width: 52ch;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--faint);
+  overflow-wrap: break-word; /* interpolated tune names can be unbroken strings */
+}
+
+/* Compare failed (stale id, backend hiccup): a quiet recoverable state, not a
+   full-page error. */
+.bench-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-lg) var(--space-xl);
+  border: 1px solid color-mix(in oklch, var(--data-danger) 30%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--data-danger-tint);
+}
+.bench-error-line {
+  margin: 0;
+  font-size: var(--text-body);
   color: var(--ink);
 }

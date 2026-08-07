@@ -40,6 +40,9 @@ export function useTunerSnapshot(sample: boolean): TunerSnapshot | null {
         }
       };
       await poll();
+      // Unmounted while the first poll was in flight: cleanup already ran, so an
+      // interval started now would never be cleared.
+      if (!active) return;
       timer = window.setInterval(poll, POLL_MS);
     })();
 

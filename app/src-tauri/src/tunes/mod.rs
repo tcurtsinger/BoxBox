@@ -6,5 +6,6 @@
 //! The Tauri commands and the listener-side lap recording that consume this are
 //! wired in `telemetry.rs`.
 
+pub mod bench;
 pub mod model;
 pub mod store;

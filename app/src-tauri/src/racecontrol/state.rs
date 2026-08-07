@@ -112,6 +112,11 @@ pub struct DriverState {
     pub total_warnings: u8,
     pub corner_cutting_warnings: u8,
     pub current_lap_invalid: bool,
+    /// Latches `current_lap_invalid` across the whole in-progress lap, so when the
+    /// lap number rolls over we know whether the just-completed lap was ever
+    /// invalidated (the per-frame flag only covers the instant it's read).
+    #[serde(skip)]
+    lap_invalid_latch: bool,
     pub driver_status: u8,
     pub result_status: u8,
     // status (CarStatus)
@@ -401,9 +406,22 @@ impl SessionState {
             d.position = c.car_position;
             d.grid_position = c.grid_position;
             d.last_lap_ms = c.last_lap_time_ms;
-            if c.last_lap_time_ms > 0 && (d.best_lap_ms == 0 || c.last_lap_time_ms < d.best_lap_ms)
-            {
-                d.best_lap_ms = c.last_lap_time_ms;
+            // Only count a completed lap toward the driver's best if no frame of it
+            // was flagged invalid — the game reports a deleted lap's time in
+            // `last_lap_time_ms` regardless, and min-tracking it would put wiped
+            // laps at the top of the qualifying order. The latch belongs to the
+            // just-finished lap; this frame's flag starts the new lap's latch.
+            if c.current_lap_num != d.current_lap_num {
+                let completed_lap_invalid = d.lap_invalid_latch;
+                d.lap_invalid_latch = c.current_lap_invalid;
+                if !completed_lap_invalid
+                    && c.last_lap_time_ms > 0
+                    && (d.best_lap_ms == 0 || c.last_lap_time_ms < d.best_lap_ms)
+                {
+                    d.best_lap_ms = c.last_lap_time_ms;
+                }
+            } else {
+                d.lap_invalid_latch |= c.current_lap_invalid;
             }
             d.current_lap_num = c.current_lap_num;
             d.sector = c.sector;
@@ -530,7 +548,9 @@ impl SessionState {
                 && last.car_indices == car_indices
                 && last.lap_num == lap_num
                 && last.detail == detail
-                && session_time - last.session_time < INCIDENT_DEDUPE_SECS
+                // Bounded below too: after a flashback the session clock rewinds,
+                // making the delta negative — that's a new event, not a duplicate.
+                && (0.0..INCIDENT_DEDUPE_SECS).contains(&(session_time - last.session_time))
             {
                 return;
             }
@@ -1036,6 +1056,29 @@ mod tests {
         let s = st.snapshot();
         let order: Vec<&str> = s.drivers.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(order, ["B", "C", "A"]); // fastest first; no-time car last
+    }
+
+    #[test]
+    fn invalidated_lap_does_not_count_as_best() {
+        let mut st = SessionState::new();
+        st.ingest(&session("Q", 5), 0.0);
+        st.ingest(&participants("Q", vec![participant(0, "A", 1)]), 0.0);
+
+        // Lap 2 in progress, gets flagged invalid mid-lap (track limits).
+        st.ingest(&laps("Q", vec![lap_entry(0, 1, 1, 0, 2)]), 0.0);
+        let mut flagged = lap_entry(0, 1, 1, 0, 2);
+        flagged.current_lap_invalid = true;
+        st.ingest(&laps("Q", vec![flagged]), 1.0);
+        // Flag clears before the line (it latches for the whole lap regardless).
+        st.ingest(&laps("Q", vec![lap_entry(0, 1, 1, 0, 2)]), 2.0);
+
+        // Lap 2 completes with a monster time that was deleted: not a best.
+        st.ingest(&laps("Q", vec![lap_entry(0, 1, 1, 77_900, 3)]), 3.0);
+        assert_eq!(st.snapshot().drivers[0].best_lap_ms, 0, "deleted lap ignored");
+
+        // Lap 3 completes clean and slower: that's the real best.
+        st.ingest(&laps("Q", vec![lap_entry(0, 1, 1, 78_400, 4)]), 4.0);
+        assert_eq!(st.snapshot().drivers[0].best_lap_ms, 78_400);
     }
 
     #[test]

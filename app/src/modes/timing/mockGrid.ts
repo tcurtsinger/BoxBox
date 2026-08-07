@@ -100,6 +100,19 @@ export interface DriverRow {
   /** Driver has hidden their online name (showOnlineNames off) and no steward
    *  override is set, so the shown name is the game's redaction — flag it (P2.6). */
   namePrivate: boolean;
+  /** Real per-car detail, present only on live rows (never the sample grid). The
+   *  driver panel renders this instead of the synthesized placeholder detail. */
+  live?: LiveDetail;
+}
+
+/** Wheel arrays are in the F1 packet order [RL, RR, FL, FR]. */
+export interface LiveDetail {
+  tyreSurfaceTemp: number[]; // °C
+  tyreWear: number[]; // %
+  frontWingDamage: number; // %
+  rearWingDamage: number;
+  engineDamage: number;
+  gearboxDamage: number;
 }
 
 function sectorsFor(

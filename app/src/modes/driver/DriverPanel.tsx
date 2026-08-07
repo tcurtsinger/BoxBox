@@ -64,50 +64,56 @@ export function DriverPanel() {
           ))}
         </div>
 
-        <section className="dp-section">
-          <h3 className="dp-section-title">Tyre temps &amp; wear</h3>
-          <div className="dp-corners">
-            {detail.corners.map((c) => (
-              <div className="dp-corner" key={c.pos}>
-                <div className="dp-corner-top">
-                  <span className="dp-corner-pos">{c.pos}</span>
-                  <span className="dp-corner-temp mono">{c.temp}</span>
+        {detail.corners.length > 0 && (
+          <section className="dp-section">
+            <h3 className="dp-section-title">Tyre temps &amp; wear</h3>
+            <div className="dp-corners">
+              {detail.corners.map((c) => (
+                <div className="dp-corner" key={c.pos}>
+                  <div className="dp-corner-top">
+                    <span className="dp-corner-pos">{c.pos}</span>
+                    <span className="dp-corner-temp mono">{c.temp}</span>
+                  </div>
+                  <div className="dp-bar">
+                    <span className={`dp-bar-fill tone-${c.tone}`} style={{ width: `${c.wear}%` }} />
+                  </div>
+                  <span className={`dp-corner-wear mono tone-text-${c.tone}`}>{c.wear}% wear</span>
                 </div>
-                <div className="dp-bar">
-                  <span className={`dp-bar-fill tone-${c.tone}`} style={{ width: `${c.wear}%` }} />
-                </div>
-                <span className={`dp-corner-wear mono tone-text-${c.tone}`}>{c.wear}% wear</span>
-              </div>
-            ))}
-          </div>
-        </section>
+              ))}
+            </div>
+          </section>
+        )}
 
-        <section className="dp-section">
-          <h3 className="dp-section-title">Damage</h3>
-          <div className="dp-damage">
-            {detail.damage.map((d) => (
-              <div className="dp-dmg" key={d.label}>
-                <span className="dp-dmg-label">{d.label}</span>
-                <div className="dp-bar dp-bar-sm">
-                  <span className={`dp-bar-fill tone-${d.tone}`} style={{ width: `${Math.max(2, d.pct)}%` }} />
+        {detail.damage.length > 0 && (
+          <section className="dp-section">
+            <h3 className="dp-section-title">Damage</h3>
+            <div className="dp-damage">
+              {detail.damage.map((d) => (
+                <div className="dp-dmg" key={d.label}>
+                  <span className="dp-dmg-label">{d.label}</span>
+                  <div className="dp-bar dp-bar-sm">
+                    <span className={`dp-bar-fill tone-${d.tone}`} style={{ width: `${Math.max(2, d.pct)}%` }} />
+                  </div>
+                  <span className={`dp-dmg-pct mono tone-text-${d.tone}`}>{d.pct}%</span>
                 </div>
-                <span className={`dp-dmg-pct mono tone-text-${d.tone}`}>{d.pct}%</span>
-              </div>
-            ))}
-          </div>
-        </section>
+              ))}
+            </div>
+          </section>
+        )}
 
-        <section className="dp-section">
-          <h3 className="dp-section-title">Recent laps</h3>
-          <div className="dp-laps">
-            {detail.laps.map((l) => (
-              <div className={`dp-lap${l.best ? " is-best" : ""}`} key={l.label}>
-                <span className="dp-lap-label">{l.label}</span>
-                <span className="dp-lap-time mono">{l.time}</span>
-              </div>
-            ))}
-          </div>
-        </section>
+        {detail.laps.length > 0 && (
+          <section className="dp-section">
+            <h3 className="dp-section-title">Recent laps</h3>
+            <div className="dp-laps">
+              {detail.laps.map((l) => (
+                <div className={`dp-lap${l.best ? " is-best" : ""}`} key={l.label}>
+                  <span className="dp-lap-label">{l.label}</span>
+                  <span className="dp-lap-time mono">{l.time}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
     </aside>
   );

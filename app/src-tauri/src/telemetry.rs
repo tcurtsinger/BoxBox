@@ -23,6 +23,7 @@ use crate::persist::{ProfileState, ProfileStore};
 use crate::racecontrol::state::Incident;
 use crate::racecontrol::{SessionSnapshot, SessionState};
 use crate::tuner::{Snapshot, TunerState};
+use crate::tunes::bench::{build_report, BenchReport};
 use crate::tunes::model::{LapRecord, Tune, TuneLibrary, TuneSummary};
 use crate::tunes::store::{TuneLibraryState, TuneStore, TuneStoreState};
 
@@ -153,6 +154,33 @@ fn classify_source(
             }
         }
     }
+}
+
+/// True if forwarding to `target` would deliver packets straight back to our own
+/// listen socket: the copy would arrive with a source host that passes the pin
+/// (it IS this machine), get forwarded again, and so on — an unbounded feedback
+/// loop that floods the loop thread and double-ingests every packet. A target on
+/// our listen port is only a loop if the address is this machine; binding a
+/// throwaway socket to the IP is a dependency-free way to test ownership.
+fn forwards_to_self(port: u16, target: &SocketAddr) -> bool {
+    if target.port() != port {
+        return false;
+    }
+    let ip = target.ip();
+    if ip.is_loopback() || ip.is_unspecified() {
+        return true;
+    }
+    if let IpAddr::V4(v4) = ip {
+        if v4.is_broadcast() {
+            return true; // a broadcast on our port comes back to us too
+        }
+    }
+    UdpSocket::bind((ip, 0)).is_ok()
+}
+
+/// Split forward targets into (kept, dropped-as-self-loop).
+fn sanitize_forwards(port: u16, forwards: Vec<SocketAddr>) -> (Vec<SocketAddr>, Vec<SocketAddr>) {
+    forwards.into_iter().partition(|t| !forwards_to_self(port, t))
 }
 
 /// Snapshot any pending profile change under the engine lock (cheap) and write it
@@ -373,29 +401,30 @@ fn spawn_listener(
                             // source has gone silent past SOURCE_STALL while another
                             // host is now sending, its address has likely moved
                             // (VPN/adapter failover, DHCP renew) — re-open selection.
-                            match classify_source(source, last_from_source, host, now) {
-                                SourceAction::Ignore => continue,
-                                SourceAction::Reopen => {
-                                    if let Some(pinned) = source {
-                                        log_event(
-                                            &log_path,
-                                            &format!(
-                                                "pinned source {pinned} silent >{}s, re-selecting (now hearing {host})",
-                                                SOURCE_STALL.as_secs()
-                                            ),
-                                        );
-                                    }
-                                    source = None;
-                                }
-                                SourceAction::Accept => {}
+                            let action = classify_source(source, last_from_source, host, now);
+                            if action == SourceAction::Ignore {
+                                continue;
                             }
                             let packet = parse_packet(&buf[..n]);
-                            // Pin only on a COMPLETE, decoded packet (P1.1): a
-                            // valid-but-unhandled packet can't claim the feed before
-                            // the real game does.
-                            if source.is_none() {
+                            // Pin (or re-pin) only on a COMPLETE, decoded packet
+                            // (P1.1): a valid-but-unhandled packet can't claim the
+                            // feed before the real game does, and — for Reopen —
+                            // junk sprayed during a natural pause (menus, results)
+                            // must not drop the anti-spoof pin either.
+                            if action == SourceAction::Reopen || source.is_none() {
                                 match packet.as_ref() {
                                     Some(p) if p.data.is_some() => {
+                                        if action == SourceAction::Reopen {
+                                            if let Some(pinned) = source {
+                                                log_event(
+                                                    &log_path,
+                                                    &format!(
+                                                        "pinned source {pinned} silent >{}s, re-selecting (now hearing {host})",
+                                                        SOURCE_STALL.as_secs()
+                                                    ),
+                                                );
+                                            }
+                                        }
                                         log_event(&log_path, &format!("locked onto source {host}"));
                                         source = Some(host);
                                         live = true;
@@ -568,6 +597,22 @@ pub fn start_telemetry(
     forwards: Vec<SocketAddr>,
 ) -> Result<(), String> {
     let mut slot = state.0.lock().map_err(|e| e.to_string())?;
+    // Diagnostic log beside the profile, so a stall the user can't reproduce on
+    // demand leaves evidence (rebinds, recv errors, panics, liveness) they can send.
+    let log_path = app
+        .path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("boxbox.log"));
+    // A forward target pointing back at our own listen endpoint would create an
+    // infinite feedback loop (see forwards_to_self) — drop those up front.
+    let (forwards, dropped) = sanitize_forwards(port, forwards);
+    for t in &dropped {
+        log_event(
+            &log_path,
+            &format!("forward target {t} dropped: it points back at this listener (port {port})"),
+        );
+    }
     // Already bound to this port: reconcile the forward targets live so toggling
     // or editing a SimHub target doesn't drop and rebind the feed.
     if let Some(listener) = slot.as_ref() {
@@ -578,13 +623,6 @@ pub fn start_telemetry(
             return Ok(());
         }
     }
-    // Diagnostic log beside the profile, so a stall the user can't reproduce on
-    // demand leaves evidence (rebinds, recv errors, panics, liveness) they can send.
-    let log_path = app
-        .path()
-        .app_config_dir()
-        .ok()
-        .map(|d| d.join("boxbox.log"));
     // Different port: bind the new listener first; only replace (and so drop) the
     // old one on success, so a failed bind leaves the existing listener running
     // rather than killing the feed (P2.1). A port change is always to a different
@@ -832,6 +870,32 @@ pub fn save_current_tune(
     Ok(Some(id))
 }
 
+/// Bench: compare two saved tunes — the pace verdict from their recorded laps
+/// plus the projected wear cost of the setup differences, through the profile's
+/// measured wear sensitivities. None when either id is unknown. Locks the library
+/// and the tuner one at a time, never both (the same discipline as
+/// `tuner_snapshot`).
+#[tauri::command]
+pub fn bench_compare(
+    library: tauri::State<'_, TuneLibraryState>,
+    tuner: tauri::State<'_, TunerStore>,
+    a_id: String,
+    b_id: String,
+) -> Result<Option<BenchReport>, String> {
+    let (a, b) = {
+        let lib = library.0.lock().map_err(|e| e.to_string())?;
+        (lib.get(&a_id).cloned(), lib.get(&b_id).cloned())
+    };
+    let (Some(a), Some(b)) = (a, b) else {
+        return Ok(None);
+    };
+    let wear_map = {
+        let t = tuner.0.lock().map_err(|e| e.to_string())?;
+        t.wear_map()
+    };
+    Ok(Some(build_report(&a, &b, &wear_map)))
+}
+
 /// Delete a saved tune.
 #[tauri::command]
 pub fn delete_tune(
@@ -901,7 +965,12 @@ pub fn save_session(
     let value = serde_json::to_value(&snapshot).map_err(|e| e.to_string())?;
     let mut a = archive.0.lock().map_err(|e| e.to_string())?;
     let id = a.save(name.as_deref().unwrap_or(""), value, now_ms());
-    store.0.save_if_changed(&a);
+    // The save just bumped the revision, so `false` here means the disk write
+    // failed (disk full, file locked) — history has no background flush to retry,
+    // so a fake Ok would silently lose the session at app exit.
+    if !store.0.save_if_changed(&a) {
+        return Err("couldn't write history.json — the session is not saved to disk".into());
+    }
     Ok(id)
 }
 
@@ -993,6 +1062,29 @@ mod tests {
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    #[test]
+    fn self_loop_forward_targets_are_dropped() {
+        let port = 20777;
+        let (kept, dropped) = sanitize_forwards(
+            port,
+            vec![
+                "127.0.0.1:20777".parse().unwrap(),  // loopback on our port: loop
+                "0.0.0.0:20777".parse().unwrap(),    // unspecified on our port: loop
+                "255.255.255.255:20777".parse().unwrap(), // broadcast on our port: loop
+                "127.0.0.1:20778".parse().unwrap(),  // different port: fine
+                "192.0.2.1:20777".parse().unwrap(),  // some other machine: fine
+            ],
+        );
+        assert_eq!(
+            kept,
+            vec![
+                "127.0.0.1:20778".parse::<SocketAddr>().unwrap(),
+                "192.0.2.1:20777".parse().unwrap(),
+            ]
+        );
+        assert_eq!(dropped.len(), 3);
     }
 
     #[test]

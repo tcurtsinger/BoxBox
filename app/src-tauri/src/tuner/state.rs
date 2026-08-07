@@ -443,7 +443,14 @@ impl TunerState {
                 let mine = d.cars.get(idx).cloned();
                 if setup_looks_real(mine.as_ref()) {
                     let mine = mine.unwrap();
-                    if let Some(old) = self.setup.clone() {
+                    // Diff only against a setup captured at THIS track for THIS car
+                    // index. Otherwise the first packet at a new track diffs two
+                    // unrelated saved setups and manufactures a phantom "last
+                    // change" the driver never made — which would be shown,
+                    // rateable, and would move the persisted preference.
+                    let comparable =
+                        self.setup_track_id == self.track_id && self.setup_player_idx == idx as i32;
+                    if let (Some(old), true) = (self.setup.clone(), comparable) {
                         self.on_setup_change(&old, &mine);
                     }
                     self.setup = Some(mine);
@@ -479,18 +486,23 @@ impl TunerState {
         self.t_throttle = 0.0;
         self.t_brake = 0.0;
         // An open gain measurement spanning the reset is suspect: drop it and its
-        // window so it can't complete against samples mixed from two runs.
+        // window so it can't complete against samples mixed from two runs. Same
+        // for an open wear A/B — completing it against a different session's
+        // stint would persist a garbage sensitivity.
         self.window_diag = HashMap::new();
         self.pending = None;
+        self.wear_pending = None;
     }
 
     fn ingest_session(&mut self, s: &SessionData) {
         let new_track = s.track_id as i32;
         if new_track != self.track_id {
             // A new track means a different corner map; the window and any open
-            // measurement no longer apply.
+            // measurement no longer apply. An open wear A/B must not complete by
+            // comparing wear rates from two different tracks.
             self.window_diag = HashMap::new();
             self.pending = None;
+            self.wear_pending = None;
         }
         self.session_type = s.session_type;
         self.track_id = new_track;
@@ -802,6 +814,9 @@ impl TunerState {
                     }
                     self.note_change(single, old, next, true);
                     self.window_diag = HashMap::new();
+                    // The same click may also be ramping a wear lever (the ARBs
+                    // are both): keep the wear A/B's click count honest too.
+                    self.on_setup_change_wear(&changed_fields, old, next);
                     return;
                 }
             }
@@ -828,39 +843,68 @@ impl TunerState {
         }
         self.note_change_opt(single, old, next, false);
         self.window_diag = HashMap::new();
+        self.on_setup_change_wear(&changed_fields, old, next);
+    }
 
-        // Wear A/B: open a fresh measurement if exactly one wear lever moved (and
-        // nothing else) and the outgoing stint had a stable rate.
-        self.wear_pending = None;
+    /// Wear A/B bookkeeping for a setup change, shared by the garage-ramp coalesce
+    /// path and the main path of `on_setup_change`.
+    fn on_setup_change_wear(
+        &mut self,
+        changed_fields: &[SetupField],
+        old: &CarSetupEntry,
+        next: &CarSetupEntry,
+    ) {
         let wear_key: Option<WearLever> = if changed_fields.len() == 1 {
             changed_fields[0].as_wear()
         } else {
             None
         };
-        if let Some(wear_key) = wear_key {
-            if let (Some(wear), Some(baseline)) = (self.wear, self.wear_baseline) {
-                // The outgoing stint is the "before"; only open a measurement if it
-                // was fully clean, so a tainted rate can't anchor the A/B (P2.2).
-                if self.wear_laps >= MIN_WEAR_LAPS && self.wear_stint_clean {
-                    if let Some(before) = wear_rate(baseline, wear, self.wear_laps) {
-                        let front = wear_axle_is_front(wear_key);
-                        let rate_before = if front {
-                            (before.fl + before.fr) / 2.0
-                        } else {
-                            (before.rl + before.rr) / 2.0
-                        };
-                        // Delta on the changed field, in its native units.
-                        let field = changed_fields[0];
-                        self.wear_pending = Some(WearPending {
-                            lever: wear_key,
-                            delta_clicks: field.value(next) - field.value(old),
-                            front,
-                            rate_before,
-                        });
+
+        // A garage multi-click ramp of the SAME wear lever, with no laps driven
+        // since the first click, folds into the open measurement (mirrors the
+        // gain-pending coalesce): dropping it would lose the A/B outright, because
+        // the first click already rebaselined the stint to zero laps and the
+        // reopen below requires a full outgoing stint.
+        let coalesced = match (self.wear_pending.as_mut(), wear_key) {
+            (Some(wp), Some(k)) if wp.lever == k && self.wear_laps < MIN_WEAR_LAPS => {
+                let field = changed_fields[0];
+                wp.delta_clicks += field.value(next) - field.value(old);
+                true
+            }
+            _ => false,
+        };
+
+        if !coalesced {
+            // Close any open measurement, then open a fresh one if exactly one
+            // wear lever moved (and nothing else) and the outgoing stint had a
+            // stable rate.
+            self.wear_pending = None;
+            if let Some(wear_key) = wear_key {
+                if let (Some(wear), Some(baseline)) = (self.wear, self.wear_baseline) {
+                    // The outgoing stint is the "before"; only open a measurement if it
+                    // was fully clean, so a tainted rate can't anchor the A/B (P2.2).
+                    if self.wear_laps >= MIN_WEAR_LAPS && self.wear_stint_clean {
+                        if let Some(before) = wear_rate(baseline, wear, self.wear_laps) {
+                            let front = wear_axle_is_front(wear_key);
+                            let rate_before = if front {
+                                (before.fl + before.fr) / 2.0
+                            } else {
+                                (before.rl + before.rr) / 2.0
+                            };
+                            // Delta on the changed field, in its native units.
+                            let field = changed_fields[0];
+                            self.wear_pending = Some(WearPending {
+                                lever: wear_key,
+                                delta_clicks: field.value(next) - field.value(old),
+                                front,
+                                rate_before,
+                            });
+                        }
                     }
                 }
             }
         }
+
         // Rebaseline the wear stint only when a wear-affecting field changed. A
         // diff / brake-bias / wing tweak (common mid-run, especially from the
         // wheel) must NOT reset it, or the stint never survives the laps the wear
@@ -903,6 +947,11 @@ impl TunerState {
             self.profile_rev += 1;
         }
         self.wear_pending = None;
+    }
+
+    /// The learned wear sensitivities (only levers with observations), for Bench.
+    pub fn wear_map(&self) -> HashMap<WearLever, super::wear_estimator::LearnedWear> {
+        self.wear_estimator.as_map()
     }
 
     fn note_change_opt(
@@ -1906,6 +1955,69 @@ mod tests {
                 .unwrap_or(false),
             "front toe sensitivity recorded: {gains:?}"
         );
+    }
+
+    #[test]
+    fn wear_measurement_survives_a_garage_ramp_of_the_same_lever() {
+        let mut st = TunerState::new();
+        wear_baseline_then_change(&mut st); // toe 0.06 -> 0.04 opens the A/B
+        st.ingest(&setups_toe(0.02)); // second click of the same ramp, no laps between
+
+        // The ramp coalesced instead of destroying the measurement.
+        let wp = st.wear_pending.clone().expect("measurement still open");
+        assert!(
+            (wp.delta_clicks - (0.02 - 0.06)).abs() < 1e-9,
+            "delta reflects the whole ramp, got {}",
+            wp.delta_clicks
+        );
+
+        // A clean after-stint completes it and learns.
+        st.ingest(&damage(3.5, 3.5, 7.0, 7.0));
+        st.ingest(&lapdata(10.0, 5, 0));
+        st.ingest(&damage(4.0, 4.0, 8.0, 8.0));
+        st.ingest(&lapdata(10.0, 6, 0));
+        st.ingest(&damage(4.5, 4.5, 9.0, 9.0));
+        st.ingest(&lapdata(10.0, 7, 0));
+        assert_eq!(st.profile_revision(), 1, "ramped change still learns");
+    }
+
+    #[test]
+    fn track_switch_does_not_manufacture_a_setup_change() {
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000)); // Suzuka
+        st.ingest(&setups());
+        st.ingest(&session(2, 18, 3500)); // new track, new session
+        // First setups packet at the new track: a different saved setup, not a
+        // garage change the driver made here.
+        let mut other = setups();
+        if let Some(Body::CarSetups(d)) = other.data.as_mut() {
+            d.cars[0].rear_wing += 2;
+        }
+        st.ingest(&other);
+        assert!(
+            st.snapshot().last_change.is_none(),
+            "a cross-track setup diff must not register as a change"
+        );
+    }
+
+    #[test]
+    fn wear_measurement_abandoned_on_track_change() {
+        let mut st = TunerState::new();
+        wear_baseline_then_change(&mut st); // A/B open with Suzuka's rate as "before"
+        st.ingest(&session(2, 18, 3500)); // different track
+
+        assert!(
+            st.wear_pending.is_none(),
+            "an open wear A/B must not span two tracks"
+        );
+        // A clean stint at the new track learns nothing from the stale change.
+        st.ingest(&damage(3.5, 3.5, 7.0, 7.0));
+        st.ingest(&lapdata(10.0, 5, 0));
+        st.ingest(&damage(4.0, 4.0, 8.0, 8.0));
+        st.ingest(&lapdata(10.0, 6, 0));
+        st.ingest(&damage(4.5, 4.5, 9.0, 9.0));
+        st.ingest(&lapdata(10.0, 7, 0));
+        assert_eq!(st.profile_revision(), 0);
     }
 
     #[test]

@@ -261,7 +261,8 @@ function SessionRow({
             onChange={(e) => setNameDraft(e.target.value)}
             onBlur={commitName}
             onKeyDown={(e) => {
-              if (e.key === "Enter") void commitName();
+              // Blur commits (once) — calling commitName here too could rename twice.
+              if (e.key === "Enter") e.currentTarget.blur();
               if (e.key === "Escape") {
                 setNameDraft(session.name);
                 setEditing(false);

@@ -147,11 +147,13 @@ fn gains_table() -> [LeverGain; 8] {
             axis: Mid,
             per_rad: -25.0,
         },
-        // Power-oversteer on exit (traction, >= 0):
+        // Power-oversteer on exit (traction, >= 0). On-throttle diff is negative:
+        // a LOWER (more open) diff calms wheelspin on exit, so power oversteer
+        // should suggest reducing it.
         LeverGain {
             key: OnThrottle,
             axis: Traction,
-            per_rad: 40.0,
+            per_rad: -40.0,
         },
         LeverGain {
             key: RearAntiRollBar,

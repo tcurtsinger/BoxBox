@@ -1,10 +1,10 @@
 /**
  * Builds the per-driver detail shown in the right sidebar. Headline stats come
- * straight from the live timing row; tyre temps/wear, damage, and recent laps
- * are synthesized deterministically per car (placeholder until the telemetry
- * feed carries them), so the same driver always reads the same.
+ * straight from the timing row. Live rows carry the real per-car telemetry
+ * (`row.live`: tyre temps/wear + damage from the feed); the sample grid has no
+ * feed, so its tyres/damage/laps are synthesized deterministically per car.
  */
-import { fmtLap, fmtSec, fmtFuel, type DriverRow } from "../timing/mockGrid";
+import { fmtLap, fmtSec, fmtFuel, type DriverRow, type LiveDetail } from "../timing/mockGrid";
 import { SAMPLE_SESSION } from "../timing/mockGrid";
 
 export type Tone = "good" | "caution" | "danger";
@@ -48,7 +48,39 @@ function rng(seed: number): () => number {
 const wearTone = (w: number): Tone => (w > 55 ? "danger" : w > 32 ? "caution" : "good");
 const dmgTone = (v: number): Tone => (v > 40 ? "danger" : v > 18 ? "caution" : "good");
 
-export function buildDriverDetail(row: DriverRow): DriverDetail {
+// Wheel arrays arrive in packet order [RL, RR, FL, FR]; the panel shows FL first.
+const CORNER_LABELS: [string, number][] = [
+  ["FL", 2],
+  ["FR", 3],
+  ["RL", 0],
+  ["RR", 1],
+];
+
+/** Corners + damage from the real feed. Restricted telemetry arrives zeroed, so
+ *  the caller skips this for restricted drivers rather than showing fake zeros. */
+function liveSections(live: LiveDetail): { corners: Corner[]; damage: Damage[] } {
+  const corners: Corner[] = CORNER_LABELS.map(([pos, w]) => {
+    const wear = Math.round(live.tyreWear[w] ?? 0);
+    const temp = live.tyreSurfaceTemp[w] ?? 0;
+    return { pos, temp: temp > 0 ? `${temp}°C` : "—", wear, tone: wearTone(wear) };
+  });
+  const damage: Damage[] = (
+    [
+      ["Front wing", live.frontWingDamage],
+      ["Rear wing", live.rearWingDamage],
+      ["Engine", live.engineDamage],
+      ["Gearbox", live.gearboxDamage],
+    ] as [string, number][]
+  ).map(([label, pct]) => ({ label, pct, tone: dmgTone(pct) }));
+  return { corners, damage };
+}
+
+/** Synthesized tyres/damage/laps for the sample grid (no feed behind it). */
+function sampleSections(row: DriverRow): {
+  corners: Corner[];
+  damage: Damage[];
+  laps: LapRow[];
+} {
   const r = rng(row.no * 7 + 3);
 
   const corners: Corner[] = ["FL", "FR", "RL", "RR"].map((pos, k) => {
@@ -77,6 +109,19 @@ export function buildDriverDetail(row: DriverRow): DriverDetail {
       best: isBest,
     });
   }
+
+  return { corners, damage, laps };
+}
+
+export function buildDriverDetail(row: DriverRow): DriverDetail {
+  // Live rows show only real data: tyres/damage from the feed (hidden entirely
+  // when the driver restricts telemetry — they'd arrive as fake zeros), and no
+  // recent-laps section (the feed doesn't carry per-lap history yet).
+  const { corners, damage, laps } = row.live
+    ? row.restricted
+      ? { corners: [], damage: [], laps: [] }
+      : { ...liveSections(row.live), laps: [] }
+    : sampleSections(row);
 
   const stats: Stat[] = [
     { label: "Last lap", value: fmtLap(row.lastMs) },

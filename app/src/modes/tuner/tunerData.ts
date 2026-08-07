@@ -174,9 +174,10 @@ export function fillPct(value: number, min: number, max: number): number {
 
 export const fmtLap = (ms: number | null): string => {
   if (ms == null || !Number.isFinite(ms) || ms <= 0) return "—";
-  const totalSec = ms / 1000;
-  const m = Math.floor(totalSec / 60);
-  const s = totalSec - m * 60;
+  // Round to the displayed tenth FIRST, or 59.96s formats as "1:60.0".
+  const tenths = Math.round(ms / 100);
+  const m = Math.floor(tenths / 600);
+  const s = (tenths - m * 600) / 10;
   return `${m}:${s.toFixed(1).padStart(4, "0")}`;
 };
 
@@ -192,12 +193,20 @@ export function trimVerdict(runs: RunStats[], cur: { frontWing: number; rearWing
   const byLap = runs.filter((r) => r.bestLapMS != null).sort((a, b) => (a.bestLapMS as number) - (b.bestLapMS as number));
   if (byLap.length < 2) return byLap.length === 1 ? "Drive another setup to compare." : null;
   const best = byLap[0], next = byLap[1];
-  const gap = ((next.bestLapMS as number) - (best.bestLapMS as number)) / 1000;
   const bestWings = `${best.frontWing}/${best.rearWing}`;
-  const nextWings = `${next.frontWing}/${next.rearWing}`;
-  return trimRelation(best, cur) === "current"
-    ? `Your current wings (${bestWings}) are fastest — ${gap.toFixed(1)}s up on ${nextWings}. Keep them.`
-    : `Wings ${bestWings} are fastest — ${gap.toFixed(1)}s up on your current ${nextWings}. Worth a switch.`;
+  if (trimRelation(best, cur) === "current") {
+    const gap = ((next.bestLapMS as number) - (best.bestLapMS as number)) / 1000;
+    return `Your current wings (${bestWings}) are fastest — ${gap.toFixed(1)}s up on ${next.frontWing}/${next.rearWing}. Keep them.`;
+  }
+  // Compare the fastest run against the CURRENT trim's own run when it was
+  // measured; only fall back to the runner-up when the current trim has no lap.
+  const curRun = byLap.find((r) => trimRelation(r, cur) === "current");
+  if (curRun) {
+    const gap = ((curRun.bestLapMS as number) - (best.bestLapMS as number)) / 1000;
+    return `Wings ${bestWings} are fastest — ${gap.toFixed(1)}s up on your current ${cur.frontWing}/${cur.rearWing}. Worth a switch.`;
+  }
+  const gap = ((next.bestLapMS as number) - (best.bestLapMS as number)) / 1000;
+  return `Wings ${bestWings} are fastest — ${gap.toFixed(1)}s up on the next best ${next.frontWing}/${next.rearWing}. Worth a try.`;
 }
 
 export const COMPOUND_NAME: Record<number, string> = { 16: "Soft", 17: "Medium", 18: "Hard", 7: "Intermediate", 8: "Wet" };

@@ -118,6 +118,17 @@ export function GaugeIcon({ size = 16, className }: IconProps) {
   );
 }
 
+/** A balance scale: the Bench (compare two setups) section. */
+export function ScaleIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M12 4v16M8 20h8M12 4H6M12 4h6" />
+      <path d="M6 4l-2.5 6h5L6 4zM3.5 10a2.5 2.5 0 0 0 5 0" />
+      <path d="M18 4l-2.5 6h5L18 4zM15.5 10a2.5 2.5 0 0 0 5 0" />
+    </svg>
+  );
+}
+
 /** A clock with a rewind arrow: the saved-session History section. */
 export function HistoryIcon({ size = 16, className }: IconProps) {
   return (

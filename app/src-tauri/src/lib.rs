@@ -34,35 +34,30 @@ pub fn run() {
             // into the in-memory engines, sharing each store with the listener +
             // commands so learned tuning, saved tunes, and session history survive
             // restarts.
-            let config_dir = app.path().app_config_dir().ok();
-            let resolve = |name: &str, fallback: &str| {
-                config_dir
-                    .clone()
-                    .map(|d| d.join(name))
-                    .unwrap_or_else(|| PathBuf::from(fallback))
-            };
+            // Fall back to a stable per-user temp subdir, never the process CWD —
+            // an app launched from a shell could otherwise scatter (or fail to
+            // write) its data files wherever it happened to start.
+            let config_dir = app
+                .path()
+                .app_config_dir()
+                .unwrap_or_else(|_| std::env::temp_dir().join("boxbox"));
+            let resolve = |name: &str| -> PathBuf { config_dir.join(name) };
 
-            let profile = Arc::new(ProfileStore::new(resolve(
-                "profile.json",
-                "boxbox-profile.json",
-            )));
+            let profile = Arc::new(ProfileStore::new(resolve("profile.json")));
             let tuner = app.state::<TunerStore>().0.clone();
             if let Ok(mut t) = tuner.lock() {
                 profile.load_into(&mut t);
             }
             app.manage(ProfileState(profile));
 
-            let tunes = Arc::new(TuneStore::new(resolve("tunes.json", "boxbox-tunes.json")));
+            let tunes = Arc::new(TuneStore::new(resolve("tunes.json")));
             let library = app.state::<TuneLibraryState>().0.clone();
             if let Ok(mut l) = library.lock() {
                 tunes.load_into(&mut l);
             }
             app.manage(TuneStoreState(tunes));
 
-            let history = Arc::new(HistoryStore::new(resolve(
-                "history.json",
-                "boxbox-history.json",
-            )));
+            let history = Arc::new(HistoryStore::new(resolve("history.json")));
             let archive = app.state::<HistoryState>().0.clone();
             if let Ok(mut a) = archive.lock() {
                 history.load_into(&mut a, telemetry::now_ms());
@@ -89,6 +84,7 @@ pub fn run() {
             telemetry::set_driver_name,
             telemetry::tune_list,
             telemetry::open_tune,
+            telemetry::bench_compare,
             telemetry::save_current_tune,
             telemetry::delete_tune,
             telemetry::set_tune_pinned,

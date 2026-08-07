@@ -17,9 +17,18 @@ export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     let dispose = () => {};
-    watchMaximized(setMaximized).then((fn) => (dispose = fn));
-    return () => dispose();
+    watchMaximized(setMaximized).then((fn) => {
+      // Torn down while subscribing (StrictMode double-mount): unlisten now,
+      // the cleanup below already ran with the no-op.
+      if (cancelled) fn();
+      else dispose = fn;
+    });
+    return () => {
+      cancelled = true;
+      dispose();
+    };
   }, []);
 
   return (

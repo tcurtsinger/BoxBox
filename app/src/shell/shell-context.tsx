@@ -12,8 +12,8 @@ import type { Tune } from "../modes/tunes/tunesData";
 
 export type Mode = "tunes" | "race";
 
-/** The two sections inside the Tunes mode (left section rail). */
-export type TunesSection = "setups" | "tuner";
+/** The sections inside the Tunes mode (left section rail). */
+export type TunesSection = "setups" | "tuner" | "bench";
 
 export type FeedState = "no-feed" | "connecting" | "standby" | "live";
 
@@ -132,6 +132,10 @@ interface ShellState {
    *  or null. UDP is read-only, so this is a target to dial in-game, not a push. */
   referenceTune: Tune | null;
   setReferenceTune: (t: Tune | null) => void;
+  /** Tune id handed to Bench as Setup A ("Bench" from the Setups detail), or
+   *  null. Consumed and cleared by BenchView on arrival. */
+  benchSeed: string | null;
+  setBenchSeed: (id: string | null) => void;
   feed: Feed;
   setFeed: (f: Feed) => void;
   raceSection: RaceSection;
@@ -165,6 +169,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<Mode>("tunes");
   const [tunesSection, setTunesSection] = useState<TunesSection>("tuner");
   const [referenceTune, setReferenceTune] = useState<Tune | null>(null);
+  const [benchSeed, setBenchSeed] = useState<string | null>(null);
   // Honest default: nothing is wired to the Rust feed yet, so there is no feed.
   const [feed, setFeed] = useState<Feed>({ state: "no-feed" });
   const [raceSection, setRaceSection] = useState<RaceSection>("timing");
@@ -212,6 +217,8 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setTunesSection,
       referenceTune,
       setReferenceTune,
+      benchSeed,
+      setBenchSeed,
       feed,
       setFeed,
       raceSection,
@@ -229,7 +236,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       incidents,
       setIncidents,
     }),
-    [mode, tunesSection, referenceTune, feed, raceSection, sessionSaved, connection, engineer, settingsOpen, selectedDriver, incidents],
+    [mode, tunesSection, referenceTune, benchSeed, feed, raceSection, sessionSaved, connection, engineer, settingsOpen, selectedDriver, incidents],
   );
 
   return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>;

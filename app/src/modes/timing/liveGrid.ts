@@ -32,6 +32,12 @@ export interface LiveDriver {
   tyreAgeLaps: number;
   /** Per-corner tyre wear %, wheel order [RL, RR, FL, FR] (CarDamage id 10). */
   tyreWear: number[];
+  /** Per-corner surface temp °C, wheel order [RL, RR, FL, FR] (CarTelemetry). */
+  tyreSurfaceTemp: number[];
+  frontWingDamage: number;
+  rearWingDamage: number;
+  engineDamage: number;
+  gearboxDamage: number;
   fuelRemainingLaps: number;
   batteryPct: number;
   ersDeployMode: number;
@@ -203,6 +209,16 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
       // shown name is the game's redaction — surface a lock rather than passing it
       // off as their real name (P2.6).
       namePrivate: !d.showOnlineNames && d.nameOverride == null,
+      // `?? []` / `?? 0`: snapshots saved to History before these fields existed
+      // replay through this same mapper.
+      live: {
+        tyreSurfaceTemp: d.tyreSurfaceTemp ?? [],
+        tyreWear: d.tyreWear ?? [],
+        frontWingDamage: d.frontWingDamage ?? 0,
+        rearWingDamage: d.rearWingDamage ?? 0,
+        engineDamage: d.engineDamage ?? 0,
+        gearboxDamage: d.gearboxDamage ?? 0,
+      },
     };
   });
 }
@@ -242,7 +258,10 @@ export function toFinalClassification(snap: RaceSnapshot): ClassRow[] | null {
   if (rows.length === 0) return null;
 
   const byIndex = new Map(snap.drivers.map((d) => [d.index, d]));
-  const winnerTime = rows.find((c) => c.position === 1)?.totalRaceTime ?? 0;
+  // Official gaps compare penalty-inclusive race times: totalRaceTime excludes
+  // time penalties (packet 8), so a penalised P2 would otherwise show a negative gap.
+  const winner = rows.find((c) => c.position === 1);
+  const winnerTime = winner ? winner.totalRaceTime + winner.penaltiesTime : 0;
 
   return rows
     .slice()
@@ -258,11 +277,11 @@ export function toFinalClassification(snap: RaceSnapshot): ClassRow[] | null {
         teamName: d ? teamName(d.teamId) : "—",
         teamColor: d ? teamColor(d.liveryColours) : "oklch(0.62 0.02 250)",
         bestMs: c.bestLapTimeInMs,
-        // Gap to the winner from total race time, for classified finishers only.
+        // Gap to the winner from penalty-inclusive race time, classified finishers only.
         gapSec:
           c.position === 1 || !finished || winnerTime <= 0
             ? null
-            : c.totalRaceTime - winnerTime,
+            : c.totalRaceTime + c.penaltiesTime - winnerTime,
         pits: c.numPitStops,
         // Official penalty straight from packet 8 (time or count), independent of the
         // steward's own decisions, which markPenalties ORs in on top (P2.1).

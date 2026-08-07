@@ -48,7 +48,7 @@ export function useTelemetry() {
       }
       if (cancelled) return;
 
-      unlisten = await listen("telemetry:packet", () => {
+      const handle = await listen("telemetry:packet", () => {
         lastPacket.current = Date.now();
         if (!live.current || stale.current) {
           live.current = true;
@@ -56,6 +56,14 @@ export function useTelemetry() {
           setFeed({ state: "live", sample: false });
         }
       });
+      // The effect may have been torn down while listen() was in flight (port or
+      // forward-target change); registering anyway would leak a duplicate handler
+      // plus the heartbeat below for the app's lifetime.
+      if (cancelled) {
+        handle();
+        return;
+      }
+      unlisten = handle;
 
       // When packets stop, hold on the last data in "standby" rather than
       // declaring the feed dead. F1 emits nothing in menus, the garage,

@@ -32,11 +32,13 @@ import "./tunes.css";
  */
 type SortKey = "recent" | "track" | "bestTt" | "bestPractice";
 
+// Short labels: the control sits directly above the list, whose rows already
+// speak "TT / PR", so "TT" and "Practice" read unambiguously as best-lap sorts.
 const SORTS: readonly { value: SortKey; label: string }[] = [
   { value: "recent", label: "Recent" },
   { value: "track", label: "Track" },
-  { value: "bestTt", label: "Best TT" },
-  { value: "bestPractice", label: "Best Practice" },
+  { value: "bestTt", label: "TT" },
+  { value: "bestPractice", label: "Practice" },
 ];
 
 /** A best time of 0 (no laps) sorts last, not first. */
@@ -62,7 +64,7 @@ function sortTunes(list: TuneSummary[], key: SortKey): TuneSummary[] {
 }
 
 export function SetupsView() {
-  const { feed, setTunesSection, setReferenceTune } = useShell();
+  const { feed, setTunesSection, setReferenceTune, setBenchSeed } = useShell();
   const sample = feed.sample === true;
   const snap = useTunerSnapshot(sample);
   const matchedId = snap?.matchedTuneId ?? null;
@@ -163,43 +165,45 @@ export function SetupsView() {
                 Save current setup
               </button>
             ) : null}
-            {tunes.length > 0 && (
-              <div className="setups-sort">
-                <span className="setups-sort-label">Sort</span>
-                <Segmented
-                  options={SORTS}
-                  value={sort}
-                  onChange={setSort}
-                  ariaLabel="Sort setups"
-                  groupClassName="seg seg-sm"
-                />
-              </div>
-            )}
           </div>
         </header>
 
         <div className="setups-body">
-          <ul className="setups-list" aria-label="Saved setups">
-            {sorted.map((t) => (
-              <TuneRow
-                key={t.id}
-                tune={t}
-                active={t.id === selectedId}
-                live={t.id === matchedId}
-                onSelect={() => setSelectedId(t.id)}
-              />
-            ))}
-          </ul>
+          <div className="setups-listcol">
+            <Segmented
+              options={SORTS}
+              value={sort}
+              onChange={setSort}
+              ariaLabel="Sort setups"
+              groupClassName="seg seg-sm setups-sortseg"
+            />
+            <ul className="setups-list" aria-label="Saved setups">
+              {sorted.map((t) => (
+                <TuneRow
+                  key={t.id}
+                  tune={t}
+                  active={t.id === selectedId}
+                  live={t.id === matchedId}
+                  onSelect={() => setSelectedId(t.id)}
+                />
+              ))}
+            </ul>
+          </div>
           <div className="setups-detail">
             {detail ? (
               <TuneDetail
                 tune={detail}
                 isLive={detail.id === matchedId}
+                benchable={tunes.filter((t) => t.trackId === detail.trackId).length >= 2}
                 onReload={refresh}
                 onDeleted={onDeleted}
                 onOpenInTuner={() => {
                   setReferenceTune(detail);
                   setTunesSection("tuner");
+                }}
+                onBench={() => {
+                  setBenchSeed(detail.id);
+                  setTunesSection("bench");
                 }}
               />
             ) : (
@@ -279,15 +283,20 @@ function TuneRow({
 function TuneDetail({
   tune,
   isLive,
+  benchable,
   onReload,
   onDeleted,
   onOpenInTuner,
+  onBench,
 }: {
   tune: Tune;
   isLive: boolean;
+  /** The tune's track has a second saved setup to compare against. */
+  benchable: boolean;
   onReload: () => Promise<void>;
   onDeleted: () => Promise<void>;
   onOpenInTuner: () => void;
+  onBench: () => void;
 }) {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(tune.name);
@@ -347,7 +356,8 @@ function TuneDetail({
               onChange={(e) => setNameDraft(e.target.value)}
               onBlur={commitName}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void commitName();
+                // Blur commits (once) — calling commitName here too could rename twice.
+                if (e.key === "Enter") e.currentTarget.blur();
                 if (e.key === "Escape") {
                   setNameDraft(tune.name);
                   setEditingName(false);
@@ -378,6 +388,15 @@ function TuneDetail({
         <div className="tune-detail-actions">
           <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenInTuner}>
             Open in Tuner
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            disabled={!benchable}
+            title={benchable ? undefined : "Save another setup on this track to compare"}
+            onClick={onBench}
+          >
+            Bench
           </button>
           <button
             type="button"

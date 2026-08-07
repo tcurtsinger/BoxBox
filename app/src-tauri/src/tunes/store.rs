@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::model::TuneLibrary;
+use crate::persist::{lock_ignoring_poison, read_json, write_json};
 
 /// Tauri-managed in-memory library, shared by the command handlers and (Phase 2)
 /// the listener thread that records laps.
@@ -25,6 +26,7 @@ impl Default for TuneLibraryState {
 pub struct TuneStore {
     path: PathBuf,
     last_saved: AtomicU64,
+    write_lock: Mutex<()>,
 }
 
 /// Tauri-managed handle to the tune store.
@@ -35,6 +37,7 @@ impl TuneStore {
         Self {
             path,
             last_saved: AtomicU64::new(0),
+            write_lock: Mutex::new(()),
         }
     }
 
@@ -73,7 +76,13 @@ impl TuneStore {
     /// saved. Call WITHOUT the library lock held. A failed write leaves `last_saved`
     /// behind so the next change retries.
     pub fn commit_save(&self, rev: u64, lib: &TuneLibrary) -> bool {
-        if write_library(&self.path, lib).is_ok() {
+        // Serialize the flush thread against command handlers (shared temp file),
+        // and drop a snapshot that lost the race to a newer one.
+        let _guard = lock_ignoring_poison(&self.write_lock);
+        if rev <= self.last_saved.load(Ordering::Relaxed) {
+            return false;
+        }
+        if write_json(&self.path, lib).is_ok() {
             self.last_saved.store(rev, Ordering::Relaxed);
             true
         } else {
@@ -82,21 +91,8 @@ impl TuneStore {
     }
 }
 
-fn read_library(path: &PathBuf) -> Option<TuneLibrary> {
-    let bytes = std::fs::read(path).ok()?;
-    serde_json::from_slice(&bytes).ok()
-}
-
-fn write_library(path: &PathBuf, lib: &TuneLibrary) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let json = serde_json::to_vec_pretty(lib).map_err(std::io::Error::other)?;
-    // Write to a sibling temp file then rename, so a crash mid-write can't corrupt
-    // an existing library (atomic replace on the same volume).
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, &json)?;
-    std::fs::rename(&tmp, path)
+fn read_library(path: &std::path::Path) -> Option<TuneLibrary> {
+    read_json(path)
 }
 
 #[cfg(test)]

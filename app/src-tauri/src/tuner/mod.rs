@@ -17,3 +17,4 @@ pub mod wear_estimator;
 
 pub use profile::TunerProfile;
 pub use state::{Snapshot, TunerState};
+pub use wear_estimator::{LearnedWear, WearLever};

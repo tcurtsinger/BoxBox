@@ -612,6 +612,9 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: var(--space-md);
+  /* Groups have 2–6 rows; without this, the shorter card in a grid row
+     stretches and carries dead space inside its border. */
+  align-items: start;
 }
 .setup-card {
   padding: var(--space-md) var(--space-lg);

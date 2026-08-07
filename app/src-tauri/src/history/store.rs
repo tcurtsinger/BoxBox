@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::model::HistoryArchive;
+use crate::persist::{lock_ignoring_poison, read_json, write_json};
 
 /// Tauri-managed in-memory archive, shared by the command handlers.
 pub struct HistoryState(pub Arc<Mutex<HistoryArchive>>);
@@ -24,6 +25,7 @@ impl Default for HistoryState {
 pub struct HistoryStore {
     path: PathBuf,
     last_saved: AtomicU64,
+    write_lock: Mutex<()>,
 }
 
 /// Tauri-managed handle to the history store.
@@ -34,6 +36,7 @@ impl HistoryStore {
         Self {
             path,
             last_saved: AtomicU64::new(0),
+            write_lock: Mutex::new(()),
         }
     }
 
@@ -64,7 +67,13 @@ impl HistoryStore {
     }
 
     pub fn commit_save(&self, rev: u64, archive: &HistoryArchive) -> bool {
-        if write_archive(&self.path, archive).is_ok() {
+        // Serialize concurrent writers (shared temp file) and drop a snapshot that
+        // lost the race to a newer one.
+        let _guard = lock_ignoring_poison(&self.write_lock);
+        if rev <= self.last_saved.load(Ordering::Relaxed) {
+            return false;
+        }
+        if write_json(&self.path, archive).is_ok() {
             self.last_saved.store(rev, Ordering::Relaxed);
             true
         } else {
@@ -73,19 +82,8 @@ impl HistoryStore {
     }
 }
 
-fn read_archive(path: &PathBuf) -> Option<HistoryArchive> {
-    let bytes = std::fs::read(path).ok()?;
-    serde_json::from_slice(&bytes).ok()
-}
-
-fn write_archive(path: &PathBuf, archive: &HistoryArchive) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let json = serde_json::to_vec_pretty(archive).map_err(std::io::Error::other)?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, &json)?;
-    std::fs::rename(&tmp, path)
+fn read_archive(path: &std::path::Path) -> Option<HistoryArchive> {
+    read_json(path)
 }
 
 #[cfg(test)]

@@ -240,6 +240,7 @@ function makeSampleTunes(): Tune[] {
       setup: {
         ...BASE_SETUP,
         frontWing: 8, rearWing: 11, onThrottle: 70, brakeBias: 57, rearRideHeight: 54,
+        rearAntiRollBar: 8, // softer rear bar (the "save the rears" part of the notes)
       },
       timeTrial: { bestMs: 0, laps: [] },
       practice: { bestMs: 91_980, laps: [prLap(92_640, 4, 70, 18), prLap(91_980, 4, 55, 18)] },

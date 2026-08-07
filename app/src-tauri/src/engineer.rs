@@ -365,6 +365,7 @@ pub fn derive_callouts(prev: &PlayerFrame, next: &PlayerFrame) -> Vec<Callout> {
 #[derive(Default)]
 pub struct Engineer {
     prev: Option<PlayerFrame>,
+    session_uid: String,
 }
 
 impl Engineer {
@@ -373,6 +374,14 @@ impl Engineer {
     }
 
     pub fn evaluate(&mut self, snap: &SessionSnapshot) -> Vec<Callout> {
+        // A new session (restart, next quali segment) must rebaseline: comparing
+        // against the old session's last frame fires spurious position/fuel/flag
+        // transitions, and incident ids restart at 1 per session so the seen-sets
+        // would swallow a genuinely new first incident (e.g. an early safety car).
+        if snap.session_uid != self.session_uid {
+            self.session_uid = snap.session_uid.clone();
+            self.prev = None;
+        }
         match extract_player_frame(snap) {
             Some(next) => {
                 let out = match &self.prev {
@@ -497,6 +506,55 @@ mod tests {
         assert!(cs
             .iter()
             .any(|c| c.text.contains("Yellow flag") && c.priority == P_SAFETY));
+    }
+
+    #[test]
+    fn session_change_rebaselines_instead_of_comparing_across() {
+        use crate::racecontrol::state::DriverState;
+        use crate::racecontrol::SessionSnapshot;
+        use std::collections::HashMap;
+
+        let snap = |uid: &str, position: u8| -> SessionSnapshot {
+            let mut d = DriverState::default();
+            d.index = 0;
+            d.position = position;
+            d.telemetry_public = true;
+            d.fuel_remaining_laps = 1.0;
+            d.tyre_wear = vec![10.0; 4];
+            SessionSnapshot {
+                format: 2025,
+                game_year: 25,
+                session_uid: uid.into(),
+                session_time: 0.0,
+                session: None,
+                session_category: crate::racecontrol::state::SessionCategory::Race,
+                track_name: None,
+                is_spectating: false,
+                spectator_car_index: 255,
+                player_car_index: 0,
+                num_active_cars: 1,
+                drivers: vec![d],
+                incidents: vec![],
+                event_tally: HashMap::new(),
+                final_classification: None,
+                quali_segments: vec![],
+                packet_count: 1,
+                last_update: 0.0,
+                last_packet_at: 0.0,
+            }
+        };
+
+        let mut eng = Engineer::new();
+        assert!(eng.evaluate(&snap("A", 12)).is_empty(), "baseline frame");
+        // Same session, position gained: speaks.
+        assert!(!eng.evaluate(&snap("A", 11)).is_empty());
+        // Session restart back to the grid slot: must NOT congratulate P1.
+        assert!(
+            eng.evaluate(&snap("B", 1)).is_empty(),
+            "new session rebaselines silently"
+        );
+        // But transitions within the new session speak again.
+        assert!(!eng.evaluate(&snap("B", 2)).is_empty());
     }
 
     #[test]

@@ -9,9 +9,12 @@
 //! that writes to disk only on the rare frames where something was actually
 //! learned.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 use crate::tuner::{TunerProfile, TunerState};
 
@@ -20,6 +23,7 @@ use crate::tuner::{TunerProfile, TunerState};
 pub struct ProfileStore {
     path: PathBuf,
     last_saved: AtomicU64,
+    write_lock: Mutex<()>,
 }
 
 /// Tauri-managed handle to the profile store.
@@ -30,6 +34,7 @@ impl ProfileStore {
         Self {
             path,
             last_saved: AtomicU64::new(0),
+            write_lock: Mutex::new(()),
         }
     }
 
@@ -74,7 +79,14 @@ impl ProfileStore {
     /// as saved. Call WITHOUT the engine lock held. A failed write leaves
     /// `last_saved` behind so the next change retries.
     pub fn commit_save(&self, rev: u64, profile: &TunerProfile) -> bool {
-        if write_profile(&self.path, profile).is_ok() {
+        // Two writers reach here concurrently (the 250ms flush thread and any
+        // command handler) and share one temp file: serialize them, and drop a
+        // snapshot that lost the race to a newer one so it can't roll the file back.
+        let _guard = lock_ignoring_poison(&self.write_lock);
+        if rev <= self.last_saved.load(Ordering::Relaxed) {
+            return false;
+        }
+        if write_json(&self.path, profile).is_ok() {
             self.last_saved.store(rev, Ordering::Relaxed);
             true
         } else {
@@ -83,18 +95,38 @@ impl ProfileStore {
     }
 }
 
-fn read_profile(path: &PathBuf) -> Option<TunerProfile> {
-    let bytes = std::fs::read(path).ok()?;
-    serde_json::from_slice(&bytes).ok()
+fn read_profile(path: &Path) -> Option<TunerProfile> {
+    read_json(path)
 }
 
-fn write_profile(path: &PathBuf, profile: &TunerProfile) -> std::io::Result<()> {
+/// A panicked writer must not permanently block saves; the guarded state (one
+/// temp-file write) can't be left torn in memory by a panic.
+pub fn lock_ignoring_poison(lock: &Mutex<()>) -> std::sync::MutexGuard<'_, ()> {
+    lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Read a JSON data file. Missing file -> None. An unparsable file is quarantined
+/// (renamed to `.json.corrupt`) instead of silently ignored, so the next save
+/// can't overwrite data the user could still recover by hand.
+pub fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
+    let bytes = std::fs::read(path).ok()?;
+    match serde_json::from_slice(&bytes) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            let _ = std::fs::rename(path, path.with_extension("json.corrupt"));
+            None
+        }
+    }
+}
+
+/// Atomic JSON write: sibling temp file then rename, so a crash mid-write can't
+/// corrupt an existing file (atomic replace on the same volume). The temp path is
+/// fixed, so callers must serialize concurrent writes (the stores' write lock).
+pub fn write_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let json = serde_json::to_vec_pretty(profile).map_err(std::io::Error::other)?;
-    // Write to a sibling temp file then rename, so a crash mid-write can't corrupt
-    // an existing profile (atomic replace on the same volume).
+    let json = serde_json::to_vec_pretty(value).map_err(std::io::Error::other)?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, &json)?;
     std::fs::rename(&tmp, path)
@@ -125,6 +157,58 @@ mod tests {
         let mut b = TunerState::new();
         store.load_into(&mut b);
         assert_eq!(b.export_profile().balance_preference, 0.5);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_profile_is_quarantined_not_overwritten() {
+        let dir = std::env::temp_dir().join(format!("boxbox-corrupt-{}", std::process::id()));
+        let path = dir.join("profile.json");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, b"{ not valid json").unwrap();
+
+        let store = ProfileStore::new(path.clone());
+        let mut state = TunerState::new();
+        store.load_into(&mut state);
+
+        // The unparsable file moved aside instead of being silently discarded.
+        assert!(!path.exists(), "corrupt file no longer at the live path");
+        let quarantined = path.with_extension("json.corrupt");
+        assert!(quarantined.exists(), "corrupt file quarantined");
+        assert_eq!(std::fs::read(&quarantined).unwrap(), b"{ not valid json");
+
+        // A subsequent save writes a fresh file without touching the quarantine.
+        state.set_balance_preference(-0.25);
+        assert!(store.save_if_changed(&state));
+        assert!(path.exists());
+        assert!(quarantined.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stale_snapshot_cannot_roll_back_a_newer_save() {
+        let dir = std::env::temp_dir().join(format!("boxbox-stale-{}", std::process::id()));
+        let path = dir.join("profile.json");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let store = ProfileStore::new(path.clone());
+        let mut state = TunerState::new();
+        state.set_balance_preference(0.25);
+        let (rev_old, snap_old) = store.pending_save(&state).unwrap();
+        state.set_balance_preference(0.75);
+        let (rev_new, snap_new) = store.pending_save(&state).unwrap();
+
+        // The newer snapshot lands first (e.g. a command handler); the older
+        // in-flight snapshot from the flush thread must then be dropped.
+        assert!(store.commit_save(rev_new, &snap_new));
+        assert!(!store.commit_save(rev_old, &snap_old), "stale write dropped");
+
+        let mut check = TunerState::new();
+        store.load_into(&mut check);
+        assert_eq!(check.export_profile().balance_preference, 0.75);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
