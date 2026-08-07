@@ -4,8 +4,11 @@
  * used until the Rust UDP feed is wired, and clearly surfaced as SAMPLE.
  */
 
-export type Compound = "S" | "M" | "H" | "I" | "W";
+export type Compound = "S" | "M" | "H" | "I" | "W" | "SS" | "D" | "?";
 export type BestState = "session" | "personal" | "none";
+/** A sector pill: session/personal best, completed-but-not-a-best ("set"), or
+ *  no time yet ("none"). */
+export type SectorState = BestState | "set";
 export type FlagKey = "yellow" | "blue" | "green" | "red" | "white";
 
 interface Team {
@@ -72,6 +75,9 @@ const RAW: Car[] = [
 
 export interface DriverRow {
   pos: number;
+  /** Car index — the unique per-session identity. Race numbers are NOT unique in
+   *  online lobbies, so keys and selection use this. */
+  index: number;
   no: number;
   name: string;
   teamName: string;
@@ -84,7 +90,10 @@ export interface DriverRow {
   bestMs: number;
   lastClass: BestState;
   bestClass: BestState;
-  sectors: [BestState, BestState, BestState];
+  sectors: [SectorState, SectorState, SectorState];
+  /** "DNF" / "DSQ" / "NC" / "RET" once the game reports the car out; null while
+   *  running. Drives the dimmed row + OUT chip so a crashed car can't look alive. */
+  status: string | null;
   batt: number;
   boost: boolean;
   fuel: number;
@@ -118,23 +127,24 @@ export interface LiveDetail {
 function sectorsFor(
   car: Car,
   lastClass: BestState,
-): [BestState, BestState, BestState] {
+): [SectorState, SectorState, SectorState] {
   if (lastClass === "session") return ["session", "session", "session"];
-  if (car.boost) return ["none", "personal", "session"];
-  if (lastClass === "personal") return ["personal", "none", "personal"];
-  const a: BestState = car.no % 2 === 0 ? "personal" : "none";
-  const b: BestState = car.no % 3 === 0 ? "personal" : "none";
-  return [a, "none", b];
+  if (car.boost) return ["set", "personal", "session"];
+  if (lastClass === "personal") return ["personal", "set", "personal"];
+  const a: SectorState = car.no % 2 === 0 ? "personal" : "set";
+  const b: SectorState = car.no % 3 === 0 ? "personal" : "none";
+  return [a, "set", b];
 }
 
 export function sampleGrid(): DriverRow[] {
   const overallBest = Math.min(...RAW.map((c) => c.best));
-  const fastestLast = Math.min(...RAW.filter((c) => c.last > 0).map((c) => c.last));
   let cum = 0;
   return RAW.map((c, i) => {
     if (i > 0) cum += c.interval;
+    // Purple = SESSION BEST (motorsport convention), not "fastest of everyone's
+    // most recent lap" — the sample must teach the same rule the live grid uses.
     const lastClass: BestState =
-      c.last > 0 && c.last === fastestLast
+      c.last > 0 && c.last === overallBest
         ? "session"
         : c.last > 0 && c.last === c.best
           ? "personal"
@@ -143,6 +153,7 @@ export function sampleGrid(): DriverRow[] {
     const team = TEAMS[c.team];
     return {
       pos: i + 1,
+      index: i,
       no: c.no,
       name: c.name,
       teamName: team.name,
@@ -156,6 +167,7 @@ export function sampleGrid(): DriverRow[] {
       lastClass,
       bestClass,
       sectors: sectorsFor(c, lastClass),
+      status: null,
       batt: c.batt,
       boost: c.boost ?? false,
       fuel: c.fuel,
@@ -189,7 +201,9 @@ export function fmtLap(ms: number): string {
 }
 
 export function fmtSec(s: number): string {
-  return `+${s.toFixed(3)}`;
+  // Negative gaps are rare but real (penalty-adjusted classification); "+-0.500"
+  // is not a number anyone should read.
+  return `${s < 0 ? "−" : "+"}${Math.abs(s).toFixed(3)}`;
 }
 
 export function fmtFuel(laps: number): string {

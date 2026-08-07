@@ -100,12 +100,17 @@ export function ReportContent({
               {!isQualifying && <span className="cls-h" role="columnheader">Tyres</span>}
             </div>
             {classification.map((c, i) => {
-              const active = interactive && selection!.selectedDriver === c.no;
-              const handlers = interactive ? selection!.rowProps(i, () => selection!.onSelect(c.no)) : {};
+              // Cross-linking keys on the car INDEX (unique); rows without a
+              // reliable index (old quali segments) just don't link.
+              const active = interactive && c.index != null && selection!.selectedDriver === c.index;
+              const handlers =
+                interactive && c.index != null
+                  ? selection!.rowProps(i, () => selection!.onSelect(c.index!))
+                  : {};
               return (
                 <div
                   role="row"
-                  key={c.no}
+                  key={c.index ?? `q-${c.no}-${i}`}
                   aria-selected={interactive ? active : undefined}
                   aria-label={`Position ${c.pos}, car ${c.no}, ${c.name}`}
                   className={`cls-row${active ? " is-active" : ""}${interactive ? "" : " is-static"}`}
@@ -225,7 +230,7 @@ export function ReportsView() {
       report={report}
       selection={{
         selectedDriver,
-        onSelect: (no) => setSelectedDriver(selectedDriver === no ? null : no),
+        onSelect: (index) => setSelectedDriver(selectedDriver === index ? null : index),
         rowProps,
       }}
     />

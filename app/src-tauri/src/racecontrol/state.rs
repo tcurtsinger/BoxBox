@@ -100,6 +100,30 @@ pub struct DriverState {
     pub best_lap_ms: u32,
     pub current_lap_num: u8,
     pub sector: u8,
+    /// Current lap's completed sector times (0 until that sector completes).
+    #[serde(rename = "sector1MS")]
+    pub sector1_ms: u32,
+    #[serde(rename = "sector2MS")]
+    pub sector2_ms: u32,
+    /// The just-completed lap's S3, derived at rollover (lastLap − S1 − S2) —
+    /// the packet never carries S3 directly.
+    #[serde(rename = "lastS3MS")]
+    pub last_s3_ms: u32,
+    /// Session-best sector times, folded in at lap completion from VALID laps
+    /// only (a deleted lap's sectors must not hold a best).
+    #[serde(rename = "bestS1MS")]
+    pub best_s1_ms: u32,
+    #[serde(rename = "bestS2MS")]
+    pub best_s2_ms: u32,
+    #[serde(rename = "bestS3MS")]
+    pub best_s3_ms: u32,
+    // The in-progress lap's latest S1/S2, latched because the packet zeroes its
+    // sector fields the moment the lap rolls over — these are the only copies
+    // left to derive S3 from at that instant.
+    #[serde(skip)]
+    prev_s1_ms: u32,
+    #[serde(skip)]
+    prev_s2_ms: u32,
     #[serde(rename = "deltaToLeaderMS")]
     pub delta_to_leader_ms: u32,
     #[serde(rename = "deltaToCarAheadMS")]
@@ -447,11 +471,45 @@ impl SessionState {
                 {
                     d.best_lap_ms = c.last_lap_time_ms;
                 }
+                // Fold the completed lap's sectors into the session bests (valid
+                // laps only) and derive its S3 — the packet zeroed its sector
+                // fields for the new lap, so the latches are the only copy left.
+                let (s1, s2) = (d.prev_s1_ms, d.prev_s2_ms);
+                let s3 = if c.last_lap_time_ms > 0 && s1 > 0 && s2 > 0 {
+                    c.last_lap_time_ms.saturating_sub(s1 + s2)
+                } else {
+                    0
+                };
+                d.last_s3_ms = s3;
+                if !completed_lap_invalid {
+                    if s1 > 0 && (d.best_s1_ms == 0 || s1 < d.best_s1_ms) {
+                        d.best_s1_ms = s1;
+                    }
+                    if s2 > 0 && (d.best_s2_ms == 0 || s2 < d.best_s2_ms) {
+                        d.best_s2_ms = s2;
+                    }
+                    if s3 > 0 && (d.best_s3_ms == 0 || s3 < d.best_s3_ms) {
+                        d.best_s3_ms = s3;
+                    }
+                }
+                d.prev_s1_ms = 0;
+                d.prev_s2_ms = 0;
             } else {
                 d.lap_invalid_latch |= c.current_lap_invalid;
             }
             d.current_lap_num = c.current_lap_num;
             d.sector = c.sector;
+            d.sector1_ms = c.sector1_ms;
+            d.sector2_ms = c.sector2_ms;
+            // Latch AFTER the rollover branch (which zeroed the latches): these
+            // frames' sector values belong to the now-current lap — including a
+            // driver's very first frame when joining mid-lap.
+            if c.sector1_ms > 0 {
+                d.prev_s1_ms = c.sector1_ms;
+            }
+            if c.sector2_ms > 0 {
+                d.prev_s2_ms = c.sector2_ms;
+            }
             d.delta_to_leader_ms = c.delta_to_race_leader_ms;
             d.delta_to_car_ahead_ms = c.delta_to_car_in_front_ms;
             d.pit_status = c.pit_status;
@@ -1222,6 +1280,42 @@ mod tests {
         let s = st.snapshot();
         assert_eq!(s.incidents.len(), 1);
         assert_eq!(s.incidents[0].label, "Safety Car");
+    }
+
+    #[test]
+    fn sector_bests_fold_from_valid_laps_only() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "A", 1)]), 0.0);
+
+        // Lap 2 in progress: S1 + S2 completed.
+        let mut e = lap_entry(0, 1, 1, 0, 2);
+        e.sector1_ms = 28_000;
+        e.sector2_ms = 31_000;
+        st.ingest(&laps("A", vec![e]), 0.0);
+        let d = st.snapshot().drivers[0].clone();
+        assert_eq!(d.sector1_ms, 28_000, "current-lap sectors surface live");
+        assert_eq!(d.best_s1_ms, 0, "no best until a lap completes");
+
+        // Lap completes in 88s -> S3 derived (29s); bests fold from the valid lap.
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 88_000, 3)]), 1.0);
+        let d = st.snapshot().drivers[0].clone();
+        assert_eq!(d.last_s3_ms, 29_000, "S3 = lap - S1 - S2");
+        assert_eq!(
+            (d.best_s1_ms, d.best_s2_ms, d.best_s3_ms),
+            (28_000, 31_000, 29_000)
+        );
+
+        // A faster but INVALID (deleted) lap must not take the bests.
+        let mut e = lap_entry(0, 1, 1, 0, 3);
+        e.sector1_ms = 27_000;
+        e.sector2_ms = 30_000;
+        e.current_lap_invalid = true;
+        st.ingest(&laps("A", vec![e]), 2.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 85_000, 4)]), 3.0);
+        let d = st.snapshot().drivers[0].clone();
+        assert_eq!(d.best_s1_ms, 28_000, "a deleted lap's sectors hold no best");
+        assert_eq!(d.best_s3_ms, 29_000);
     }
 
     #[test]

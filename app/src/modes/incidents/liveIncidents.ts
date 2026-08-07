@@ -56,8 +56,10 @@ function surname(full: string): string {
 
 function resolveCar(index: number, byIndex: Map<number, IncidentDriver>): CarRef {
   const d = byIndex.get(index);
-  if (!d) return { no: index, name: `Car ${index}` };
-  return { no: d.raceNumber, name: surname(d.nameOverride ?? d.name) };
+  // Unknown car: keep the index as identity; never pass the index off as a race
+  // number (clicking "Car 3" used to highlight whoever raced with the number 3).
+  if (!d) return { index, no: 0, name: `Car ${index}` };
+  return { index, no: d.raceNumber, name: surname(d.nameOverride ?? d.name) };
 }
 
 // Detail keys worth surfacing, in display order. The label already carries the

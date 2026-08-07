@@ -165,7 +165,8 @@ interface ShellState {
   setEngineer: (e: EngineerSettings) => void;
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
-  /** Car number of the timing-tower row the steward has selected, if any. */
+  /** CAR INDEX of the timing-tower row the steward has selected, if any. The
+   *  index is the session-unique identity; race numbers can collide online. */
   selectedDriver: number | null;
   setSelectedDriver: (no: number | null) => void;
   /** Sample-mode incident flags, shared across Review / Incidents / Reports so

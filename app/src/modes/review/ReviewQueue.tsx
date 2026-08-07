@@ -109,13 +109,13 @@ function Cars({ cars }: { cars: CarRef[] }) {
   return (
     <div className="rev-cars">
       {cars.map((car) => {
-        const active = selectedDriver === car.no;
+        const active = selectedDriver === car.index;
         return (
           <button
-            key={`${car.no}-${car.name}`}
+            key={car.index}
             type="button"
             className={`rev-car${active ? " is-active" : ""}`}
-            onClick={() => setSelectedDriver(active ? null : car.no)}
+            onClick={() => setSelectedDriver(active ? null : car.index)}
             title="Show this driver in the timing tower"
           >
             <span className="rev-car-no mono">{car.no}</span>

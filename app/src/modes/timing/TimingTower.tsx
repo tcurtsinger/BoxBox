@@ -8,7 +8,7 @@ import {
   fmtFuel,
   FLAG_LABEL,
   type DriverRow,
-  type BestState,
+  type SectorState,
   type Compound,
 } from "./mockGrid";
 import "./timing.css";
@@ -19,6 +19,9 @@ const COMPOUND_LABEL: Record<Compound, string> = {
   H: "Hard",
   I: "Intermediate",
   W: "Wet",
+  SS: "Super Soft",
+  D: "Dry",
+  "?": "Unknown compound",
 };
 
 export function TimingTower() {
@@ -73,12 +76,14 @@ export function TimingTower() {
               <div className="tt-waiting" role="status">Waiting for the grid…</div>
             ) : (
               grid.map((row, i) => (
+                // Keyed and selected by car INDEX: race numbers aren't unique in
+                // online lobbies, and duplicate keys select two rows at once.
                 <Row
-                  key={row.no}
+                  key={row.index}
                   d={row}
-                  selected={selectedDriver === row.no}
+                  selected={selectedDriver === row.index}
                   rowProps={rowProps(i, () =>
-                    setSelectedDriver(selectedDriver === row.no ? null : row.no),
+                    setSelectedDriver(selectedDriver === row.index ? null : row.index),
                   )}
                 />
               ))
@@ -100,12 +105,13 @@ function Row({
   rowProps: RovingRowProps;
 }) {
   const leader = d.pos === 1;
+  const out = d.status != null;
   return (
     <div
       role="row"
       aria-selected={selected}
-      aria-label={`Position ${d.pos}, car ${d.no}, ${d.name}${leader ? ", race leader" : ""}`}
-      className={`tt-row${selected ? " is-selected" : ""}${leader ? " is-leader" : ""}`}
+      aria-label={`Position ${d.pos}, car ${d.no}, ${d.name}${leader ? ", race leader" : ""}${out ? `, out of session (${d.status})` : ""}`}
+      className={`tt-row${selected ? " is-selected" : ""}${leader ? " is-leader" : ""}${out ? " is-out" : ""}`}
       {...rowProps}
     >
       <span className="tt-c-pos mono tt-a-c" role="gridcell">{d.pos}</span>
@@ -135,7 +141,9 @@ function Row({
       </span>
 
       <span className="tt-c-int tt-a-r mono" role="gridcell">
-        {d.pit ? (
+        {out ? (
+          "—"
+        ) : d.pit ? (
           <span className="tt-pit">PIT</span>
         ) : leader ? (
           "—"
@@ -144,8 +152,8 @@ function Row({
         )}
       </span>
 
-      <span className={`tt-c-gap tt-a-r${leader ? " tt-leader" : " mono"}`} role="gridcell">
-        {leader ? "LEADER" : fmtSec(d.gapSec ?? 0)}
+      <span className={`tt-c-gap tt-a-r${leader && !out ? " tt-leader" : " mono"}`} role="gridcell">
+        {out ? "—" : leader ? "LEADER" : fmtSec(d.gapSec ?? 0)}
       </span>
 
       <span className={`tt-c-last tt-a-r mono lap-${d.lastClass}`} role="gridcell">
@@ -161,7 +169,11 @@ function Row({
       </span>
 
       <span className="tt-c-ers" role="gridcell">
-        {d.restricted ? (
+        {out ? (
+          <span className="tt-restricted mono" aria-label="Car out of session">
+            —
+          </span>
+        ) : d.restricted ? (
           <span
             className="tt-restricted mono"
             aria-label="ERS unavailable — telemetry restricted by driver"
@@ -175,14 +187,21 @@ function Row({
       </span>
 
       <span className="tt-c-tyre tt-a-c" role="gridcell">
-        <span className={`tyre-letter tyre-${d.tyre} mono`} title={COMPOUND_LABEL[d.tyre]}>
+        <span
+          className={`tyre-letter tyre-${d.tyre === "?" ? "unk" : d.tyre} mono`}
+          title={COMPOUND_LABEL[d.tyre]}
+        >
           {d.tyre}
         </span>
         <span className="tyre-age mono">{d.age}L</span>
       </span>
 
-      <span className={`tt-c-fuel tt-a-r mono${!d.restricted && d.fuel < 0 ? " fuel-low" : ""}`} role="gridcell">
-        {d.restricted ? (
+      <span className={`tt-c-fuel tt-a-r mono${!out && !d.restricted && d.fuel < 0 ? " fuel-low" : ""}`} role="gridcell">
+        {out ? (
+          <span className="tt-restricted" aria-label="Car out of session">
+            —
+          </span>
+        ) : d.restricted ? (
           <span
             className="tt-restricted"
             aria-label="Fuel unavailable — telemetry restricted by driver"
@@ -217,6 +236,8 @@ function Change({ n }: { n: number }) {
 
 function Status({ d }: { d: DriverRow }) {
   const chips: { text: string; cls: string }[] = [];
+  // Out of the session leads: a crashed car must never read as running.
+  if (d.status) chips.push({ text: d.status, cls: "chip-out" });
   if (d.pen > 0) chips.push({ text: `+${d.pen}s`, cls: "chip-pen" });
   if (d.flag) chips.push({ text: FLAG_LABEL[d.flag], cls: `chip-flag chip-flag-${d.flag}` });
   if (chips.length === 0) return <span className="tt-empty">–</span>;
@@ -231,7 +252,7 @@ function Status({ d }: { d: DriverRow }) {
   );
 }
 
-function Sectors({ states }: { states: [BestState, BestState, BestState] }) {
+function Sectors({ states }: { states: [SectorState, SectorState, SectorState] }) {
   return (
     <span className="tt-sectors" aria-label="Sector status">
       {states.map((s, i) => (

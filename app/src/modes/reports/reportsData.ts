@@ -24,6 +24,10 @@ export const CATEGORY_LABEL: Record<string, string> = {
 
 export interface ClassRow {
   pos: number;
+  /** Live-grid car index for tower cross-linking, or null when the row can't be
+   *  reliably linked (knocked-out qualifying rows — F1 re-packs indices per
+   *  segment, so an old segment's index may point at a different car). */
+  index: number | null;
   /** Starting grid position (Final classification only; 0 when unknown, e.g. a
    *  provisional projection or a qualifying row). Drives the grid→finish delta. */
   gridPos: number;
@@ -92,6 +96,7 @@ export function markPenalties(rows: ClassRow[], incidents: UIIncident[]): ClassR
 export function buildClassification(grid: DriverRow[]): ClassRow[] {
   return grid.map((d) => ({
     pos: d.pos,
+    index: d.index,
     gridPos: 0,
     no: d.no,
     name: d.name,

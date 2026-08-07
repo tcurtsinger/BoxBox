@@ -17,8 +17,11 @@ export type IncidentStatus = "logged" | "flagged" | "approved" | "dismissed";
 
 /** A car involved in an incident, resolved for display + tower cross-linking. */
 export interface CarRef {
-  no: number; // race number — keys the timing-tower row
-  name: string; // surname for the label ("33 Roder")
+  /** Car index — the unique identity that keys tower selection (race numbers
+   *  can collide in online lobbies). */
+  index: number;
+  no: number; // race number, display only ("33 Roder")
+  name: string; // surname for the label
 }
 
 export interface UIIncident {

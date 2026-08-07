@@ -328,6 +328,19 @@
 .sec-session {
   background: var(--data-session);
 }
+/* Completed, neither best: visibly "set" without claiming a best. */
+.sec-set {
+  background: var(--faint);
+}
+
+/* Car out of the session (DNF/DSQ/NC/RET): unmistakably not running. */
+.tt-row.is-out {
+  opacity: 0.55;
+}
+.chip-out {
+  color: var(--muted);
+  border-color: var(--border);
+}
 
 /* ERS battery bar */
 .tt-c-ers {
@@ -408,6 +421,17 @@
 }
 .tyre-W {
   color: var(--data-info);
+}
+.tyre-SS {
+  color: var(--data-danger);
+  font-size: 11px; /* two letters in the same 13px slot */
+}
+.tyre-D {
+  color: var(--data-flag);
+}
+/* Unknown compound id: shown as "?", never invented. */
+.tyre-unk {
+  color: var(--muted);
 }
 .tyre-age {
   width: 26px;

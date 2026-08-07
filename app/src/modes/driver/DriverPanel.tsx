@@ -11,7 +11,7 @@ export function DriverPanel() {
   const { selectedDriver, setSelectedDriver } = useShell();
   const { grid } = useSharedRaceState();
   const row = useMemo(
-    () => grid.find((d) => d.no === selectedDriver) ?? null,
+    () => grid.find((d) => d.index === selectedDriver) ?? null,
     [grid, selectedDriver],
   );
   const detail = useMemo(() => (row ? buildDriverDetail(row) : null), [row]);

@@ -7,7 +7,7 @@
  * Team colour comes from the car's real livery (Participants packet); the team
  * name is a best-effort id→name map (the EA constructor ids, refined by capture).
  */
-import type { DriverRow, BestState, Compound, FlagKey } from "./mockGrid";
+import type { DriverRow, BestState, SectorState, Compound, FlagKey } from "./mockGrid";
 import type { ClassRow } from "../reports/reportsData";
 import type { RawIncident } from "../incidents/liveIncidents";
 
@@ -23,6 +23,20 @@ export interface LiveDriver {
   lastLapMS: number;
   bestLapMS: number;
   currentLapNum: number;
+  /** Current lap's completed sector times (0 until set); S3 is the previous
+   *  lap's, derived Rust-side. Optional: snapshots saved before these fields
+   *  existed replay through this mapper. */
+  sector1MS?: number;
+  sector2MS?: number;
+  lastS3MS?: number;
+  /** Session-best sectors from valid laps only. */
+  bestS1MS?: number;
+  bestS2MS?: number;
+  bestS3MS?: number;
+  /** m_resultStatus: 4 DNF, 5 DSQ, 6 not classified, 7 retired. */
+  resultStatus?: number;
+  totalWarnings?: number;
+  cornerCuttingWarnings?: number;
   deltaToLeaderMS: number;
   deltaToCarAheadMS: number;
   pitStatus: number;
@@ -133,14 +147,29 @@ function teamColor(livery: { r: number; g: number; b: number }[]): string {
   return `rgb(${c.r} ${c.g} ${c.b})`;
 }
 
-const COMPOUND_BY_VISUAL: Record<number, Compound> = { 16: "S", 17: "M", 18: "H", 7: "I", 8: "W" };
+// m_visualTyreCompound (appendix): modern F1, then F1 Classic (9 dry / 10 wet)
+// and F2 (15 wet, 19 super soft, 20 soft, 21 medium, 22 hard). Unknown ids show
+// "?" — the tower must not invent a compound (an F2 grid used to read all-Medium).
+const COMPOUND_BY_VISUAL: Record<number, Compound> = {
+  16: "S",
+  17: "M",
+  18: "H",
+  7: "I",
+  8: "W",
+  9: "D",
+  10: "W",
+  15: "W",
+  19: "SS",
+  20: "S",
+  21: "M",
+  22: "H",
+};
 
 function compound(visual: number): Compound {
-  return COMPOUND_BY_VISUAL[visual] ?? "M";
+  return COMPOUND_BY_VISUAL[visual] ?? "?";
 }
 
-// A stint's visual compound as a letter, or "?" for an unknown id (unlike the live
-// `compound`, which defaults to M — a stint list must not invent a compound).
+// A stint's visual compound as a letter, "?" when unknown.
 function stintCompound(visual: number): string {
   return COMPOUND_BY_VISUAL[visual] ?? "?";
 }
@@ -152,34 +181,59 @@ function flag(fia: number): FlagKey | null {
   return FLAG_BY_FIA[fia] ?? null;
 }
 
+// m_resultStatus values that mean the car is out of the session.
+const OUT_STATUS: Record<number, string> = { 4: "DNF", 5: "DSQ", 6: "NC", 7: "RET" };
+
+/** One sector pill's state: purple = the session's best time for that sector,
+ *  green = this driver's own best, "set" = completed but neither, "none" = no
+ *  time yet. Bests come from valid laps only (Rust-side). */
+function sectorClass(t: number, own: number, overall: number): SectorState {
+  if (!t || t <= 0) return "none";
+  if (overall > 0 && t <= overall) return "session";
+  if (own > 0 && t <= own) return "personal";
+  return "set";
+}
+
 /** Map one snapshot into ordered timing rows. */
 export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
   const drivers = snap.drivers;
   const bestTimes = drivers.map((d) => d.bestLapMS).filter((t) => t > 0);
-  const lastTimes = drivers.map((d) => d.lastLapMS).filter((t) => t > 0);
   const overallBest = bestTimes.length ? Math.min(...bestTimes) : 0;
-  const fastestLast = lastTimes.length ? Math.min(...lastTimes) : 0;
+  const minOver = (pick: (d: LiveDriver) => number): number => {
+    const ts = drivers.map(pick).filter((t) => t > 0);
+    return ts.length ? Math.min(...ts) : 0;
+  };
+  const overallS1 = minOver((d) => d.bestS1MS ?? 0);
+  const overallS2 = minOver((d) => d.bestS2MS ?? 0);
+  const overallS3 = minOver((d) => d.bestS3MS ?? 0);
 
   return drivers.map((d, i) => {
     const pos = i + 1; // snapshot is pre-sorted into running order
     const leader = pos === 1;
 
+    // Purple = the session's best lap, full stop (motorsport convention; the
+    // Meaning-Not-Mood rule). Green = a lap equal to the driver's own best.
     const lastClass: BestState =
-      d.lastLapMS > 0 && d.lastLapMS === fastestLast
+      d.lastLapMS > 0 && d.lastLapMS === overallBest
         ? "session"
         : d.lastLapMS > 0 && d.lastLapMS === d.bestLapMS
           ? "personal"
           : "none";
     const bestClass: BestState = d.bestLapMS > 0 && d.bestLapMS === overallBest ? "session" : "none";
-    // Per-sector best classification isn't tracked yet; reflect the lap class so a
-    // session-best lap reads green across, otherwise neutral.
-    const sectors: [BestState, BestState, BestState] =
-      lastClass === "session" ? ["session", "session", "session"] : ["none", "none", "none"];
+    // Real sector states: S1/S2 are the current lap's completed sectors, S3 is
+    // the previous lap's (the packet never carries S3; Rust derives it at the
+    // line). Each pill is a real time compared against real bests.
+    const sectors: [SectorState, SectorState, SectorState] = [
+      sectorClass(d.sector1MS ?? 0, d.bestS1MS ?? 0, overallS1),
+      sectorClass(d.sector2MS ?? 0, d.bestS2MS ?? 0, overallS2),
+      sectorClass(d.lastS3MS ?? 0, d.bestS3MS ?? 0, overallS3),
+    ];
 
     const name = d.nameOverride ?? d.name;
 
     return {
       pos,
+      index: d.index,
       no: d.raceNumber,
       name,
       teamName: teamName(d.teamId),
@@ -193,6 +247,7 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
       lastClass,
       bestClass,
       sectors,
+      status: OUT_STATUS[d.resultStatus ?? 0] ?? null,
       batt: d.batteryPct,
       boost: d.overtakeActive || d.ersDeployMode === 3,
       fuel: d.fuelRemainingLaps,
@@ -271,6 +326,7 @@ export function toFinalClassification(snap: RaceSnapshot): ClassRow[] | null {
       const finished = c.resultStatus === 3;
       return {
         pos: c.position,
+        index: c.index,
         gridPos: d?.gridPosition ?? 0,
         no: d?.raceNumber ?? c.index,
         name: d ? (d.nameOverride ?? d.name) : `Car ${c.index}`,
@@ -331,8 +387,12 @@ export function toQualifyingClassification(snap: RaceSnapshot): ClassRow[] | nul
   }
   if (groups.length === 0) return null;
 
-  const rowOf = (e: QualiSegmentEntry, status: string | null): ClassRow => ({
+  const rowOf = (e: QualiSegmentEntry, status: string | null, linkable: boolean): ClassRow => ({
     pos: 0, // assigned after stacking
+    // Indices re-pack every qualifying segment, so only the LIVE segment's rows
+    // can safely cross-link to the tower; older segments' indices may now point
+    // at a different car.
+    index: linkable ? e.index : null,
     gridPos: 0, // qualifying has no grid yet
     no: e.raceNumber,
     name: e.nameOverride ?? e.name,
@@ -366,7 +426,7 @@ export function toQualifyingClassification(snap: RaceSnapshot): ClassRow[] | nul
       ? seg.standings
       : seg.standings.filter((e) => !advancing.has(e.raceNumber));
     const label = newest ? null : (seg.type != null ? QUALI_SEGMENT_LABEL[seg.type] ?? null : null);
-    for (const e of members) rows.push(rowOf(e, label));
+    for (const e of members) rows.push(rowOf(e, label, newest));
     advancing = new Set(seg.standings.map((e) => e.raceNumber));
   }
   rows.forEach((r, i) => (r.pos = i + 1));

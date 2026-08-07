@@ -85,7 +85,7 @@ export function useIncidents(sample: boolean): IncidentsState {
         },
         logManual: async (cars, code, note) => {
           setIncidents((cur) => [
-            makeManualIncident(code, cars.map((c) => ({ no: c.no, name: c.name })), note),
+            makeManualIncident(code, cars.map((c) => ({ index: c.index, no: c.no, name: c.name })), note),
             ...cur,
           ]);
           return true;

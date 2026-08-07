@@ -87,13 +87,13 @@ function FeedItem({ inc, onSend }: { inc: UIIncident; onSend: () => Promise<bool
         </div>
         <div className="feed-cars">
           {inc.cars.map((car) => {
-            const active = selectedDriver === car.no;
+            const active = selectedDriver === car.index;
             return (
               <button
-                key={`${car.no}-${car.name}`}
+                key={car.index}
                 type="button"
                 className={`feed-car${active ? " is-active" : ""}`}
-                onClick={() => setSelectedDriver(active ? null : car.no)}
+                onClick={() => setSelectedDriver(active ? null : car.index)}
                 title="Show this driver in the timing tower"
               >
                 {carLabel(car)}
