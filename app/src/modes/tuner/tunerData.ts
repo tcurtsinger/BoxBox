@@ -134,6 +134,10 @@ export interface TunerSnapshot {
   run: RunStats | null;
   wear: WearStint | null;
   wearAdvice: WearAdvice | null;
+  /** Game option m_tyreTemperature: false = Surface only, where inner temps
+   *  mirror surface and carcass-based camber advice can never fire. Optional so
+   *  older snapshot shapes still parse. */
+  tempSimCarcass?: boolean | null;
   /** The saved tune whose setup matches the live one, if any (filled by the
    *  `tuner_snapshot` command). Drives the Tuner run card and the Setups live
    *  badge. Optional so older snapshot shapes still parse. */

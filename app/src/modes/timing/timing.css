@@ -333,6 +333,16 @@
   background: var(--faint);
 }
 
+/* The game's pit-window recommendation, in the tower header. */
+.tt-pitwindow {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--data-info);
+}
+
 /* Car out of the session (DNF/DSQ/NC/RET): unmistakably not running. */
 .tt-row.is-out {
   opacity: 0.55;

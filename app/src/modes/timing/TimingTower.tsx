@@ -40,6 +40,17 @@ export function TimingTower() {
             Lap <b>{session.lap}</b>
             <span className="tt-lap-total"> / {session.totalLaps || "—"}</span>
           </span>
+          {session.pitWindow && (
+            <span
+              className="tt-pitwindow mono"
+              title="The game's pit-window recommendation for the player's strategy"
+            >
+              Pit L{session.pitWindow.ideal}
+              {session.pitWindow.latest > session.pitWindow.ideal
+                ? `–L${session.pitWindow.latest}`
+                : ""}
+            </span>
+          )}
           {sample && <span className="tt-tag">Sample</span>}
         </div>
         {sample && (

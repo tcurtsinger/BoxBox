@@ -110,6 +110,21 @@
   color: var(--faint);
 }
 
+/* The game's tyre-temp sim limits what wear advice can measure — say so. */
+.wear-simnote {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in oklch, var(--data-caution) 35%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklch, var(--data-caution) 8%, transparent);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.wear-simnote strong {
+  color: var(--data-caution);
+}
+
 /* Empty / awaiting states — each panel keeps its footprint while data accrues. */
 .panel-empty {
   display: flex;

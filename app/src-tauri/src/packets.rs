@@ -266,6 +266,14 @@ pub struct SessionData {
     pub spectator_car_index: u8,
     pub num_marshal_zones: u8,
     pub safety_car_status: u8,
+    /// The game's own pit-window recommendation for the player's current
+    /// strategy (0 / None = no window). From the Session tail.
+    pub pit_stop_window_ideal_lap: Option<u8>,
+    pub pit_stop_window_latest_lap: Option<u8>,
+    pub pit_stop_rejoin_position: Option<u8>,
+    /// m_tyreTemperature: 0 = Surface only, 1 = Surface & Carcass. Decides
+    /// whether carcass-based advice (camber overload) can ever fire.
+    pub tyre_temperature_sim: Option<u8>,
     pub equal_car_performance: Option<u8>,
     /// 2026 Season Pack active-aero / DRS activation zones. `track_status` is None
     /// and the zone lists empty for the 2025 format (or a tail-truncated packet).
@@ -297,24 +305,47 @@ fn parse_session(rd: &mut Reader, header: &PacketHeader) -> SessionData {
 
     // Tail fields. equalCarPerformance sits 554 bytes past safetyCarStatus in both
     // the 2025 and 2026 layouts (every 2026 addition lands further on), so it's
-    // read for both formats. The 2026 pack then carries the active-aero / DRS
-    // activation zones. The whole tail is optional: a session truncated here still
-    // delivers the critical early fields (track, type, laps) above.
+    // read for both formats — with the pit-window trio picked out of the middle
+    // of that stretch (528 bytes in: networkGame + numWeatherForecastSamples +
+    // 64×8 forecast samples + forecastAccuracy + aiDifficulty + 3×u32 links).
+    // The 2026 pack then carries the active-aero / DRS activation zones. The
+    // whole tail is optional: a session truncated here still delivers the
+    // critical early fields (track, type, laps) above.
+    let mut pit_stop_window_ideal_lap = None;
+    let mut pit_stop_window_latest_lap = None;
+    let mut pit_stop_rejoin_position = None;
+    let mut tyre_temperature_sim = None;
     let mut equal_car_performance = None;
     let mut active_aero_track_status = None;
     let mut active_aero_zones_full = Vec::new();
     let mut active_aero_zones_partial = Vec::new();
     let mut drs_zones = Vec::new();
     if rd.remaining() >= 555 {
-        rd.skip(554); // networkGame .. numRedFlagPeriods
+        rd.skip(528); // networkGame .. sessionLinkIdentifier
+        let ideal = rd.u8();
+        let latest = rd.u8();
+        let rejoin = rd.u8();
+        // 0 = no window recommended (out of a race / no strategy).
+        pit_stop_window_ideal_lap = (ideal > 0).then_some(ideal);
+        pit_stop_window_latest_lap = (latest > 0).then_some(latest);
+        pit_stop_rejoin_position = (rejoin > 0).then_some(rejoin);
+        rd.skip(23); // steeringAssist .. numRedFlagPeriods
         equal_car_performance = Some(rd.u8());
 
-        // 2026 only: skip the gameplay-settings block (recoveryMode ..
-        // sector3LapDistanceStart = 44 bytes), then the activation-zone tail.
-        const AERO_TAIL_BYTES: usize =
-            44 + 1 + (1 + MAX_AERO_ZONES * 8) * 2 + 1 + MAX_DRS_ZONES * 8;
-        if header.packet_format >= 2026 && rd.remaining() >= AERO_TAIL_BYTES {
-            rd.skip(44);
+        // recoveryMode, flashbackLimit, surfaceType, lowFuelMode, raceStarts —
+        // then the tyre-temperature sim option, identically placed in both
+        // formats' gameplay-settings block.
+        if rd.remaining() >= 6 {
+            rd.skip(5);
+            tyre_temperature_sim = Some(rd.u8());
+        }
+
+        // 2026 only: skip the REST of the gameplay-settings block (44 bytes from
+        // recoveryMode, of which 6 were just consumed), then the zone tail.
+        const AERO_TAIL_REST: usize =
+            38 + 1 + (1 + MAX_AERO_ZONES * 8) * 2 + 1 + MAX_DRS_ZONES * 8;
+        if header.packet_format >= 2026 && rd.remaining() >= AERO_TAIL_REST {
+            rd.skip(38);
             active_aero_track_status = Some(rd.u8());
             active_aero_zones_full = read_aero_zones(rd, MAX_AERO_ZONES);
             active_aero_zones_partial = read_aero_zones(rd, MAX_AERO_ZONES);
@@ -339,6 +370,10 @@ fn parse_session(rd: &mut Reader, header: &PacketHeader) -> SessionData {
         spectator_car_index,
         num_marshal_zones,
         safety_car_status,
+        pit_stop_window_ideal_lap,
+        pit_stop_window_latest_lap,
+        pit_stop_rejoin_position,
+        tyre_temperature_sim,
         equal_car_performance,
         active_aero_track_status,
         active_aero_zones_full,
@@ -1582,6 +1617,41 @@ mod tests {
         assert_eq!(e.code, "FLBK");
         assert_eq!(e.flashback_frame_identifier, Some(7042));
         assert_eq!(e.flashback_session_time, Some(83.5));
+    }
+
+    #[test]
+    fn session_tail_decodes_pit_window_and_tyre_temp_sim() {
+        // 2025 Session is exactly 753 bytes. Body offsets (from byte 29): the
+        // fixed head + 21 marshal zones + safetyCarStatus = 125; pit window sits
+        // 528 bytes further (past the weather forecast + link ids); equal at
+        // +554; tyreTemperature 6 bytes past equal.
+        let mut buf = header_bytes(2025, 1);
+        buf.resize(753, 0);
+        buf[29 + 125 + 528] = 18; // pitStopWindowIdealLap
+        buf[29 + 125 + 529] = 24; // pitStopWindowLatestLap
+        buf[29 + 125 + 530] = 3; // pitStopRejoinPosition
+        buf[29 + 125 + 554] = 1; // equalCarPerformance = On
+        buf[29 + 125 + 554 + 6] = 1; // tyreTemperature = Surface & Carcass
+
+        let p = parse_packet(&buf).expect("valid session");
+        let Some(Body::Session(s)) = p.data else {
+            panic!("session body expected")
+        };
+        assert_eq!(s.pit_stop_window_ideal_lap, Some(18));
+        assert_eq!(s.pit_stop_window_latest_lap, Some(24));
+        assert_eq!(s.pit_stop_rejoin_position, Some(3));
+        assert_eq!(s.equal_car_performance, Some(1));
+        assert_eq!(s.tyre_temperature_sim, Some(1));
+
+        // Zeroed window = no recommendation, not "lap 0".
+        let mut none = header_bytes(2025, 1);
+        none.resize(753, 0);
+        let p = parse_packet(&none).expect("valid session");
+        let Some(Body::Session(s)) = p.data else {
+            panic!("session body expected")
+        };
+        assert_eq!(s.pit_stop_window_ideal_lap, None);
+        assert_eq!(s.tyre_temperature_sim, Some(0), "surface-only is a real value");
     }
 
     #[test]

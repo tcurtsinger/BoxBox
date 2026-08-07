@@ -281,6 +281,8 @@ pub struct TunerState {
     lap_valid: Option<u8>,
     // Track temperature from Session, stamped onto recorded tune laps.
     track_temp: Option<i8>,
+    // m_tyreTemperature: false = Surface only (carcass advice can't fire).
+    temp_sim_carcass: Option<bool>,
     // Clean TT/Practice laps queued for the tune library, drained by the listener.
     pending_laps: Vec<PendingLap>,
 
@@ -563,6 +565,9 @@ impl TunerState {
         self.track_id = new_track;
         self.track_length = s.track_length as f64;
         self.track_temp = Some(s.track_temperature);
+        if let Some(t) = s.tyre_temperature_sim {
+            self.temp_sim_carcass = Some(t == 1);
+        }
         if let Some(e) = s.equal_car_performance {
             self.equal_car_performance = Some(e);
         }
@@ -1287,6 +1292,7 @@ impl TunerState {
             run: current_run,
             wear,
             wear_advice,
+            temp_sim_carcass: self.temp_sim_carcass,
             // Set by the tuner_snapshot command from the tune library; the engine
             // has no library handle, so it defaults to None here.
             matched_tune_id: None,
@@ -1390,6 +1396,10 @@ pub struct Snapshot {
     pub run: Option<RunStats>,
     pub wear: Option<WearStint>,
     pub wear_advice: Option<WearAdvice>,
+    /// The game's tyre-temperature simulation: Some(false) = Surface only —
+    /// inner temps mirror surface, so carcass-based camber advice can never
+    /// fire and the UI says why. None until a full Session packet arrives.
+    pub temp_sim_carcass: Option<bool>,
     /// The id of the saved tune whose setup matches the live one, if any (filled by
     /// the `tuner_snapshot` command). Drives the Tuner's "Running Tune X" card.
     pub matched_tune_id: Option<String>,

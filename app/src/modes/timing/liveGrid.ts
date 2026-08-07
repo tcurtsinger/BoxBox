@@ -111,7 +111,13 @@ export interface QualiSegment {
 
 export interface RaceSnapshot {
   trackName: string | null;
-  session: { totalLaps: number } | null;
+  session: {
+    totalLaps: number;
+    /** The game's pit-window recommendation for the player (Session tail);
+     *  absent/null = no window. */
+    pitStopWindowIdealLap?: number | null;
+    pitStopWindowLatestLap?: number | null;
+  } | null;
   sessionCategory: string;
   numActiveCars: number;
   /** Car index of the player's own car (F1 header `m_playerCarIndex`); the voice
@@ -300,16 +306,21 @@ export interface SessionInfo {
   totalLaps: number;
   /** Session kind (race/qualifying/practice/timeTrial), for the report header. */
   category?: string;
+  /** The game's own pit-window recommendation (player strategy), when one is on. */
+  pitWindow?: { ideal: number; latest: number } | null;
 }
 
 /** Track + lap counter for the tower header. */
 export function sessionInfo(snap: RaceSnapshot): SessionInfo {
   const lap = snap.drivers.reduce((m, d) => Math.max(m, d.currentLapNum), 0);
+  const ideal = snap.session?.pitStopWindowIdealLap ?? 0;
+  const latest = snap.session?.pitStopWindowLatestLap ?? 0;
   return {
     track: snap.trackName ?? "—",
     lap,
     totalLaps: snap.session?.totalLaps ?? 0,
     category: snap.sessionCategory,
+    pitWindow: ideal > 0 ? { ideal, latest: latest > 0 ? latest : ideal } : null,
   };
 }
 

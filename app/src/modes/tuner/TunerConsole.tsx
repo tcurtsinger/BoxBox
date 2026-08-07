@@ -143,7 +143,11 @@ export function TunerConsole() {
           diagnosis={snap.diagnosis}
         />
         <TrimPanel trim={snap.trim} run={snap.run} />
-        <WearPanel wear={snap.wear} advice={snap.wearAdvice} />
+        <WearPanel
+          wear={snap.wear}
+          advice={snap.wearAdvice}
+          tempSimCarcass={snap.tempSimCarcass ?? null}
+        />
         <SetupPanel
           setup={snap.setup}
           advice={snap.setupAdvice}
@@ -547,7 +551,15 @@ function TrimPill({ label, fw, rw }: { label: string; fw: number; rw: number }) 
 /* -------------------------------------------------------------------- Wear */
 const TYRE_LAYOUT: TyreCorner[] = ["fl", "fr", "rl", "rr"];
 
-function WearPanel({ wear, advice }: { wear: WearStint | null; advice: WearAdvice | null }) {
+function WearPanel({
+  wear,
+  advice,
+  tempSimCarcass,
+}: {
+  wear: WearStint | null;
+  advice: WearAdvice | null;
+  tempSimCarcass: boolean | null;
+}) {
   if (!wear) {
     return (
       <section id="tn-wear" className="panel wear">
@@ -615,6 +627,14 @@ function WearPanel({ wear, advice }: { wear: WearStint | null; advice: WearAdvic
           </>
         ) : (
           <p className="panel-foot">Building wear data — {laps}/3 laps on this set.</p>
+        )}
+        {tempSimCarcass === false && (
+          <p className="wear-simnote">
+            Tyre temperature sim is <strong>Surface only</strong> — carcass temps mirror the
+            surface, so camber advice can&rsquo;t be measured. Set it to{" "}
+            <strong>Surface &amp; Carcass</strong> in the game&rsquo;s simulation settings for
+            full wear advice.
+          </p>
         )}
       </div>
     </section>
