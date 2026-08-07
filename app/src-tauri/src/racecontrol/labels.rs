@@ -13,6 +13,11 @@ pub fn incident_label(code: &str) -> Option<&'static str> {
         "FTLP" => "Fastest Lap",
         "RCWN" => "Race Winner",
         "CHQF" => "Chequered Flag",
+        // Surfaced so a steward can explain rewound telemetry: incidents logged
+        // before the rewind describe a timeline that no longer exists, and this
+        // row is the on-the-record reason why. Deliberately NOT deleted/undone —
+        // stewarding evidence is append-only.
+        "FLBK" => "Flashback",
         _ => return None,
     })
 }

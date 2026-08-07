@@ -72,6 +72,14 @@ function formatDetail(detail: Record<string, number>): string {
     parts.push(`${detail.placesGained} place${detail.placesGained === 1 ? "" : "s"} gained`);
   }
   if (detail.speed != null) parts.push(`${Math.round(detail.speed)} km/h`);
+  if (detail.flashbackSessionTime != null) {
+    const t = detail.flashbackSessionTime;
+    const m = Math.floor(t / 60);
+    const s = Math.floor(t % 60)
+      .toString()
+      .padStart(2, "0");
+    parts.push(`rewound to ${m}:${s}`);
+  }
   return parts.join(" · ");
 }
 

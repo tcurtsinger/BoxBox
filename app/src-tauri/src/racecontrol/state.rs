@@ -564,6 +564,10 @@ impl SessionState {
         put_f32("speed", e.speed);
         put_f32("lapTime", e.lap_time);
         put_f32("stopTime", e.stop_time);
+        // No sentinel filter: any rewind target is a legitimate session time.
+        if let Some(t) = e.flashback_session_time {
+            detail.insert("flashbackSessionTime".to_string(), t as f64);
+        }
 
         let lap_num = e.lap_num.map(|v| v as u32);
         // Suppress an exact-duplicate auto incident right after another (same code,
@@ -1218,6 +1222,30 @@ mod tests {
         let s = st.snapshot();
         assert_eq!(s.incidents.len(), 1);
         assert_eq!(s.incidents[0].label, "Safety Car");
+    }
+
+    #[test]
+    fn flashback_is_logged_for_the_record() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(
+            &event(
+                "A",
+                EventData {
+                    code: "FLBK".into(),
+                    flashback_session_time: Some(83.0),
+                    ..Default::default()
+                },
+            ),
+            100.0,
+        );
+        let s = st.snapshot();
+        assert_eq!(s.incidents.len(), 1);
+        assert_eq!(s.incidents[0].label, "Flashback");
+        assert_eq!(
+            s.incidents[0].detail.get("flashbackSessionTime"),
+            Some(&83.0)
+        );
     }
 
     #[test]

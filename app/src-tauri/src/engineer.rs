@@ -386,6 +386,10 @@ pub fn derive_callouts(prev: &PlayerFrame, next: &PlayerFrame) -> Vec<Callout> {
     out
 }
 
+/// A session clock that moved back by more than this many seconds is a flashback
+/// rewind (the clock never legitimately decreases within one session UID).
+const FLASHBACK_REWIND_SECS: f64 = 1.0;
+
 /// Stateful runner: holds the previous player frame and turns a fresh snapshot into
 /// the callouts to emit. The first frame (or a frame with no local player) only sets
 /// the baseline and emits nothing.
@@ -393,6 +397,7 @@ pub fn derive_callouts(prev: &PlayerFrame, next: &PlayerFrame) -> Vec<Callout> {
 pub struct Engineer {
     prev: Option<PlayerFrame>,
     session_uid: String,
+    last_session_time: f64,
 }
 
 impl Engineer {
@@ -409,6 +414,14 @@ impl Engineer {
             self.session_uid = snap.session_uid.clone();
             self.prev = None;
         }
+        // A flashback rewound the clock: the held frame describes a timeline that
+        // no longer exists, and comparing against it would announce the rewind's
+        // manufactured "changes" ("Dropped to P8", re-fired lap times, re-armed
+        // wear callouts). Rebaseline silently instead. Routine in career mode.
+        if snap.session_time + FLASHBACK_REWIND_SECS < self.last_session_time {
+            self.prev = None;
+        }
+        self.last_session_time = snap.session_time;
         match extract_player_frame(snap) {
             Some(next) => {
                 let out = match &self.prev {
@@ -619,6 +632,55 @@ mod tests {
         );
         // But transitions within the new session speak again.
         assert!(!eng.evaluate(&snap("B", 2)).is_empty());
+    }
+
+    #[test]
+    fn flashback_rewind_rebaselines_silently() {
+        use crate::racecontrol::state::{DriverState, SessionCategory};
+        use crate::racecontrol::SessionSnapshot;
+        use std::collections::HashMap;
+
+        let snap = |position: u8, time: f64| -> SessionSnapshot {
+            let mut d = DriverState::default();
+            d.index = 0;
+            d.position = position;
+            d.telemetry_public = true;
+            d.fuel_remaining_laps = 1.0;
+            d.tyre_wear = vec![10.0; 4];
+            SessionSnapshot {
+                format: 2025,
+                game_year: 25,
+                session_uid: "A".into(),
+                session_time: time,
+                session: None,
+                session_category: SessionCategory::Race,
+                track_name: None,
+                is_spectating: false,
+                spectator_car_index: 255,
+                player_car_index: 0,
+                num_active_cars: 1,
+                drivers: vec![d],
+                incidents: vec![],
+                event_tally: HashMap::new(),
+                final_classification: None,
+                quali_segments: vec![],
+                packet_count: 1,
+                last_update: 0.0,
+                last_packet_at: 0.0,
+            }
+        };
+
+        let mut eng = Engineer::new();
+        assert!(eng.evaluate(&snap(8, 100.0)).is_empty(), "baseline");
+        assert!(!eng.evaluate(&snap(4, 130.0)).is_empty(), "P4 announced");
+        // Flashback: clock and position rewind together. Announcing "Dropped to
+        // P8" here would be reading out the rewind, not the race.
+        assert!(
+            eng.evaluate(&snap(8, 95.0)).is_empty(),
+            "a rewind rebaselines silently"
+        );
+        // Real transitions after the rewind speak again.
+        assert!(!eng.evaluate(&snap(7, 96.0)).is_empty());
     }
 
     #[test]

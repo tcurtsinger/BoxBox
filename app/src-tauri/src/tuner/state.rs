@@ -494,8 +494,29 @@ impl TunerState {
             }
             Some(Body::TimeTrial(tt)) => self.ingest_time_trial(tt),
             Some(Body::MotionEx(d)) => self.ingest_motion_ex(d),
+            Some(Body::Event(e)) if e.code == "FLBK" => self.on_flashback(),
             _ => {}
         }
+    }
+
+    /// A flashback rewound the session (FLBK event, or the lap counter moved
+    /// backwards). Everything in flight was measured against a timeline that no
+    /// longer exists: drop the partial lap and taint the re-drive (its trace
+    /// starts mid-lap but would still pass the coverage gate), restart the wear
+    /// stint from the rewound values, and abandon the wear A/B. Committed
+    /// clean-lap learning — corner maps, folded diagnosis, runs — is untouched.
+    fn on_flashback(&mut self) {
+        self.lap_trace = Vec::new();
+        self.lap_diag = HashMap::new();
+        self.lap_invalidated = true;
+        // Wear rewound with the car: without this, the drop reads as a fresh set
+        // (phantom stint restart) and the stint's %/lap denominator corrupts.
+        // The next Car Damage frame re-seeds the baseline.
+        self.wear = None;
+        self.wear_baseline = None;
+        self.wear_laps = 0;
+        self.wear_stint_clean = true;
+        self.wear_pending = None;
     }
 
     /// A Time Trial restart spawns a new session UID, often at the same lap number
@@ -674,7 +695,14 @@ impl TunerState {
         if self.current_lap_num == -1 {
             self.current_lap_num = lap.current_lap_num as i32;
         }
-        if lap.current_lap_num as i32 != self.current_lap_num {
+        if (lap.current_lap_num as i32) < self.current_lap_num {
+            // The lap counter went BACKWARDS: a flashback rewound across the
+            // line. Nothing completed — finalizing here would fold a phantom
+            // lap into stats and inflate the wear denominator by two (the
+            // rewound partial plus the re-driven partial both "ending").
+            self.on_flashback();
+            self.current_lap_num = lap.current_lap_num as i32;
+        } else if lap.current_lap_num as i32 != self.current_lap_num {
             self.finalize_lap(lap.last_lap_time_ms);
             if self.wear_baseline.is_some() {
                 self.wear_laps += 1;
@@ -2096,6 +2124,53 @@ mod tests {
     }
 
     #[test]
+    fn flashback_rewind_does_not_finalize_or_inflate_wear() {
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&setups());
+        st.ingest(&damage(0.0, 0.0, 0.0, 0.0));
+        st.ingest(&lapdata(10.0, 5, 0)); // seed lap 5
+        st.ingest(&damage(1.0, 1.0, 2.0, 2.0));
+        st.ingest(&lapdata(10.0, 6, 0)); // wear_laps = 1
+
+        // Flashback across the line: the lap counter goes BACK to 5.
+        st.ingest(&lapdata(2900.0, 5, 0));
+        assert_eq!(st.wear_laps, 0, "a rewind restarts the stint, never +1");
+        assert_eq!(st.clean_laps, 0, "nothing completed at a rewind");
+
+        // Re-crossing to 6 finalizes the tainted re-driven partial silently.
+        st.ingest(&lapdata(10.0, 6, 0));
+        assert_eq!(st.clean_laps, 0, "the re-driven partial can't count clean");
+
+        // The stint re-seeds and counts honestly again afterwards.
+        st.ingest(&damage(2.0, 2.0, 3.0, 3.0));
+        st.ingest(&lapdata(10.0, 7, 0));
+        assert_eq!(st.wear_laps, 1);
+    }
+
+    #[test]
+    fn flbk_event_taints_the_lap_and_restarts_the_wear_stint() {
+        let mut st = TunerState::new();
+        wear_baseline_then_change(&mut st); // front-toe wear A/B open
+        assert!(st.wear_pending.is_some(), "precondition: A/B open");
+
+        // Mid-lap flashback: the FLBK event arrives without a lap-number change.
+        st.ingest(&p(
+            3,
+            Body::Event(EventData {
+                code: "FLBK".into(),
+                ..Default::default()
+            }),
+        ));
+        assert_eq!(st.wear_laps, 0, "the stint restarts from the rewound values");
+        assert!(st.lap_invalidated, "the re-driven lap must not shape advice");
+        assert!(
+            st.wear_pending.is_none(),
+            "an A/B spanning a rewind would learn a garbage sensitivity"
+        );
+    }
+
+    #[test]
     fn pressure_change_cancels_the_wear_ab_and_rebaselines() {
         let mut st = TunerState::new();
         wear_baseline_then_change(&mut st); // front-toe A/B open
@@ -2139,7 +2214,7 @@ mod tests {
         st.ingest(&changed);
 
         assert!(
-            st.corner_diag.get(&st.track_id).is_none(),
+            !st.corner_diag.contains_key(&st.track_id),
             "advice must re-earn its evidence on the new setup, not keep \
              recommending the fix that was just applied"
         );

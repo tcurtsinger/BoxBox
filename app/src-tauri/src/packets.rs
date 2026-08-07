@@ -978,6 +978,10 @@ pub struct EventData {
     pub overtaking_vehicle_idx: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub being_overtaken_vehicle_idx: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flashback_frame_identifier: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flashback_session_time: Option<f32>,
 }
 
 fn parse_event(rd: &mut Reader, header: &PacketHeader) -> EventData {
@@ -1038,7 +1042,13 @@ fn parse_event(rd: &mut Reader, header: &PacketHeader) -> EventData {
                 e.severity = Some(rd.u8());
             }
         }
-        // SSTA, SEND, CHQF, DRSE, LGOT, RDFL, FLBK, BUTN: no payload decoded.
+        "FLBK" => {
+            // The rewind target: consumers use it to invalidate in-flight state
+            // measured against the timeline the flashback just erased.
+            e.flashback_frame_identifier = Some(rd.u32());
+            e.flashback_session_time = Some(rd.f32());
+        }
+        // SSTA, SEND, CHQF, DRSE, LGOT, RDFL, BUTN: no payload decoded.
         _ => {}
     }
 
@@ -1432,6 +1442,24 @@ mod tests {
         let mut buf = header_bytes(2026, 3);
         buf.extend_from_slice(b"PENA"); // event code, no payload bytes
         assert!(parse_packet(&buf).is_none(), "incomplete PENA rejected");
+    }
+
+    #[test]
+    fn flbk_event_decodes_rewind_target() {
+        // Event packet is exactly 45 bytes; FLBK carries frameId (u32) +
+        // sessionTime (f32) — the rewind target consumers invalidate against.
+        let mut buf = header_bytes(2026, 3);
+        buf.extend_from_slice(b"FLBK");
+        buf.extend_from_slice(&7042u32.to_le_bytes());
+        buf.extend_from_slice(&83.5f32.to_le_bytes());
+        buf.resize(45, 0); // pad to the exact event-packet size
+        let p = parse_packet(&buf).expect("valid FLBK event");
+        let Some(Body::Event(e)) = p.data else {
+            panic!("event body expected")
+        };
+        assert_eq!(e.code, "FLBK");
+        assert_eq!(e.flashback_frame_identifier, Some(7042));
+        assert_eq!(e.flashback_session_time, Some(83.5));
     }
 
     #[test]
