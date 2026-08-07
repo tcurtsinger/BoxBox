@@ -219,7 +219,6 @@ pub struct SessionSnapshot {
     pub num_active_cars: u8,
     pub drivers: Vec<DriverState>,
     pub incidents: Vec<Incident>,
-    pub event_tally: HashMap<String, u32>,
     pub final_classification: Option<FinalClassificationData>,
     /// Completed qualifying segments for the current weekend (Q1, Q2, ... ascending),
     /// for the stacked qualifying classification. Empty outside qualifying. P1.3.
@@ -242,6 +241,9 @@ pub struct SessionState {
     num_active_cars: u8,
     drivers: HashMap<u8, DriverState>,
     incidents: Vec<Incident>,
+    // Bounded per-session event counts (spoof-guarded by KNOWN_EVENT_CODES).
+    // Internal diagnostics only — deliberately NOT serialized into the 4 Hz
+    // snapshot: no frontend surface reads it, and it was cloned on every poll.
     event_tally: HashMap<String, u32>,
     final_classification: Option<FinalClassificationData>,
     packet_count: u64,
@@ -1036,7 +1038,6 @@ impl SessionState {
             num_active_cars: self.num_active_cars,
             drivers: self.active_drivers(),
             incidents: self.incidents.clone(),
-            event_tally: self.event_tally.clone(),
             final_classification: self.final_classification.clone(),
             quali_segments: self.quali_segments_view(),
             packet_count: self.packet_count,
@@ -1271,7 +1272,7 @@ mod tests {
         assert_eq!(inc.car_indices, vec![3, 7]);
         assert_eq!(inc.status, IncidentStatus::Logged);
         assert_eq!(inc.detail.get("severity"), Some(&2.0));
-        assert_eq!(s.event_tally.get("COLL"), Some(&1));
+        assert_eq!(st.event_tally.get("COLL"), Some(&1));
     }
 
     #[test]
@@ -1303,7 +1304,7 @@ mod tests {
         assert_eq!(s.incidents[0].label, "Corner cutting, gained time");
         assert_eq!(s.incidents[1].code, "TLIM");
         assert!(s.incidents[1].label.starts_with("Warning — "));
-        assert_eq!(s.event_tally.get("PENA"), Some(&2), "both tallied as PENA");
+        assert_eq!(st.event_tally.get("PENA"), Some(&2), "both tallied as PENA");
     }
 
     #[test]
@@ -1677,7 +1678,7 @@ mod tests {
             "log capped, got {}",
             s.incidents.len()
         );
-        assert_eq!(s.event_tally.len(), 1, "only the one known code is tallied");
+        assert_eq!(st.event_tally.len(), 1, "only the one known code is tallied");
     }
 
     #[test]
@@ -1714,7 +1715,7 @@ mod tests {
             ),
             0.0,
         );
-        assert!(st.snapshot().event_tally.is_empty(), "spoofed code ignored");
+        assert!(st.event_tally.is_empty(), "spoofed code ignored");
     }
 
     #[test]

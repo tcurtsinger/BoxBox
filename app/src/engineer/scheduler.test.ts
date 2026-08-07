@@ -35,6 +35,25 @@ describe("CalloutScheduler", () => {
     expect(s.take(1500)!.key).toBe("k");
   });
 
+  it("safety callouts skip the key cooldown (a second yellow must speak)", () => {
+    const s = new CalloutScheduler({ keyCooldownMs: 20_000, categoryCooldownMs: 0, maxQueue: 8 });
+    const yellow = c({ key: "flag-yellow", priority: PRIORITY.safety, category: "flagsIncidents" });
+    s.push([yellow], 0);
+    expect(s.take(0)!.key).toBe("flag-yellow");
+    // A NEW yellow 5s later (the detector only emits on real transitions).
+    s.push([yellow], 5_000);
+    expect(s.take(5_000)!.key).toBe("flag-yellow");
+  });
+
+  it("clear() forgets cooldown history (new session, ids restart at 1)", () => {
+    const s = new CalloutScheduler({ keyCooldownMs: 20_000, categoryCooldownMs: 0, maxQueue: 8 });
+    s.push([c({ key: "ev-1" })], 0);
+    expect(s.take(0)!.key).toBe("ev-1");
+    s.clear(); // session change
+    s.push([c({ key: "ev-1" })], 5_000); // the NEW session's first incident
+    expect(s.take(5_000)!.key).toBe("ev-1");
+  });
+
   it("rate-limits a category, but safety bypasses it", () => {
     const s = new CalloutScheduler({ keyCooldownMs: 0, categoryCooldownMs: 1000, maxQueue: 8 });
     s.push([c({ key: "a", category: "gapsPosition" })], 0);

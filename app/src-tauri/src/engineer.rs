@@ -599,7 +599,6 @@ mod tests {
     fn session_change_rebaselines_instead_of_comparing_across() {
         use crate::racecontrol::state::DriverState;
         use crate::racecontrol::SessionSnapshot;
-        use std::collections::HashMap;
 
         let snap = |uid: &str, position: u8| -> SessionSnapshot {
             let mut d = DriverState::default();
@@ -622,7 +621,6 @@ mod tests {
                 num_active_cars: 1,
                 drivers: vec![d],
                 incidents: vec![],
-                event_tally: HashMap::new(),
                 final_classification: None,
                 quali_segments: vec![],
                 packet_count: 1,
@@ -648,7 +646,6 @@ mod tests {
     fn flashback_rewind_rebaselines_silently() {
         use crate::racecontrol::state::{DriverState, SessionCategory};
         use crate::racecontrol::SessionSnapshot;
-        use std::collections::HashMap;
 
         let snap = |position: u8, time: f64| -> SessionSnapshot {
             let mut d = DriverState::default();
@@ -671,7 +668,6 @@ mod tests {
                 num_active_cars: 1,
                 drivers: vec![d],
                 incidents: vec![],
-                event_tally: HashMap::new(),
                 final_classification: None,
                 quali_segments: vec![],
                 packet_count: 1,
@@ -773,7 +769,6 @@ mod tests {
                 num_active_cars: 1,
                 drivers: vec![d],
                 incidents,
-                event_tally: HashMap::new(),
                 final_classification: None,
                 quali_segments: vec![],
                 packet_count: 1,

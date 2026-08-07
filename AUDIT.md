@@ -294,6 +294,23 @@ Fix: 65536-byte buffer or classify 10040 as non-fatal.
 
 ## P2 — Incomplete: what still needs to be done
 
+> **Status 2026-08-07 (second pass): the core P2 items are done** —
+> `97e8025` Session History packet 11 (authoritative lap/sector archive, mid-
+> session-join bests, stint end-laps → items 1, 5-partial), `a14e8ec` pit
+> window + tyre-temp sim option (item 6-partial), `3b533ed` persistence
+> hardening (fsync, version guard, timestamped quarantine, poison-tolerant
+> command locks → item 10 minus archive-growth refactor), P2-D (safety
+> callouts skip the key cooldown, scheduler cooldowns reset on session change,
+> eventTally off the 4 Hz snapshot → item 9-partial, item 5-partial). Items 2,
+> 3, 4 were already closed by the P0 fixes.
+>
+> **Still open:** Motion/TyreSets/LapPositions/LobbyInfo packets (item 7),
+> weather forecast + marshal zones + gameMode/ruleSet (rest of item 6), the
+> tuner robustness backlog (item 8: spectator guard, stint identity, diff-floor
+> in-game verification, S/F-line corners, pit-lane trace filter, per-car
+> profiles), the Rust/TS engineer rule-set contract test (rest of item 9), and
+> the history-archive growth refactor (rest of item 10).
+
 Ordered by value, not effort.
 
 1. **Parse SessionHistory (packet 11).** The single highest-value gap. It provides:

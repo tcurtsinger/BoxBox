@@ -38,11 +38,17 @@ export class CalloutScheduler {
     this.opts = { ...DEFAULTS, ...opts };
   }
 
-  /** Enqueue candidates, dropping any still in key-cooldown or already queued. */
+  /** Enqueue candidates, dropping any still in key-cooldown or already queued.
+   *  Safety callouts skip the key cooldown: the detector only emits them on a
+   *  real transition (a NEW yellow flag, a new incident), so suppressing a
+   *  second yellow that arrives within 20 s of the first would silence a
+   *  genuine hazard — the cooldown exists to stop chatter, not safety calls. */
   push(callouts: Callout[], now: number): void {
     for (const c of callouts) {
-      const last = this.lastKeyAt.get(c.key);
-      if (last != null && now - last < this.opts.keyCooldownMs) continue;
+      if (c.priority < PRIORITY.safety) {
+        const last = this.lastKeyAt.get(c.key);
+        if (last != null && now - last < this.opts.keyCooldownMs) continue;
+      }
       if (this.queue.some((q) => q.key === c.key)) continue;
       this.queue.push(c);
     }
@@ -79,8 +85,13 @@ export class CalloutScheduler {
     return null;
   }
 
-  /** Drop everything pending (e.g. the session ended or the engine was disabled). */
+  /** Drop everything pending AND forget the cooldown history (the session ended
+   *  or the engine was disabled). Without the map resets, a new session's first
+   *  incident could be silenced by the previous session's `ev-1` — incident ids
+   *  restart at 1 per session — and cooldowns leaked across disable/enable. */
   clear(): void {
     this.queue = [];
+    this.lastKeyAt.clear();
+    this.lastCategoryAt.clear();
   }
 }

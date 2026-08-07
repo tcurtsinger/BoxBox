@@ -146,17 +146,29 @@ export function useRaceEngineer(): void {
 
     if (IN_TAURI && feed.sample !== true) {
       // Real: speak callouts the Rust listener emits (detection runs there now).
-      let unlisten: (() => void) | null = null;
+      const disposers: Array<() => void> = [];
       void (async () => {
         const { listen } = await import("@tauri-apps/api/event");
         if (cancelled) return;
         const un = await listen<Callout>("engineer:callout", (e) => enqueue([e.payload]));
-        if (cancelled) un();
-        else unlisten = un;
+        if (cancelled) {
+          un();
+          return;
+        }
+        disposers.push(un);
+        // A new game session restarts incident ids at 1, so the previous
+        // session's cooldown history could silence the new session's first
+        // callouts — forget it (drops any stale queued speech too).
+        const unSession = await listen("race:session-changed", () => scheduler.clear());
+        if (cancelled) {
+          unSession();
+          return;
+        }
+        disposers.push(unSession);
       })();
       return () => {
         cancelled = true;
-        if (unlisten) unlisten();
+        for (const d of disposers) d();
         speaker.cancel();
         scheduler.clear();
         clearRetry();
