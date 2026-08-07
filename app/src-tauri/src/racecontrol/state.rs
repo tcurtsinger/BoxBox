@@ -9,8 +9,9 @@ use serde::Serialize;
 
 use crate::packets::{
     Body, CarDamageData, CarStatusData, CarTelemetry2Data, CarTelemetryData, EventData,
-    FinalClassificationData, LapDataData, LapHistoryEntry, LiveryColour, ParsedPacket,
-    ParticipantsData, PowerUnitWear, SessionData, SessionHistoryData, TyreStintEntry,
+    FinalClassificationData, LapDataData, LapHistoryEntry, LiveryColour, MotionData,
+    ParsedPacket, ParticipantsData, PowerUnitWear, SessionData, SessionHistoryData,
+    TyreStintEntry,
 };
 
 use super::labels::{incident_label, infringement_type, is_real_penalty, penalty_type};
@@ -175,6 +176,18 @@ pub struct DriverState {
     // (m_lapValidBitFlags) — live LapData reconstruction can see neither.
     pub lap_history: Vec<LapHistoryEntry>,
     pub stint_history: Vec<TyreStintEntry>,
+    // Motion (packet 0): live world position for the track map. None until the
+    // first motion frame for this car.
+    pub motion: Option<CarPos>,
+}
+
+/// A car's world position on the horizontal plane + heading, for the track map.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CarPos {
+    pub x: f32,
+    pub z: f32,
+    pub yaw: f32,
 }
 
 /// One driver's final standing in a completed qualifying segment, preserved so a
@@ -351,8 +364,25 @@ impl SessionState {
             }
             Some(Body::CarDamage(d)) => self.ingest_damage(d),
             Some(Body::SessionHistory(h)) => self.ingest_session_history(h),
+            Some(Body::Motion(m)) => self.ingest_motion(m),
             Some(Body::CarTelemetry2(t)) => self.ingest_telemetry2(t),
             _ => {}
+        }
+    }
+
+    fn ingest_motion(&mut self, m: &MotionData) {
+        for c in &m.cars {
+            // The fixed array carries zeroed slots for absent cars; a car parked
+            // exactly at the world origin doesn't exist in practice.
+            if c.world_x == 0.0 && c.world_z == 0.0 {
+                continue;
+            }
+            let d = self.driver_mut(c.index as u8);
+            d.motion = Some(CarPos {
+                x: c.world_x,
+                z: c.world_z,
+                yaw: c.yaw,
+            });
         }
     }
 

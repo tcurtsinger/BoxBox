@@ -94,6 +94,9 @@ export interface DriverRow {
   /** "DNF" / "DSQ" / "NC" / "RET" once the game reports the car out; null while
    *  running. Drives the dimmed row + OUT chip so a crashed car can't look alive. */
   status: string | null;
+  /** Live world position (Motion packet), for the track map. Absent on sample
+   *  rows and until the first motion frame. */
+  motion?: { x: number; z: number; yaw: number } | null;
   batt: number;
   boost: boolean;
   fuel: number;

@@ -225,6 +225,54 @@ fn parse_header(rd: &mut Reader) -> PacketHeader {
     }
 }
 
+// --- Motion (id 0) -------------------------------------------------------------
+// World positions for every car, ~60 Hz — the track map's data source. Only the
+// position + yaw are kept; velocities/direction vectors/g-forces are skipped
+// (the tuner's balance math uses MotionEx, which carries the player-only
+// extended set). 2026 quantised the three g-forces to i16 (60 → 54 B stride).
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CarMotionEntry {
+    pub index: usize,
+    /// World-space metres. X/Z are the horizontal plane (Y is height).
+    pub world_x: f32,
+    pub world_y: f32,
+    pub world_z: f32,
+    /// Heading in radians.
+    pub yaw: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MotionData {
+    pub cars: Vec<CarMotionEntry>,
+}
+
+fn parse_motion(rd: &mut Reader, header: &PacketHeader) -> MotionData {
+    let is_2026 = header.packet_format >= 2026;
+    let max_cars = max_cars_for_format(header.packet_format);
+    let mut cars = Vec::with_capacity(max_cars);
+    for index in 0..max_cars {
+        let world_x = rd.f32();
+        let world_y = rd.f32();
+        let world_z = rd.f32();
+        rd.skip(12); // world velocity xyz (f32)
+        rd.skip(12); // forward + right direction vectors (6 × i16)
+        rd.skip(if is_2026 { 6 } else { 12 }); // g-forces (i16 quantised in 2026)
+        let yaw = rd.f32();
+        rd.skip(8); // pitch, roll
+        cars.push(CarMotionEntry {
+            index,
+            world_x,
+            world_y,
+            world_z,
+            yaw,
+        });
+    }
+    MotionData { cars }
+}
+
 // --- Session (id 1) -----------------------------------------------------------
 
 /// One active-aero activation zone, as a fraction (0..1) of the lap.
@@ -1454,6 +1502,7 @@ fn parse_car_telemetry2(rd: &mut Reader, header: &PacketHeader) -> CarTelemetry2
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum Body {
+    Motion(MotionData),
     Session(SessionData),
     LapData(LapDataData),
     Event(EventData),
@@ -1502,6 +1551,7 @@ pub fn parse_packet(buf: &[u8]) -> Option<ParsedPacket> {
     }
 
     let data = match id {
+        0 => Some(Body::Motion(parse_motion(&mut rd, &header))),
         1 => Some(Body::Session(parse_session(&mut rd, &header))),
         2 => Some(Body::LapData(parse_lap_data(&mut rd, &header))),
         3 => Some(Body::Event(parse_event(&mut rd, &header))),
@@ -1717,13 +1767,47 @@ mod tests {
 
     #[test]
     fn accepts_exact_size_undecoded_packet_as_header_only() {
-        // A valid but not-yet-decoded packet (Motion, id 0) at its exact size flows
-        // as header-only (data: None) for heartbeat/format — not rejected.
+        // A valid but not-yet-decoded packet (Tyre Sets, id 12) at its exact size
+        // flows as header-only (data: None) for heartbeat/format — not rejected.
+        let mut buf = header_bytes(2026, 12);
+        buf.resize(231, 0);
+        let packet = parse_packet(&buf).expect("exact-size Tyre Sets accepted");
+        assert_eq!(packet.id, 12);
+        assert!(packet.data.is_none(), "Tyre Sets not decoded -> header only");
+    }
+
+    #[test]
+    fn motion_decodes_positions_in_both_strides() {
+        // 2025: 60-byte stride. Per car: pos 0-12, vel 12-24, dirs 24-36,
+        // g-forces (f32) 36-48, yaw 48-52.
+        let mut buf = header_bytes(2025, 0);
+        buf.resize(1349, 0);
+        buf[29..33].copy_from_slice(&100.5f32.to_le_bytes()); // car 0 worldX
+        buf[37..41].copy_from_slice(&(-40.25f32).to_le_bytes()); // car 0 worldZ
+        buf[29 + 48..29 + 52].copy_from_slice(&1.0f32.to_le_bytes()); // car 0 yaw
+        buf[29 + 60..29 + 64].copy_from_slice(&9.0f32.to_le_bytes()); // car 1 worldX
+        let p = parse_packet(&buf).expect("valid 2025 motion");
+        let Some(Body::Motion(m)) = p.data else {
+            panic!("motion body expected")
+        };
+        assert_eq!(m.cars.len(), 22);
+        assert_eq!(m.cars[0].world_x, 100.5);
+        assert_eq!(m.cars[0].world_z, -40.25);
+        assert_eq!(m.cars[0].yaw, 1.0);
+        assert_eq!(m.cars[1].world_x, 9.0);
+
+        // 2026: 54-byte stride (g-forces quantised to i16), 24 cars.
         let mut buf = header_bytes(2026, 0);
         buf.resize(1325, 0);
-        let packet = parse_packet(&buf).expect("exact-size Motion accepted");
-        assert_eq!(packet.id, 0);
-        assert!(packet.data.is_none(), "Motion not decoded -> header only");
+        buf[29 + 54..29 + 58].copy_from_slice(&7.5f32.to_le_bytes()); // car 1 worldX
+        buf[29 + 42..29 + 46].copy_from_slice(&0.5f32.to_le_bytes()); // car 0 yaw
+        let p = parse_packet(&buf).expect("valid 2026 motion");
+        let Some(Body::Motion(m)) = p.data else {
+            panic!("motion body expected")
+        };
+        assert_eq!(m.cars.len(), 24);
+        assert_eq!(m.cars[1].world_x, 7.5);
+        assert_eq!(m.cars[0].yaw, 0.5);
     }
 
     #[test]
