@@ -283,6 +283,12 @@ pub struct TunerState {
     track_temp: Option<i8>,
     // m_tyreTemperature: false = Surface only (carcass advice can't fire).
     temp_sim_carcass: Option<bool>,
+    // m_isSpectating: while true, the header's playerCarIndex points at the
+    // SPECTATED car — every player-keyed ingest would learn from someone
+    // else's driving, poisoning the persisted profile.
+    spectating: bool,
+    // Actual (not visual) compound of the current set, for set-change detection.
+    actual_compound: Option<u8>,
     // Clean TT/Practice laps queued for the tune library, drained by the listener.
     pending_laps: Vec<PendingLap>,
 
@@ -470,6 +476,13 @@ impl TunerState {
 
         match &pkt.data {
             Some(Body::Session(s)) => self.ingest_session(s),
+            Some(Body::Event(e)) if e.code == "FLBK" => self.on_flashback(),
+            // Spectator guard: everything below is keyed to playerCarIndex,
+            // which points at the SPECTATED car while spectating (spec:
+            // m_isSpectating / m_spectatorCarIndex). Learning from it would
+            // bank another driver's laps, wear and setup into this install's
+            // profile. Session (above) still processes so the flag can clear.
+            _ if self.spectating => {}
             Some(Body::LapData(d)) => self.ingest_lap_data(d, idx),
             Some(Body::CarTelemetry(d)) => self.ingest_telemetry(d, idx),
             Some(Body::CarDamage(d)) => self.ingest_damage(d, idx),
@@ -496,7 +509,6 @@ impl TunerState {
             }
             Some(Body::TimeTrial(tt)) => self.ingest_time_trial(tt),
             Some(Body::MotionEx(d)) => self.ingest_motion_ex(d),
-            Some(Body::Event(e)) if e.code == "FLBK" => self.on_flashback(),
             _ => {}
         }
     }
@@ -568,6 +580,12 @@ impl TunerState {
         if let Some(t) = s.tyre_temperature_sim {
             self.temp_sim_carcass = Some(t == 1);
         }
+        // Entering spectator mode abandons the in-flight lap outright — its
+        // trailing half would otherwise be continued by the spectated car.
+        if s.is_spectating && !self.spectating {
+            self.reset_volatile_lap_state();
+        }
+        self.spectating = s.is_spectating;
         if let Some(e) = s.equal_car_performance {
             self.equal_car_performance = Some(e);
         }
@@ -628,6 +646,25 @@ impl TunerState {
 
     fn ingest_status(&mut self, d: &CarStatusData, idx: usize) {
         let Some(mine) = d.cars.get(idx) else { return };
+        // Set-change detection the wear-drop heuristic can miss: fitting a
+        // MORE-worn set (wear rises, no drop) or a different compound at
+        // similar wear. A different ACTUAL compound, or a tyre age that went
+        // DOWN, is a new set — rebaseline the stint and abandon any open A/B,
+        // whose rate would otherwise span two sets (spec: m_actualTyreCompound,
+        // m_tyresAgeLaps).
+        let compound_changed = self
+            .actual_compound
+            .is_some_and(|c| c != mine.actual_tyre_compound);
+        let age_dropped = self
+            .tyre_age_laps
+            .is_some_and(|a| mine.tyres_age_laps < a);
+        if compound_changed || age_dropped {
+            self.wear_baseline = self.wear;
+            self.wear_laps = 0;
+            self.wear_stint_clean = true;
+            self.wear_pending = None;
+        }
+        self.actual_compound = Some(mine.actual_tyre_compound);
         self.tyre_age_laps = Some(mine.tyres_age_laps);
         self.compound = Some(mine.visual_tyre_compound);
     }
@@ -730,6 +767,13 @@ impl TunerState {
         }
 
         self.lap_distance = lap.lap_distance as f64;
+        // No trace samples from the pit lane or the garage: pit-entry braking
+        // reads exactly like a corner and can seed a phantom one near the pit
+        // mouth (spec: m_pitStatus > 0 = pitting / in pit area, m_driverStatus
+        // 0 = in garage).
+        if lap.pit_status != 0 || lap.driver_status == 0 {
+            return;
+        }
         if let Some(sp) = self.t_speed {
             if lap.lap_distance >= 0.0 {
                 self.lap_trace.push(TraceSample {
@@ -1517,6 +1561,7 @@ mod tests {
             lap_distance: dist as f32,
             current_lap_num: lap,
             last_lap_time_ms: last_ms,
+            driver_status: 1, // flying lap — the default 0 means "in garage"
             ..Default::default()
         };
         p(
@@ -1536,6 +1581,7 @@ mod tests {
             current_lap_num: lap,
             last_lap_time_ms: last_ms,
             current_lap_invalid: true,
+            driver_status: 1, // flying lap — the default 0 means "in garage"
             ..Default::default()
         };
         p(
@@ -2131,6 +2177,79 @@ mod tests {
         st.ingest(&damage(4.5, 4.5, 9.0, 9.0));
         st.ingest(&lapdata(10.0, 7, 0));
         assert_eq!(st.profile_revision(), 1, "ramped change still learns");
+    }
+
+    #[test]
+    fn spectating_learns_nothing_from_the_watched_car() {
+        let mut st = TunerState::new();
+        // A spectating session: playerCarIndex points at the spectated car.
+        let mut sess = session(13, 18, 3000);
+        if let Some(Body::Session(s)) = sess.data.as_mut() {
+            s.is_spectating = true;
+        }
+        st.ingest(&sess);
+        st.ingest(&setups());
+        st.ingest(&damage(0.0, 0.0, 0.0, 0.0));
+        drive_lap(&mut st, 1, true);
+        roll_over(&mut st, 2, 90_000);
+
+        assert_eq!(st.clean_laps, 0, "spectated laps must not shape advice");
+        assert!(
+            st.setup.is_none(),
+            "the spectated car's setup must not be adopted as the player's"
+        );
+        assert!(st.wear.is_none(), "no wear learned while spectating");
+    }
+
+    #[test]
+    fn pit_lane_samples_stay_out_of_the_trace() {
+        let mut st = TunerState::new();
+        st.ingest(&session(13, 18, 3000));
+        st.ingest(&telemetry(80, 0.0));
+        // In the pit lane (pit_status 2): braking to the box must not become
+        // a phantom corner.
+        let mut in_pit = lapdata(200.0, 1, 0);
+        if let Some(Body::LapData(d)) = in_pit.data.as_mut() {
+            d.cars[0].pit_status = 2;
+        }
+        st.ingest(&in_pit);
+        assert!(st.lap_trace.is_empty(), "pit-lane frames record no trace");
+        // Back on track: samples record again.
+        st.ingest(&lapdata(400.0, 1, 0));
+        assert_eq!(st.lap_trace.len(), 1);
+    }
+
+    #[test]
+    fn compound_change_or_age_drop_restarts_the_stint() {
+        let mut st = TunerState::new();
+        wear_baseline_then_change(&mut st); // front-toe A/B open, stint rebaselined
+        assert!(st.wear_pending.is_some(), "precondition: A/B open");
+
+        // Same wear, but the game reports a DIFFERENT actual compound: a set
+        // change the wear-drop heuristic can't see.
+        let mk_status = |actual: u8, age: u8| {
+            let c = CarStatusEntry {
+                index: 0,
+                actual_tyre_compound: actual,
+                visual_tyre_compound: 16,
+                tyres_age_laps: age,
+                ..Default::default()
+            };
+            p(7, Body::CarStatus(CarStatusData { cars: vec![c] }))
+        };
+        st.ingest(&mk_status(16, 5)); // seeds the baseline set
+        st.ingest(&mk_status(17, 5)); // compound swap
+        assert_eq!(st.wear_laps, 0, "new set: the stint restarts");
+        assert!(st.wear_pending.is_none(), "an A/B can't span two sets");
+
+        // A tyre age that went DOWN is also a new set (same compound).
+        st.ingest(&mk_status(17, 8));
+        st.ingest(&damage(1.0, 1.0, 1.0, 1.0));
+        st.ingest(&lapdata(10.0, 5, 0));
+        st.ingest(&lapdata(10.0, 6, 0));
+        assert!(st.wear_laps > 0, "stint accumulating again");
+        st.ingest(&mk_status(17, 0)); // fresh set fitted
+        assert_eq!(st.wear_laps, 0);
     }
 
     #[test]
