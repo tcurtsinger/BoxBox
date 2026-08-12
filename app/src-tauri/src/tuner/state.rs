@@ -1337,6 +1337,7 @@ impl TunerState {
             wear,
             wear_advice,
             temp_sim_carcass: self.temp_sim_carcass,
+            spectating: self.spectating,
             // Set by the tuner_snapshot command from the tune library; the engine
             // has no library handle, so it defaults to None here.
             matched_tune_id: None,
@@ -1444,6 +1445,10 @@ pub struct Snapshot {
     /// inner temps mirror surface, so carcass-based camber advice can never
     /// fire and the UI says why. None until a full Session packet arrives.
     pub temp_sim_carcass: Option<bool>,
+    /// True while the player is spectating: the Tuner deliberately ingests
+    /// nothing (the packets describe the WATCHED car), and the UI says so
+    /// instead of looking frozen.
+    pub spectating: bool,
     /// The id of the saved tune whose setup matches the live one, if any (filled by
     /// the `tuner_snapshot` command). Drives the Tuner's "Running Tune X" card.
     pub matched_tune_id: Option<String>,
@@ -2177,6 +2182,65 @@ mod tests {
         st.ingest(&damage(4.5, 4.5, 9.0, 9.0));
         st.ingest(&lapdata(10.0, 7, 0));
         assert_eq!(st.profile_revision(), 1, "ramped change still learns");
+    }
+
+    // Minimal raw 29-byte header for end-to-end (bytes -> parse_packet) tests.
+    fn raw_header(format: u16, id: u8, uid: u64) -> Vec<u8> {
+        let mut b = vec![0u8; 29];
+        b[0..2].copy_from_slice(&format.to_le_bytes());
+        b[2] = 25; // gameYear
+        b[6] = id;
+        b[7..15].copy_from_slice(&uid.to_le_bytes());
+        b // playerCarIndex byte 27 = 0
+    }
+
+    #[test]
+    fn raw_setup_packets_update_the_live_setup_end_to_end() {
+        // The full binary path a real garage change takes: exact-size datagram ->
+        // parse_packet -> ingest -> snapshot. Pins the trip the typed helpers skip.
+        let session_raw = |spectating: u8| -> Vec<u8> {
+            let mut b = raw_header(2025, 1, 42);
+            b.resize(753, 0);
+            b[29 + 4..29 + 6].copy_from_slice(&3000u16.to_le_bytes()); // track length
+            b[29 + 6] = 18; // Time Trial
+            b[29 + 7] = 10; // track id
+            b[29 + 15] = spectating; // m_isSpectating
+            b
+        };
+        let setups_raw = |front: u8, rear: u8| -> Vec<u8> {
+            let mut b = raw_header(2025, 5, 42);
+            b.resize(1133, 0);
+            let car0 = 29; // 50-byte stride, car 0 first
+            b[car0] = front;
+            b[car0 + 1] = rear;
+            b[car0 + 27] = 58; // brake bias (setup_looks_real)
+            b[car0 + 29..car0 + 33].copy_from_slice(&23.0f32.to_le_bytes()); // RL psi
+            b
+        };
+
+        let mut st = TunerState::new();
+        st.ingest(&parse_packet(&session_raw(0)).expect("valid session"));
+        st.ingest(&parse_packet(&setups_raw(25, 25)).expect("valid setups"));
+        assert_eq!(st.snapshot().setup.as_ref().map(|s| s.front_wing), Some(25));
+
+        // The garage change lands on the very next setups packet.
+        st.ingest(&parse_packet(&setups_raw(21, 21)).expect("valid setups"));
+        let snap = st.snapshot();
+        let s = snap.setup.clone().expect("setup still current");
+        assert_eq!((s.front_wing, s.rear_wing), (21, 21));
+        assert!(!snap.spectating);
+
+        // Spectating: the same packets must change nothing — and the snapshot
+        // says WHY instead of the panel just looking frozen.
+        st.ingest(&parse_packet(&session_raw(1)).expect("valid session"));
+        st.ingest(&parse_packet(&setups_raw(30, 30)).expect("valid setups"));
+        let snap = st.snapshot();
+        assert!(snap.spectating, "snapshot surfaces spectating");
+        assert_eq!(
+            snap.setup.as_ref().map(|s| s.front_wing),
+            Some(21),
+            "a spectated car's setup must not replace the player's"
+        );
     }
 
     #[test]

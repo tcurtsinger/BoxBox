@@ -368,6 +368,12 @@ fn spawn_listener(
         let mut last_fwd_warn: Option<Instant> = None;
         // Rate-limit the unknown-UDP-format warning (log + frontend event).
         let mut last_format_warn: Option<Instant> = None;
+        // One-time evidence when an engine's mutex was poisoned by an earlier
+        // panic. The ingest below RECOVERS the guard rather than skipping the
+        // engine forever — skipping silently froze that engine's UI while its
+        // (poison-tolerant) snapshot command kept serving the stale state.
+        let (mut tuner_poison_logged, mut lib_poison_logged, mut race_poison_logged) =
+            (false, false, false);
         // Watchdog + diagnostics state, persisted across rebinds.
         let mut live = false; // a valid feed has been seen
         let mut last_rx; // last successful receive; (re)set per bind below
@@ -535,20 +541,41 @@ fn spawn_listener(
                                     session_time: packet.header.session_time,
                                 },
                             );
-                            // Feed both engines. A poisoned lock just means a prior
-                            // panic elsewhere; skip the frame. Persistence runs off
-                            // this thread (persist_handle), so a disk write can't
-                            // stall ingest or the repeater.
-                            let mut pending_laps = Vec::new();
-                            if let Ok(mut t) = tuner.lock() {
+                            // Feed both engines. A poisoned lock means a prior panic
+                            // elsewhere: RECOVER the guard (per-packet ingest
+                            // self-heals) instead of skipping the engine forever —
+                            // that silently froze it at the pre-panic state.
+                            // Persistence runs off this thread (persist_handle), so
+                            // a disk write can't stall ingest or the repeater.
+                            let pending_laps = {
+                                let mut t = tuner.lock().unwrap_or_else(|p| {
+                                    if !tuner_poison_logged {
+                                        tuner_poison_logged = true;
+                                        log_event(
+                                            &log_path,
+                                            "tuner state poisoned by an earlier panic — recovering",
+                                        );
+                                    }
+                                    p.into_inner()
+                                });
                                 t.ingest(&packet);
-                                pending_laps = t.take_pending_laps();
-                            }
+                                t.take_pending_laps()
+                            };
                             // Record any clean TT/Practice lap against the saved tune
                             // it was driven on. Done off the tuner lock; the disk write
                             // is off this loop entirely (the persist thread).
                             if !pending_laps.is_empty() {
-                                if let Ok(mut lib) = library.lock() {
+                                {
+                                    let mut lib = library.lock().unwrap_or_else(|p| {
+                                        if !lib_poison_logged {
+                                            lib_poison_logged = true;
+                                            log_event(
+                                                &log_path,
+                                                "tune library poisoned by an earlier panic — recovering",
+                                            );
+                                        }
+                                        p.into_inner()
+                                    });
                                     for lap in pending_laps {
                                         let matched = lib
                                             .find_match(lap.track_id, &lap.setup)
@@ -570,8 +597,18 @@ fn spawn_listener(
                             // is enabled and the eval gate has elapsed — snapshot under
                             // the same lock so detection needs no second round-trip.
                             let mut session_changed = None;
-                            let mut auto_archive_snap = None;
-                            let engineer_snap = if let Ok(mut r) = race.lock() {
+                            let auto_archive_snap;
+                            let engineer_snap = {
+                                let mut r = race.lock().unwrap_or_else(|p| {
+                                    if !race_poison_logged {
+                                        race_poison_logged = true;
+                                        log_event(
+                                            &log_path,
+                                            "race state poisoned by an earlier panic — recovering",
+                                        );
+                                    }
+                                    p.into_inner()
+                                });
                                 let prev_uid = r.session_uid().to_string();
                                 r.ingest(&packet, now_ms());
                                 if !prev_uid.is_empty() && prev_uid != r.session_uid() {
@@ -586,8 +623,6 @@ fn spawn_listener(
                                 } else {
                                     None
                                 }
-                            } else {
-                                None
                             };
                             // A new game session began: the frontend re-arms its
                             // "session saved" close guard off this signal.

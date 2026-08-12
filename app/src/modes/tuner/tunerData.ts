@@ -138,6 +138,9 @@ export interface TunerSnapshot {
    *  mirror surface and carcass-based camber advice can never fire. Optional so
    *  older snapshot shapes still parse. */
   tempSimCarcass?: boolean | null;
+  /** True while spectating: the Tuner ingests nothing (the packets describe the
+   *  watched car) and the UI says so instead of looking frozen. */
+  spectating?: boolean;
   /** The saved tune whose setup matches the live one, if any (filled by the
    *  `tuner_snapshot` command). Drives the Tuner run card and the Setups live
    *  badge. Optional so older snapshot shapes still parse. */

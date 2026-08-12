@@ -93,6 +93,13 @@ export function TunerConsole() {
 
   return (
     <div className="tuner">
+      {snap.spectating === true && (
+        <div className="tuner-spectating" role="status">
+          <strong>Spectating</strong> — the Tuner pauses while you watch another car, so its
+          driving can&rsquo;t bank into your learned profile. Everything resumes when you&rsquo;re
+          back in your own cockpit.
+        </div>
+      )}
       {(referenceTune || snap.setup) && (
         <div className="tuner-strips">
           {referenceTune && (

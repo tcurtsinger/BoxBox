@@ -110,6 +110,22 @@
   color: var(--faint);
 }
 
+/* Spectator mode: the Tuner deliberately ingests nothing — say so, visibly,
+   instead of looking frozen. */
+.tuner-spectating {
+  margin: 12px 16px 0;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in oklch, var(--data-info) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklch, var(--data-info) 8%, transparent);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.tuner-spectating strong {
+  color: var(--data-info);
+}
+
 /* The game's tyre-temp sim limits what wear advice can measure — say so. */
 .wear-simnote {
   margin: 8px 0 0;
