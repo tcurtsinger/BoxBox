@@ -274,12 +274,19 @@ pub fn merge_corner_map(
 
     let mut out: Vec<MappedCorner> = existing.to_vec();
     let mut next_id = out.iter().map(|c| c.id).max().unwrap_or(0) + 1;
-    let mut taken = vec![false; out.len()];
+    // Match fresh corners against the PRE-EXISTING map only: two corners from
+    // the same fresh lap are never the same physical corner. Scanning the
+    // growing `out` (new discoveries are pushed below, mid-merge) walked past
+    // `taken`'s length the moment a lap found a new corner before its last one
+    // — the field crash "len is 6 but the index is 6", which panicked the
+    // ingest thread on every lap boundary thereafter.
+    let existing_len = out.len();
+    let mut taken = vec![false; existing_len];
 
     for f in fresh {
         let mut best: isize = -1;
         let mut best_d = f64::INFINITY;
-        for i in 0..out.len() {
+        for i in 0..existing_len {
             if taken[i] {
                 continue;
             }
@@ -322,4 +329,42 @@ pub fn merge_corner_map(
         c.index = i as u32 + 1;
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fresh(apex: f64) -> Corner {
+        Corner {
+            index: 0,
+            entry_dist: apex - 60.0,
+            apex_dist: apex,
+            exit_dist: apex + 60.0,
+            min_speed: 120.0,
+        }
+    }
+
+    #[test]
+    fn merging_new_discoveries_mid_lap_does_not_panic() {
+        // Lap 1 maps six corners.
+        let lap1: Vec<Corner> = (0..6).map(|i| fresh(300.0 + 500.0 * i as f64)).collect();
+        let map = merge_corner_map(None, &lap1, true);
+        assert_eq!(map.len(), 6);
+
+        // Lap 2 finds the same six PLUS two brand-new corners. Pushing the
+        // first new one grew `out` past `taken`'s length, and matching the
+        // second then indexed taken[6] on a len-6 vec — the field crash that
+        // panicked the ingest thread on every lap boundary thereafter.
+        let mut lap2 = lap1.clone();
+        lap2.push(fresh(150.0)); // new corner before T1
+        lap2.push(fresh(3050.0)); // and another after the last
+        let merged = merge_corner_map(Some(&map), &lap2, true);
+
+        assert_eq!(merged.len(), 8, "both new corners join the map");
+        let ids: std::collections::HashSet<u32> = merged.iter().map(|c| c.id).collect();
+        assert_eq!(ids.len(), 8, "ids stay unique");
+        assert_eq!(merged[0].apex_dist, 150.0, "sorted by apex distance");
+        assert_eq!(merged[0].index, 1, "indices renumbered 1..=n");
+    }
 }

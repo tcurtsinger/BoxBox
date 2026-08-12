@@ -701,23 +701,28 @@ impl TunerState {
         if let Some(corners) = corners {
             if !corners.is_empty() && speed > CORNERING_SPEED_FLOOR {
                 if let Some(cc) = current_corner(&corners, self.lap_distance) {
-                    let corner = corners[(cc.index - 1) as usize];
-                    let sb = front_slip - rear_slip;
-                    let throttle = self.t_throttle;
-                    let brake = self.t_brake;
+                    // .get(): a corner index is data (learned map, persisted
+                    // profile) — a stale/corrupt one degrades to "no corner",
+                    // never a panic on the ingest thread.
+                    if let Some(&corner) = corners.get((cc.index.max(1) - 1) as usize) {
+                        let sb = front_slip - rear_slip;
+                        let throttle = self.t_throttle;
+                        let brake = self.t_brake;
 
-                    // Stage this frame in the per-lap buffer; it is committed to the
-                    // durable corner diagnosis and the measurement window only when
-                    // the lap finalizes clean (P1.3), so a cut/spin/off-track lap
-                    // never shapes advice or learned gains.
-                    let triple = self.lap_diag.entry(corner.id).or_default();
-                    fold_sample(
-                        triple.phase_mut(cc.phase),
-                        sb,
-                        understeer_angle,
-                        throttle,
-                        brake,
-                    );
+                        // Stage this frame in the per-lap buffer; it is committed
+                        // to the durable corner diagnosis and the measurement
+                        // window only when the lap finalizes clean (P1.3), so a
+                        // cut/spin/off-track lap never shapes advice or learned
+                        // gains.
+                        let triple = self.lap_diag.entry(corner.id).or_default();
+                        fold_sample(
+                            triple.phase_mut(cc.phase),
+                            sb,
+                            understeer_angle,
+                            throttle,
+                            brake,
+                        );
+                    }
                 }
             }
         }
