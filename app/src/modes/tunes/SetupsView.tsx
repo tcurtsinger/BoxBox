@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShell } from "../../shell/shell-context";
 import { Segmented } from "../../shell/Segmented";
-import { SlidersIcon } from "../../shell/icons";
+import { SetupsIcon } from "../../shell/icons";
 import { useTunerSnapshot } from "../tuner/useTunerSnapshot";
 import { COMPOUND_NAME, fmtLap } from "../tuner/tunerData";
 import { SetupSheet } from "./SetupSheet";
@@ -232,7 +232,7 @@ function SetupsEmpty({ hasLiveSetup, onSave }: { hasLiveSetup: boolean; onSave: 
   return (
     <div className="setups-empty">
       <span className="setups-empty-icon" aria-hidden="true">
-        <SlidersIcon size={26} />
+        <SetupsIcon size={26} />
       </span>
       <h2 className="setups-empty-title">No saved setups yet</h2>
       <p className="setups-empty-lead">

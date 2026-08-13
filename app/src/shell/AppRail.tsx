@@ -1,14 +1,14 @@
 import { useShell, type RaceSection, type TunesSection } from "./shell-context";
 import {
+  BenchIcon,
   CollapseIcon,
-  FlagIcon,
-  GaugeIcon,
-  GavelIcon,
   GearIcon,
   HistoryIcon,
-  ScaleIcon,
-  SlidersIcon,
+  IncidentsIcon,
+  ReviewIcon,
+  SetupsIcon,
   StopwatchIcon,
+  TunerIcon,
 } from "./icons";
 
 interface Item<T extends string> {
@@ -18,15 +18,15 @@ interface Item<T extends string> {
 }
 
 const TUNES_ITEMS: Item<TunesSection>[] = [
-  { id: "setups", label: "Setups", Icon: SlidersIcon },
-  { id: "tuner", label: "Tuner", Icon: GaugeIcon },
-  { id: "bench", label: "Bench", Icon: ScaleIcon },
+  { id: "setups", label: "Setups", Icon: SetupsIcon },
+  { id: "tuner", label: "Tuner", Icon: TunerIcon },
+  { id: "bench", label: "Bench", Icon: BenchIcon },
 ];
 
 const RACE_ITEMS: Item<RaceSection>[] = [
   { id: "timing", label: "Timing", Icon: StopwatchIcon },
-  { id: "incidents", label: "Incidents", Icon: FlagIcon },
-  { id: "review", label: "Review", Icon: GavelIcon },
+  { id: "incidents", label: "Incidents", Icon: IncidentsIcon },
+  { id: "review", label: "Review", Icon: ReviewIcon },
   { id: "history", label: "History", Icon: HistoryIcon },
 ];
 
