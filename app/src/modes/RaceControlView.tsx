@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { useShell, type RaceSection } from "../shell/shell-context";
-import { AppRail } from "../shell/AppRail";
 import { NoFeed } from "../shell/NoFeed";
 import { ModePlaceholder } from "../shell/ModePlaceholder";
 import { StandbyBanner } from "../shell/StandbyBanner";
@@ -59,9 +58,7 @@ export function RaceControlView() {
 
   return (
     <RaceStateProvider>
-      <div className="view-rc">
-        <AppRail />
-        <div className="rc-content">
+      <div className="rc-content">
         {feed.state === "standby" && <StandbyBanner />}
         {raceSection === "history" ? (
           <HistoryView />
@@ -94,7 +91,6 @@ export function RaceControlView() {
             )}
           </div>
         )}
-        </div>
       </div>
     </RaceStateProvider>
   );

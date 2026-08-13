@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useShell, type ForwardTarget, type EngineerCategories } from "./shell-context";
-import { AppRail } from "./AppRail";
 import { CloseIcon } from "./icons";
 import { Segmented, type SegmentedOption } from "./Segmented";
 import { historyRetention, setHistoryRetention } from "../modes/history/historyData";
@@ -99,7 +98,8 @@ function Section({
  * Discord (explicit save, so a rejected webhook URL is always seen).
  */
 export function SettingsView() {
-  const { connection, setConnection, engineer, setEngineer, feed, resetFeed } = useShell();
+  const { connection, setConnection, engineer, setEngineer, feed, resetFeed, setMode } =
+    useShell();
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   // --- Telemetry draft (applies as a batch) --------------------------------
@@ -233,9 +233,7 @@ export function SettingsView() {
   }
 
   return (
-    <div className="view-rc">
-      <AppRail />
-      <div className="settings-page">
+    <div className="settings-page">
         <div className="settings-inner">
           <h2 className="settings-title">Settings</h2>
           <p className="settings-sub">
@@ -370,7 +368,12 @@ export function SettingsView() {
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm"
-                  onClick={resetFeed}
+                  // The hint promises the setup screen — leave Settings so the
+                  // no-feed view (with the re-detect steps) is actually shown.
+                  onClick={() => {
+                    resetFeed();
+                    setMode("race");
+                  }}
                 >
                   Reset connection
                 </button>
@@ -611,7 +614,6 @@ export function SettingsView() {
               )}
             </div>
           </Section>
-        </div>
       </div>
     </div>
   );
