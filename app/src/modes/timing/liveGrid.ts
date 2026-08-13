@@ -55,6 +55,9 @@ export interface LiveDriver {
   pitStatus: number;
   numPitStops: number;
   penaltiesSec: number;
+  /** Unserved penalties (LapData). Optional: older saved snapshots lack them. */
+  numUnservedDriveThrough?: number;
+  numUnservedStopGo?: number;
   tyreVisual: number;
   tyreAgeLaps: number;
   /** Per-corner tyre wear %, wheel order [RL, RR, FL, FR] (CarDamage id 10). */
@@ -219,6 +222,10 @@ function flag(fia: number): FlagKey | null {
 // m_resultStatus values that mean the car is out of the session.
 const OUT_STATUS: Record<number, string> = { 4: "DNF", 5: "DSQ", 6: "NC", 7: "RET" };
 
+// Seconds one unserved stop-go adds to the displayed penalty total (the F1 25
+// stop-go is a 10-second hold), matching the game's tower.
+const STOP_GO_SECS = 10;
+
 /** One sector pill's state: purple = the session's best time for that sector,
  *  green = this driver's own best, "set" = completed but neither, "none" = no
  *  time yet. Bests come from valid laps only (Rust-side). */
@@ -315,7 +322,11 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
       age: d.tyreAgeLaps,
       pits: d.numPitStops,
       pitLap: 0,
-      pen: d.penaltiesSec,
+      // Mirror the game's own tower: an unserved stop-go folds into the seconds
+      // (a stop-go is a 10s hold in F1 25); an unserved drive-through can't be
+      // expressed as time, so it gets its own DT chip.
+      pen: d.penaltiesSec + STOP_GO_SECS * (d.numUnservedStopGo ?? 0),
+      unservedDT: d.numUnservedDriveThrough ?? 0,
       flag: flag(d.fiaFlags),
       // Private telemetry arrives zeroed for spectators; flag it so the tower
       // shows ERS/fuel as unavailable instead of a misleading 0.

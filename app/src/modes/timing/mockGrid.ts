@@ -105,6 +105,8 @@ export interface DriverRow {
   pits: number;
   pitLap: number;
   pen: number;
+  /** Unserved drive-throughs — shown as a DT chip, like the game's own tower. */
+  unservedDT?: number;
   flag: FlagKey | null;
   /** Driver has restricted their telemetry: ERS/fuel arrive zeroed, so show them
    *  as unavailable rather than a misleading 0. */

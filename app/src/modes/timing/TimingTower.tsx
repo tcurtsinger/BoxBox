@@ -292,6 +292,9 @@ function Status({ d }: { d: DriverRow }) {
   // Timed-session activity (garage / out lap / in lap) — why a row has no times.
   if (!d.status && d.qstatus) chips.push({ text: d.qstatus, cls: "chip-qstatus" });
   if (d.pen > 0) chips.push({ text: `+${d.pen}s`, cls: "chip-pen" });
+  // An unserved drive-through isn't a time amount — chip it like the game does.
+  const dt = d.unservedDT ?? 0;
+  if (dt > 0) chips.push({ text: dt > 1 ? `DT ×${dt}` : "DT", cls: "chip-pen" });
   if (d.flag) chips.push({ text: FLAG_LABEL[d.flag], cls: `chip-flag chip-flag-${d.flag}` });
   if (chips.length === 0) return <span className="tt-empty">–</span>;
   return (
