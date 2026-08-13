@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::discord::{DiscordConfig, DiscordJob, DiscordState};
 use crate::engineer::Engineer;
 use crate::history::model::{HistoryArchive, SessionMeta, SessionRecord};
 use crate::history::store::{HistoryState, HistoryStore, HistoryStoreState};
@@ -298,6 +299,8 @@ fn spawn_listener(
     engineer_enabled: Arc<AtomicBool>,
     forwards: Vec<SocketAddr>,
     log_path: Option<PathBuf>,
+    discord_tx: std::sync::mpsc::SyncSender<DiscordJob>,
+    discord_cfg: Arc<Mutex<DiscordConfig>>,
 ) -> Result<Listener, String> {
     // Validate the bind up front so a failure is reported to the caller (leaving
     // any existing listener running) rather than surfacing only inside the worker.
@@ -598,6 +601,7 @@ fn spawn_listener(
                             // the same lock so detection needs no second round-trip.
                             let mut session_changed = None;
                             let auto_archive_snap;
+                            let announcements;
                             let engineer_snap = {
                                 let mut r = race.lock().unwrap_or_else(|p| {
                                     if !race_poison_logged {
@@ -615,6 +619,7 @@ fn spawn_listener(
                                     session_changed = Some(r.session_uid().to_string());
                                 }
                                 auto_archive_snap = r.take_pending_auto_archive();
+                                announcements = r.take_pending_announcements();
                                 if engineer_enabled.load(Ordering::Relaxed)
                                     && last_engineer_eval.elapsed() >= ENGINEER_EVAL
                                 {
@@ -630,11 +635,44 @@ fn spawn_listener(
                                 let _ =
                                     app.emit("race:session-changed", &SessionChanged { session_uid });
                             }
+                            // Newly logged headline incidents -> the Discord poster
+                            // thread (never HTTP on this loop). Toggle checked here so
+                            // disabled installs don't even queue jobs.
+                            if !announcements.is_empty() {
+                                let want = discord_cfg
+                                    .lock()
+                                    .map(|c| c.post_incidents)
+                                    .unwrap_or(false);
+                                if want {
+                                    // try_send: a full queue (Discord slow/down) drops
+                                    // the job rather than blocking the UDP loop or
+                                    // growing memory — live beats late.
+                                    let _ =
+                                        discord_tx.try_send(DiscordJob::Incidents(announcements));
+                                }
+                            }
                             // The official classification arrived: archive the finished
                             // session automatically (off the race lock) so the next
                             // session's wipe or an app close can't destroy it.
                             if let Some(snap) = auto_archive_snap {
                                 auto_archive_session(&app, &history, &history_store, &snap, &log_path);
+                                // Same trigger posts the result to Discord: this is the
+                                // one moment the classification is official.
+                                let want = discord_cfg
+                                    .lock()
+                                    .map(|c| match snap.session_category {
+                                        crate::racecontrol::state::SessionCategory::Race => {
+                                            c.post_race
+                                        }
+                                        crate::racecontrol::state::SessionCategory::Qualifying => {
+                                            c.post_quali
+                                        }
+                                        _ => false,
+                                    })
+                                    .unwrap_or(false);
+                                if want {
+                                    let _ = discord_tx.try_send(DiscordJob::Results(snap));
+                                }
                             }
                             // Run the rules + emit OFF the race lock. Each callout is
                             // filtered by enabled category and spoken in the webview.
@@ -842,6 +880,7 @@ pub fn start_telemetry(
     history: tauri::State<'_, HistoryState>,
     history_store: tauri::State<'_, HistoryStoreState>,
     engineer: tauri::State<'_, EngineerState>,
+    discord: tauri::State<'_, DiscordState>,
     app: AppHandle,
     port: u16,
     forwards: Vec<SocketAddr>,
@@ -890,6 +929,8 @@ pub fn start_telemetry(
         engineer.0.clone(),
         forwards,
         log_path,
+        discord.sender.clone(),
+        discord.config.clone(),
     )?;
     *slot = Some(listener); // drops & joins the previous listener
     Ok(())

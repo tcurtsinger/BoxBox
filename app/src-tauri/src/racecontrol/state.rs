@@ -119,6 +119,18 @@ struct DamageWatch {
     base: IncidentCarDamage,
 }
 
+/// A feed-worthy headline incident, pre-resolved to display strings so external
+/// posters (the Discord webhook) need no access to the driver map. Drained by
+/// the listener via `take_pending_announcements`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MajorIncident {
+    pub label: String,
+    pub lap_num: Option<u32>,
+    /// Involved cars as "16 Rossi" labels (empty for session-wide events).
+    pub cars: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DriverState {
@@ -309,6 +321,9 @@ pub struct SessionState {
     // Open damage watches: one per car per recent collision, measuring what the
     // contact cost against the CarDamage packets that follow. Bounded.
     damage_watch: Vec<DamageWatch>,
+    // Headline incidents awaiting external announcement (Discord). Drained by the
+    // listener each packet; bounded so a spoof flood can't grow it.
+    pending_announcements: Vec<MajorIncident>,
     // Snapshot staged for automatic history capture, taken the moment the official
     // FinalClassification (packet 8) first arrives for a session. Drained by the
     // listener (telemetry.rs), which archives it off this state's lock. Deliberately
@@ -335,6 +350,11 @@ const COLL_MERGE_SCAN: usize = 12;
 const DAMAGE_WATCH_SECS: f64 = 6.0;
 // Bound on open damage watches (a flood of collisions can't grow this).
 const MAX_DAMAGE_WATCHES: usize = 48;
+// Bound on headline incidents awaiting external announcement between drains.
+const MAX_PENDING_ANNOUNCEMENTS: usize = 32;
+// penaltyType values whose sanction ends a race: drive-through, stop-go,
+// disqualification, black-flag timer. These make a penalty "major".
+const RACE_ENDING_PENALTIES: &[u8] = &[0, 1, 6, 17];
 
 // The event codes the F1 title emits. Only these are tallied, so a spoofed packet
 // with an arbitrary 4-char code can't grow the tally map without bound.
@@ -486,6 +506,7 @@ impl SessionState {
         self.drivers.clear();
         self.incidents.clear();
         self.damage_watch.clear();
+        self.pending_announcements.clear();
         self.event_tally.clear();
         self.final_classification = None;
         self.num_active_cars = 0;
@@ -544,6 +565,42 @@ impl SessionState {
             .collect();
         segs.sort_by_key(|s| s.session_type);
         segs
+    }
+
+    /// Headline incidents queued since the last drain (Discord posts).
+    pub fn take_pending_announcements(&mut self) -> Vec<MajorIncident> {
+        std::mem::take(&mut self.pending_announcements)
+    }
+
+    fn queue_announcement(&mut self, m: MajorIncident) {
+        if self.pending_announcements.len() < MAX_PENDING_ANNOUNCEMENTS {
+            self.pending_announcements.push(m);
+        }
+    }
+
+    /// A car's display label ("16 Rossi") for external posts: race number plus
+    /// the (possibly steward-overridden) surname; "Car N" when unknown.
+    fn car_label(&self, idx: u8) -> String {
+        match self.drivers.get(&idx) {
+            Some(d) if !d.name.is_empty() => {
+                let name = self
+                    .name_overrides
+                    .get(&d.race_number)
+                    .cloned()
+                    .unwrap_or_else(|| d.name.clone());
+                let surname = name
+                    .split_whitespace()
+                    .last()
+                    .map(str::to_string)
+                    .unwrap_or(name);
+                if d.race_number > 0 {
+                    format!("{} {}", d.race_number, surname)
+                } else {
+                    surname
+                }
+            }
+            _ => format!("Car {idx}"),
+        }
     }
 
     fn driver_mut(&mut self, index: u8) -> &mut DriverState {
@@ -842,6 +899,7 @@ impl SessionState {
         // becomes a new incident.
         if code == "COLL" {
             let mut merged = false;
+            let mut upgraded: Option<(String, Option<u32>)> = None;
             for prior in self.incidents.iter_mut().rev().take(COLL_MERGE_SCAN) {
                 let dt = session_time - prior.session_time;
                 if !(0.0..COLL_MERGE_SECS).contains(&dt) {
@@ -859,12 +917,21 @@ impl SessionState {
                     if f64::from(sev) > prev {
                         prior.detail.insert("severity".to_string(), f64::from(sev));
                         prior.label = collision_label(Some(sev)).to_string();
+                        // A crash that only now graded heavy becomes announce-
+                        // worthy; the original (lighter) card never was.
+                        if sev == 2 && prev < 2.0 {
+                            upgraded = Some((prior.label.clone(), prior.lap_num));
+                        }
                     }
                 }
                 merged = true;
                 break;
             }
             if merged {
+                if let Some((label, lap_num)) = upgraded {
+                    let cars = car_indices.iter().map(|&i| self.car_label(i)).collect();
+                    self.queue_announcement(MajorIncident { label, lap_num, cars });
+                }
                 return;
             }
         }
@@ -884,6 +951,31 @@ impl SessionState {
             {
                 return;
             }
+        }
+
+        // Headline incidents worth announcing outside the app: red flags,
+        // safety-car deployments (SCAR labels are already deployment-only),
+        // heavy contact, and race-ending penalties.
+        let major = match code.as_str() {
+            "RDFL" | "SCAR" => true,
+            "COLL" => e.severity == Some(2),
+            "PENA" => e
+                .penalty_type
+                .is_some_and(|pt| RACE_ENDING_PENALTIES.contains(&pt)),
+            _ => false,
+        };
+        if major {
+            // Penalties lead with the sanction: "Drive-through: Ignoring blue flags".
+            let out_label = match e.penalty_type.filter(|_| code == "PENA") {
+                Some(pt) => format!("{}: {}", penalty_type(pt).unwrap_or("Penalty"), label),
+                None => label.clone(),
+            };
+            let cars = car_indices.iter().map(|&i| self.car_label(i)).collect();
+            self.queue_announcement(MajorIncident {
+                label: out_label,
+                lap_num,
+                cars,
+            });
         }
 
         let id = self.next_incident_id;
