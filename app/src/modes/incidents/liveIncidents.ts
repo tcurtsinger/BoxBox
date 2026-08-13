@@ -145,27 +145,42 @@ export function rosterFrom(drivers: IncidentDriver[]): RosterCar[] {
 /** Adapt one snapshot's incident log into normalized, newest-first incidents. */
 export function toUIIncidents(snap: IncidentSnapshot): UIIncident[] {
   const byIndex = new Map(snap.drivers.map((d) => [d.index, d]));
-  const out = snap.incidents.map((raw) => ({
-    id: raw.id,
-    lap: raw.lapNum,
-    code: raw.code,
-    label: raw.label,
-    tone: toneForIncident({
+  const out = snap.incidents.map((raw) => {
+    // The game's fault verdict, pinned onto a collision card by the backend
+    // when a penalty named the same pair: the offender leads the car list, the
+    // detail says so in words, and the sanction rides the collision card too.
+    const fault = raw.code === "COLL" ? raw.detail.faultCarIdx : undefined;
+    const indices =
+      fault != null && raw.carIndices.includes(fault)
+        ? [fault, ...raw.carIndices.filter((i) => i !== fault)]
+        : raw.carIndices;
+    const causedBy = fault != null ? `Caused by ${resolveCar(fault, byIndex).name}` : "";
+    return {
+      id: raw.id,
+      lap: raw.lapNum,
       code: raw.code,
-      severity: raw.detail.severity ?? null,
-      penaltyType: raw.detail.penaltyType ?? null,
-    }),
-    sanction:
-      raw.code === "PENA" ? sanctionLabel(raw.detail.penaltyType, raw.detail.time) : null,
-    cars: raw.carIndices.map((i) => resolveCar(i, byIndex)),
-    detail: [formatDetail(raw.detail), formatDamage(raw.damage, byIndex)]
-      .filter(Boolean)
-      .join(" · "),
-    source: raw.source,
-    status: raw.status,
-    note: raw.note,
-    outcome: raw.ruling?.outcome ?? null,
-  }));
+      label: raw.label,
+      tone: toneForIncident({
+        code: raw.code,
+        severity: raw.detail.severity ?? null,
+        penaltyType: raw.detail.penaltyType ?? null,
+      }),
+      sanction:
+        raw.code === "PENA"
+          ? sanctionLabel(raw.detail.penaltyType, raw.detail.time)
+          : raw.code === "COLL"
+            ? sanctionLabel(raw.detail.faultPenaltyType, raw.detail.faultPenaltyTime)
+            : null,
+      cars: indices.map((i) => resolveCar(i, byIndex)),
+      detail: [causedBy, formatDetail(raw.detail), formatDamage(raw.damage, byIndex)]
+        .filter(Boolean)
+        .join(" · "),
+      source: raw.source,
+      status: raw.status,
+      note: raw.note,
+      outcome: raw.ruling?.outcome ?? null,
+    };
+  });
   // The engine pushes in chronological order; the feed wants newest first.
   out.reverse();
   return out;

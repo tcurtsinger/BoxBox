@@ -32,6 +32,24 @@ pub fn collision_label(severity: Option<u8>) -> &'static str {
     }
 }
 
+/// Short sanction text for a penaltyType ("+10s", "Drive-through"), or None
+/// when the type carries no headline sanction. `time` is the seconds byte,
+/// meaningful for time penalties (type 4).
+pub fn sanction_text(penalty_type: u8, time: Option<u8>) -> Option<String> {
+    Some(match penalty_type {
+        0 => "Drive-through".to_string(),
+        1 => "Stop-go".to_string(),
+        2 => "Grid penalty".to_string(),
+        4 => match time {
+            Some(t) if t > 0 => format!("+{t}s"),
+            _ => "Time penalty".to_string(),
+        },
+        6 => "Disqualified".to_string(),
+        17 => "Black flag".to_string(),
+        _ => return None,
+    })
+}
+
 /// penaltyType values that are real sporting penalties. Warnings (5) and lap
 /// invalidations (10–15) are logged separately under the TLIM code; reminders
 /// and the rest stay out of the feed (tallied only).

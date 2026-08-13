@@ -16,6 +16,7 @@ use crate::packets::{
 
 use super::labels::{
     collision_label, incident_label, infringement_type, is_real_penalty, penalty_type,
+    sanction_text,
 };
 
 /// Broad session kind, derived from Session.sessionType. Sprint shootouts are
@@ -324,6 +325,9 @@ pub struct SessionState {
     // Headline incidents awaiting external announcement (Discord). Drained by the
     // listener each packet; bounded so a spoof flood can't grow it.
     pending_announcements: Vec<MajorIncident>,
+    // Collision cards whose announcement is deliberately delayed (incident id +
+    // the session time of the contact), so fault and damage can be folded in.
+    pending_collision_posts: Vec<(String, f64)>,
     // Snapshot staged for automatic history capture, taken the moment the official
     // FinalClassification (packet 8) first arrives for a session. Drained by the
     // listener (telemetry.rs), which archives it off this state's lock. Deliberately
@@ -352,6 +356,15 @@ const DAMAGE_WATCH_SECS: f64 = 6.0;
 const MAX_DAMAGE_WATCHES: usize = 48;
 // Bound on headline incidents awaiting external announcement between drains.
 const MAX_PENDING_ANNOUNCEMENTS: usize = 32;
+// A collision's announcement is held back this long so the game's own penalty
+// verdict (fault) and the damage watcher's attribution land in the SAME post.
+const COLL_POST_DELAY_SECS: f64 = 8.0;
+// How far back a penalty can claim a matching collision card as its cause.
+const FAULT_LINK_SECS: f64 = 15.0;
+// How many trailing incidents that fault link scans.
+const FAULT_LINK_SCAN: usize = 20;
+// Bound on collisions awaiting their delayed announcement.
+const MAX_PENDING_COLLISION_POSTS: usize = 16;
 // penaltyType values whose sanction ends a race: drive-through, stop-go,
 // disqualification, black-flag timer. These make a penalty "major".
 const RACE_ENDING_PENALTIES: &[u8] = &[0, 1, 6, 17];
@@ -374,6 +387,28 @@ const MAX_OUTCOME_LEN: usize = 200;
 const MAX_LABEL_LEN: usize = 120;
 // Below this, a car index is plausible even before participants are known.
 const MAX_CAR_INDEX: u8 = 100;
+
+/// "front wing +45%, floor +12%" — the non-zero parts of one car's attributed
+/// crash damage, for the announcement line.
+fn damage_parts(d: &IncidentCarDamage) -> String {
+    let mut p: Vec<String> = Vec::new();
+    if d.front_wing > 0 {
+        p.push(format!("front wing +{}%", d.front_wing));
+    }
+    if d.rear_wing > 0 {
+        p.push(format!("rear wing +{}%", d.rear_wing));
+    }
+    if d.floor > 0 {
+        p.push(format!("floor +{}%", d.floor));
+    }
+    if d.diffuser > 0 {
+        p.push(format!("diffuser +{}%", d.diffuser));
+    }
+    if d.sidepod > 0 {
+        p.push(format!("sidepod +{}%", d.sidepod));
+    }
+    p.join(", ")
+}
 
 // Trim and cap free text to `max` chars (char-safe, never splits a multibyte char).
 fn capped(s: &str, max: usize) -> String {
@@ -446,6 +481,10 @@ impl SessionState {
             Some(Body::CarTelemetry2(t)) => self.ingest_telemetry2(t),
             _ => {}
         }
+
+        // Release any collision announcements whose hold-back has elapsed (cheap
+        // when nothing is pending).
+        self.flush_collision_posts();
     }
 
     /// Fold one car's authoritative lap archive in. Bests become the min of the
@@ -507,6 +546,7 @@ impl SessionState {
         self.incidents.clear();
         self.damage_watch.clear();
         self.pending_announcements.clear();
+        self.pending_collision_posts.clear();
         self.event_tally.clear();
         self.final_classification = None;
         self.num_active_cars = 0;
@@ -899,7 +939,6 @@ impl SessionState {
         // becomes a new incident.
         if code == "COLL" {
             let mut merged = false;
-            let mut upgraded: Option<(String, Option<u32>)> = None;
             for prior in self.incidents.iter_mut().rev().take(COLL_MERGE_SCAN) {
                 let dt = session_time - prior.session_time;
                 if !(0.0..COLL_MERGE_SECS).contains(&dt) {
@@ -917,21 +956,14 @@ impl SessionState {
                     if f64::from(sev) > prev {
                         prior.detail.insert("severity".to_string(), f64::from(sev));
                         prior.label = collision_label(Some(sev)).to_string();
-                        // A crash that only now graded heavy becomes announce-
-                        // worthy; the original (lighter) card never was.
-                        if sev == 2 && prev < 2.0 {
-                            upgraded = Some((prior.label.clone(), prior.lap_num));
-                        }
+                        // The delayed announcement (pending_collision_posts) reads
+                        // the card at flush time, so the upgrade is picked up there.
                     }
                 }
                 merged = true;
                 break;
             }
             if merged {
-                if let Some((label, lap_num)) = upgraded {
-                    let cars = car_indices.iter().map(|&i| self.car_label(i)).collect();
-                    self.queue_announcement(MajorIncident { label, lap_num, cars });
-                }
                 return;
             }
         }
@@ -953,15 +985,59 @@ impl SessionState {
             }
         }
 
+        // A real penalty naming both cars is usually the game's fault verdict on
+        // a recent collision: pin it to the matching card so the app can say who
+        // caused it and the delayed Discord post carries fault + sanction.
+        let mut linked_collision = false;
+        if code == "PENA" && e.penalty_type.is_some_and(is_real_penalty) {
+            if let (Some(offender), Some(other)) = (
+                e.vehicle_idx.filter(|&v| v != 255),
+                e.other_vehicle_idx.filter(|&v| v != 255),
+            ) {
+                let pair = vec![offender.min(other), offender.max(other)];
+                for prior in self.incidents.iter_mut().rev().take(FAULT_LINK_SCAN) {
+                    let dt = session_time - prior.session_time;
+                    if !(0.0..FAULT_LINK_SECS).contains(&dt) {
+                        break;
+                    }
+                    if prior.code != "COLL"
+                        || prior.source != IncidentSource::Auto
+                        || prior.car_indices != pair
+                    {
+                        continue;
+                    }
+                    prior
+                        .detail
+                        .insert("faultCarIdx".to_string(), f64::from(offender));
+                    if let Some(pt) = e.penalty_type {
+                        prior
+                            .detail
+                            .insert("faultPenaltyType".to_string(), f64::from(pt));
+                    }
+                    if let Some(t) = e.time.filter(|&t| t != 255) {
+                        prior
+                            .detail
+                            .insert("faultPenaltyTime".to_string(), f64::from(t));
+                    }
+                    linked_collision = true;
+                    break;
+                }
+            }
+        }
+
         // Headline incidents worth announcing outside the app: red flags,
-        // safety-car deployments (SCAR labels are already deployment-only),
-        // heavy contact, and race-ending penalties.
+        // safety-car deployments (SCAR labels are already deployment-only), and
+        // race-ending penalties — unless the penalty just became part of a
+        // collision's story, whose delayed post will carry it instead.
+        // Collisions themselves never announce here: they go through
+        // pending_collision_posts so fault and damage ride along.
         let major = match code.as_str() {
             "RDFL" | "SCAR" => true,
-            "COLL" => e.severity == Some(2),
-            "PENA" => e
-                .penalty_type
-                .is_some_and(|pt| RACE_ENDING_PENALTIES.contains(&pt)),
+            "PENA" => {
+                !linked_collision
+                    && e.penalty_type
+                        .is_some_and(|pt| RACE_ENDING_PENALTIES.contains(&pt))
+            }
             _ => false,
         };
         if major {
@@ -1007,6 +1083,13 @@ impl SessionState {
             }
         }
 
+        // Collisions announce on a delay: the card is read again at flush time,
+        // when the game's penalty (fault) and the damage attribution are in.
+        if code == "COLL" && self.pending_collision_posts.len() < MAX_PENDING_COLLISION_POSTS {
+            self.pending_collision_posts
+                .push((id.to_string(), session_time));
+        }
+
         self.incidents.push(Incident {
             id: id.to_string(),
             source: IncidentSource::Auto,
@@ -1022,6 +1105,84 @@ impl SessionState {
             ruling: None,
         });
         self.trim_incidents();
+    }
+
+    /// Queue the delayed collision announcements whose hold-back has elapsed.
+    /// By then the game's penalty verdict and the damage watcher have had their
+    /// say, so one complete line can be composed. Collisions that stayed minor
+    /// (no heavy grade, no penalty) are dropped, not posted.
+    fn flush_collision_posts(&mut self) {
+        if self.pending_collision_posts.is_empty() {
+            return;
+        }
+        let now = self.session_time;
+        // A rewound clock (flashback) orphans an entry; it dies with its timeline.
+        self.pending_collision_posts.retain(|(_, t)| now - t >= 0.0);
+        let mut i = 0;
+        while i < self.pending_collision_posts.len() {
+            if now - self.pending_collision_posts[i].1 >= COLL_POST_DELAY_SECS {
+                let (id, _) = self.pending_collision_posts.remove(i);
+                if let Some(line) = self.collision_post_line(&id) {
+                    let lap_num = self
+                        .incidents
+                        .iter()
+                        .find(|x| x.id == id)
+                        .and_then(|x| x.lap_num);
+                    self.queue_announcement(MajorIncident {
+                        label: line,
+                        lap_num,
+                        // The line already names the cars — an extra list would
+                        // just repeat them.
+                        cars: Vec::new(),
+                    });
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// The one-line announcement for a finished collision card — fault, the
+    /// game's sanction, and per-car damage folded in. None = not worth posting
+    /// (a brush the game never graded heavy nor penalised).
+    fn collision_post_line(&self, id: &str) -> Option<String> {
+        let inc = self.incidents.iter().find(|i| i.id == id)?;
+        let fault = inc.detail.get("faultCarIdx").map(|&v| v as u8);
+        if inc.detail.get("severity").copied() != Some(2.0) && fault.is_none() {
+            return None;
+        }
+        let mut line = match (fault, inc.car_indices.as_slice()) {
+            (Some(f), [a, b]) => {
+                let victim = if *a == f { *b } else { *a };
+                format!(
+                    "{} — {} hit {}",
+                    inc.label,
+                    self.car_label(f),
+                    self.car_label(victim)
+                )
+            }
+            (None, [a, b]) => format!(
+                "{} — {} and {}",
+                inc.label,
+                self.car_label(*a),
+                self.car_label(*b)
+            ),
+            (_, [a]) => format!("{} — {}", inc.label, self.car_label(*a)),
+            _ => inc.label.clone(),
+        };
+        if let (Some(f), Some(pt)) = (fault, inc.detail.get("faultPenaltyType")) {
+            let time = inc.detail.get("faultPenaltyTime").map(|&v| v as u8);
+            if let Some(s) = sanction_text(*pt as u8, time) {
+                line.push_str(&format!(" · {} to {}", s, self.car_label(f)));
+            }
+        }
+        for d in &inc.damage {
+            let parts = damage_parts(d);
+            if !parts.is_empty() {
+                line.push_str(&format!(" · {}: {}", self.car_label(d.car_index), parts));
+            }
+        }
+        Some(line)
     }
 
     /// Cap the incident log: drop the oldest still-logged (auto, undecided)
@@ -1657,6 +1818,106 @@ mod tests {
             tyres_wear: vec![0.0; 4],
             ..Default::default()
         }
+    }
+
+    /// Any packet at time `t`, to advance the session clock (flush timers).
+    fn tick(uid: &str, t: f32) -> ParsedPacket {
+        let mut p = session(uid, 15);
+        p.header.session_time = t;
+        p
+    }
+
+    fn pena(veh: u8, other: u8, pt: u8, inf: u8, time: u8) -> EventData {
+        EventData {
+            code: "PENA".into(),
+            penalty_type: Some(pt),
+            infringement_type: Some(inf),
+            vehicle_idx: Some(veh),
+            other_vehicle_idx: Some(other),
+            time: Some(time),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn penalty_links_fault_onto_the_matching_collision() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&event_at("A", coll(7, 3, Some(1)), 10.0), 0.0);
+        // The game blames car 3: big collision, +10s.
+        st.ingest(&event_at("A", pena(3, 7, 4, 3, 10), 12.0), 0.0);
+        let s = st.snapshot();
+        assert_eq!(s.incidents.len(), 2, "collision card + penalty card");
+        let coll_card = &s.incidents[0];
+        assert_eq!(coll_card.code, "COLL");
+        assert_eq!(coll_card.detail.get("faultCarIdx"), Some(&3.0));
+        assert_eq!(coll_card.detail.get("faultPenaltyType"), Some(&4.0));
+        assert_eq!(coll_card.detail.get("faultPenaltyTime"), Some(&10.0));
+    }
+
+    #[test]
+    fn delayed_collision_post_carries_fault_sanction_and_damage() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(
+            &participants(
+                "A",
+                vec![
+                    participant_num(3, "Mantis", 1, 13),
+                    participant_num(7, "Vane", 2, 7),
+                ],
+            ),
+            0.0,
+        );
+        // Pre-crash baseline, then the crash, damage, and the game's verdict.
+        st.ingest(&damage_at("A", vec![dmg_entry(3, 10, 0), dmg_entry(7, 0, 0)], 9.0), 0.0);
+        st.ingest(&event_at("A", coll(3, 7, Some(2)), 10.0), 0.0);
+        st.ingest(&damage_at("A", vec![dmg_entry(3, 55, 12), dmg_entry(7, 0, 0)], 11.0), 0.0);
+        st.ingest(&event_at("A", pena(3, 7, 4, 3, 10), 12.0), 0.0);
+        assert!(
+            st.take_pending_announcements().is_empty(),
+            "nothing posts before the hold-back elapses"
+        );
+        st.ingest(&tick("A", 19.0), 0.0);
+        let posts = st.take_pending_announcements();
+        assert_eq!(posts.len(), 1, "one combined line");
+        let line = &posts[0].label;
+        assert!(line.contains("Heavy contact"), "{line}");
+        assert!(line.contains("13 Mantis hit 7 Vane"), "{line}");
+        assert!(line.contains("+10s to 13 Mantis"), "{line}");
+        assert!(line.contains("13 Mantis: front wing +45%, floor +12%"), "{line}");
+        assert!(posts[0].cars.is_empty(), "the line already names the cars");
+    }
+
+    #[test]
+    fn minor_unpenalised_collision_never_posts() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&event_at("A", coll(3, 7, Some(0)), 10.0), 0.0);
+        st.ingest(&tick("A", 19.0), 0.0);
+        assert!(
+            st.take_pending_announcements().is_empty(),
+            "a brush the game never graded heavy nor penalised stays quiet"
+        );
+        assert_eq!(st.snapshot().incidents.len(), 1, "the card itself remains");
+    }
+
+    #[test]
+    fn race_ending_penalty_folds_into_the_collision_post() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&event_at("A", coll(3, 7, Some(2)), 10.0), 0.0);
+        // Drive-through for the collision: normally announces on its own, but
+        // it belongs to this crash's story now.
+        st.ingest(&event_at("A", pena(3, 7, 0, 3, 0), 11.0), 0.0);
+        assert!(
+            st.take_pending_announcements().is_empty(),
+            "the penalty rides the collision post instead of its own"
+        );
+        st.ingest(&tick("A", 19.0), 0.0);
+        let posts = st.take_pending_announcements();
+        assert_eq!(posts.len(), 1);
+        assert!(posts[0].label.contains("Drive-through to"), "{}", posts[0].label);
     }
 
     #[test]
