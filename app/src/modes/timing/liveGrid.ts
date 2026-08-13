@@ -51,6 +51,9 @@ export interface LiveDriver {
   motion?: { x: number; z: number; yaw: number } | null;
   deltaToLeaderMS: number;
   deltaToCarAheadMS: number;
+  /** m_driverStatus: 0 in garage, 1 flying lap, 2 in lap, 3 out lap, 4 on track.
+   *  Optional: snapshots saved before this field existed replay through here. */
+  driverStatus?: number;
   pitStatus: number;
   numPitStops: number;
   penaltiesSec: number;
@@ -116,6 +119,9 @@ export interface RaceSnapshot {
   session: {
     totalLaps: number;
     sessionType?: number;
+    /** Seconds remaining / total in a timed session (practice, qualifying). */
+    sessionTimeLeft?: number;
+    sessionDuration?: number;
     /** The game's pit-window recommendation for the player (Session tail);
      *  absent/null = no window. */
     pitStopWindowIdealLap?: number | null;
@@ -225,9 +231,20 @@ function sectorClass(t: number, own: number, overall: number): SectorState {
   return "set";
 }
 
+// m_driverStatus, shown as a chip in timed sessions where most of the field sits
+// in the garage. 1 (flying) and 4 (on track) stay chipless — that's just racing.
+const DRIVER_STATUS_CHIP: Record<number, string> = { 0: "GARAGE", 2: "IN LAP", 3: "OUT LAP" };
+
+/** True when the running order is decided by best lap time, not track position:
+ *  practice, qualifying (incl. sprint shootouts) and time trial. */
+function isTimedSession(category: string): boolean {
+  return category === "qualifying" || category === "practice" || category === "timeTrial";
+}
+
 /** Map one snapshot into ordered timing rows. */
 export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
   const drivers = snap.drivers;
+  const timed = isTimedSession(snap.sessionCategory);
   const bestTimes = drivers.map((d) => d.bestLapMS).filter((t) => t > 0);
   const overallBest = bestTimes.length ? Math.min(...bestTimes) : 0;
   const minOver = (pick: (d: LiveDriver) => number): number => {
@@ -262,6 +279,18 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
 
     const name = d.nameOverride ?? d.name;
 
+    // In timed sessions the game's delta fields are live on-track distances —
+    // meaningless for the classification — so Int/Gap compare BEST LAPS instead
+    // (rows arrive best-lap-sorted): gap to the fastest lap, interval to the row
+    // above. No time on either side = no gap to claim ("—"), never "+0.000".
+    const prevBest = i > 0 ? drivers[i - 1].bestLapMS : 0;
+    const timedInterval =
+      d.bestLapMS > 0 && prevBest > 0 ? (d.bestLapMS - prevBest) / 1000 : null;
+    const timedGap =
+      d.bestLapMS > 0 && overallBest > 0 && d.bestLapMS !== overallBest
+        ? (d.bestLapMS - overallBest) / 1000
+        : null;
+
     return {
       pos,
       index: d.index,
@@ -269,9 +298,11 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
       name,
       teamName: teamName(d.teamId),
       teamColor: teamColor(d.liveryColours),
-      change: d.gridPosition > 0 ? d.gridPosition - pos : 0,
-      intervalSec: leader ? null : d.deltaToCarAheadMS / 1000,
-      gapSec: leader ? null : d.deltaToLeaderMS / 1000,
+      // No grid to gain/lose against until the race itself.
+      change: !timed && d.gridPosition > 0 ? d.gridPosition - pos : 0,
+      intervalSec: timed ? timedInterval : leader ? null : d.deltaToCarAheadMS / 1000,
+      gapSec: timed ? timedGap : leader ? null : d.deltaToLeaderMS / 1000,
+      qstatus: timed ? DRIVER_STATUS_CHIP[d.driverStatus ?? 4] ?? null : null,
       pit: d.pitStatus > 0,
       lastMs: d.lastLapMS,
       bestMs: d.bestLapMS,
@@ -319,6 +350,10 @@ export interface SessionInfo {
   totalLaps: number;
   /** Session kind (race/qualifying/practice/timeTrial), for the report header. */
   category?: string;
+  /** Human session name from the raw sessionType (Q1, P2, OSQ…); null if unknown. */
+  label?: string | null;
+  /** Seconds left in a timed session (practice/qualifying); null in a race. */
+  timeLeftSec?: number | null;
   /** The game's own pit-window recommendation (player strategy), when one is on. */
   pitWindow?: { ideal: number; latest: number } | null;
   /** The soonest meaningful rain in this session's forecast, if any. */
@@ -346,16 +381,46 @@ function nextRain(snap: RaceSnapshot): SessionInfo["rain"] {
   };
 }
 
+// Session-type ids from the appendix ("Session types"): 1–4 practice, 5–9
+// qualifying, 10–14 sprint shootouts, 15–17 races, 18 time trial.
+const SESSION_TYPE_LABEL: Record<number, string> = {
+  1: "P1",
+  2: "P2",
+  3: "P3",
+  4: "Short P",
+  5: "Q1",
+  6: "Q2",
+  7: "Q3",
+  8: "Short Q",
+  9: "OSQ",
+  10: "SS1",
+  11: "SS2",
+  12: "SS3",
+  13: "Short SS",
+  14: "One-Shot SS",
+  15: "Race",
+  16: "Race 2",
+  17: "Race 3",
+  18: "Time Trial",
+};
+
 /** Track + lap counter for the tower header. */
 export function sessionInfo(snap: RaceSnapshot): SessionInfo {
   const lap = snap.drivers.reduce((m, d) => Math.max(m, d.currentLapNum), 0);
   const ideal = snap.session?.pitStopWindowIdealLap ?? 0;
   const latest = snap.session?.pitStopWindowLatestLap ?? 0;
+  const timed = isTimedSession(snap.sessionCategory);
   return {
     track: snap.trackName ?? "—",
     lap,
     totalLaps: snap.session?.totalLaps ?? 0,
     category: snap.sessionCategory,
+    label: SESSION_TYPE_LABEL[snap.session?.sessionType ?? 0] ?? null,
+    // Time trial is untimed; its sessionTimeLeft is not a countdown worth showing.
+    timeLeftSec:
+      timed && snap.sessionCategory !== "timeTrial"
+        ? (snap.session?.sessionTimeLeft ?? null)
+        : null,
     pitWindow: ideal > 0 ? { ideal, latest: latest > 0 ? latest : ideal } : null,
     rain: nextRain(snap),
   };

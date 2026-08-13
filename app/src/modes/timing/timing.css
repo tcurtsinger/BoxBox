@@ -431,6 +431,24 @@
   border-color: var(--border);
 }
 
+/* Timed-session activity chip (GARAGE / OUT LAP / IN LAP): informational, muted. */
+.chip-qstatus {
+  color: var(--faint);
+  border-color: var(--border);
+}
+
+/* Session name in the tower header for timed sessions (Q1, P2, OSQ…). */
+.tt-sesslabel {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+
 /* ERS battery bar */
 .tt-c-ers {
   display: flex;

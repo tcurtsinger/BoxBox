@@ -94,6 +94,9 @@ export interface DriverRow {
   /** "DNF" / "DSQ" / "NC" / "RET" once the game reports the car out; null while
    *  running. Drives the dimmed row + OUT chip so a crashed car can't look alive. */
   status: string | null;
+  /** Timed-session activity chip ("GARAGE" / "OUT LAP" / "IN LAP") from
+   *  m_driverStatus; null in a race or while simply lapping. */
+  qstatus?: string | null;
   /** Live world position (Motion packet), for the track map. Absent on sample
    *  rows and until the first motion frame. */
   motion?: { x: number; z: number; yaw: number } | null;
@@ -228,4 +231,10 @@ export function fmtSec(s: number): string {
 
 export function fmtFuel(laps: number): string {
   return `${laps >= 0 ? "+" : ""}${laps.toFixed(1)}`;
+}
+
+/** Seconds → "m:ss" session clock (12:05, 0:42). */
+export function fmtClock(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }

@@ -6,6 +6,7 @@ import {
   fmtLap,
   fmtSec,
   fmtFuel,
+  fmtClock,
   FLAG_LABEL,
   type DriverRow,
   type SectorState,
@@ -29,6 +30,12 @@ export function TimingTower() {
   const sample = feed.sample === true;
   const { grid, session } = useSharedRaceState();
   const { rowProps } = useRovingGrid(grid.length);
+  // Timed sessions (practice/quali/TT) are classified by best lap, not laps run:
+  // the header shows the session name + clock, never a meaningless "Lap 2 / 1".
+  const timed =
+    session.category === "qualifying" ||
+    session.category === "practice" ||
+    session.category === "timeTrial";
 
   return (
     <section className="tt" aria-label="Live timing tower">
@@ -36,10 +43,22 @@ export function TimingTower() {
         <div className="tt-sess">
           <span className="tt-track">{session.track}</span>
           <span className="tt-sep" aria-hidden="true" />
-          <span className="tt-lap mono">
-            Lap <b>{session.lap}</b>
-            <span className="tt-lap-total"> / {session.totalLaps || "—"}</span>
-          </span>
+          {timed ? (
+            <>
+              {session.label && <span className="tt-sesslabel">{session.label}</span>}
+              {session.timeLeftSec != null && (
+                <span className="tt-lap mono" title="Session time remaining">
+                  <b>{fmtClock(session.timeLeftSec)}</b>
+                  <span className="tt-lap-total"> left</span>
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="tt-lap mono">
+              Lap <b>{session.lap}</b>
+              <span className="tt-lap-total"> / {session.totalLaps || "—"}</span>
+            </span>
+          )}
           {session.pitWindow && (
             <span
               className="tt-pitwindow mono"
@@ -100,6 +119,7 @@ export function TimingTower() {
                 <Row
                   key={row.index}
                   d={row}
+                  timed={timed}
                   selected={selectedDriver === row.index}
                   rowProps={rowProps(i, () =>
                     setSelectedDriver(selectedDriver === row.index ? null : row.index),
@@ -116,10 +136,12 @@ export function TimingTower() {
 
 function Row({
   d,
+  timed,
   selected,
   rowProps,
 }: {
   d: DriverRow;
+  timed: boolean;
   selected: boolean;
   rowProps: RovingRowProps;
 }) {
@@ -164,15 +186,25 @@ function Row({
           "—"
         ) : d.pit ? (
           <span className="tt-pit">PIT</span>
-        ) : leader ? (
+        ) : d.intervalSec == null ? (
+          // Leader in a race; no lap time to compare in a timed session.
           "—"
         ) : (
-          fmtSec(d.intervalSec ?? 0)
+          fmtSec(d.intervalSec)
         )}
       </span>
 
-      <span className={`tt-c-gap tt-a-r${leader && !out ? " tt-leader" : " mono"}`} role="gridcell">
-        {out ? "—" : leader ? "LEADER" : fmtSec(d.gapSec ?? 0)}
+      <span
+        className={`tt-c-gap tt-a-r${!timed && leader && !out ? " tt-leader" : " mono"}`}
+        role="gridcell"
+      >
+        {out
+          ? "—"
+          : !timed && leader
+            ? "LEADER"
+            : d.gapSec == null
+              ? "—"
+              : fmtSec(d.gapSec)}
       </span>
 
       <span className={`tt-c-last tt-a-r mono lap-${d.lastClass}`} role="gridcell">
@@ -257,6 +289,8 @@ function Status({ d }: { d: DriverRow }) {
   const chips: { text: string; cls: string }[] = [];
   // Out of the session leads: a crashed car must never read as running.
   if (d.status) chips.push({ text: d.status, cls: "chip-out" });
+  // Timed-session activity (garage / out lap / in lap) — why a row has no times.
+  if (!d.status && d.qstatus) chips.push({ text: d.qstatus, cls: "chip-qstatus" });
   if (d.pen > 0) chips.push({ text: `+${d.pen}s`, cls: "chip-pen" });
   if (d.flag) chips.push({ text: FLAG_LABEL[d.flag], cls: `chip-flag chip-flag-${d.flag}` });
   if (chips.length === 0) return <span className="tt-empty">–</span>;
