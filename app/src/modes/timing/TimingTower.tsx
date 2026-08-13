@@ -97,6 +97,7 @@ export function TimingTower() {
             <span className="tt-h tt-a-c" role="columnheader">Pos</span>
             <span className="tt-h tt-a-c" role="columnheader" aria-label="Positions gained or lost">±</span>
             <span className="tt-h" role="columnheader">Driver</span>
+            <span className="tt-h tt-a-c" role="columnheader" aria-label="Total time penalties">Pen</span>
             <span className="tt-h" role="columnheader">Status</span>
             <span className="tt-h tt-a-r" role="columnheader">Int</span>
             <span className="tt-h tt-a-r" role="columnheader">Gap</span>
@@ -174,6 +175,14 @@ function Row({
           >
             <LockIcon size={11} />
           </span>
+        )}
+      </span>
+
+      <span className="tt-c-pen tt-a-c" role="gridcell">
+        {d.pen > 0 ? (
+          <span className="chip chip-pen mono">+{d.pen}s</span>
+        ) : (
+          <span className="tt-empty">–</span>
         )}
       </span>
 
@@ -291,7 +300,7 @@ function Status({ d }: { d: DriverRow }) {
   if (d.status) chips.push({ text: d.status, cls: "chip-out" });
   // Timed-session activity (garage / out lap / in lap) — why a row has no times.
   if (!d.status && d.qstatus) chips.push({ text: d.qstatus, cls: "chip-qstatus" });
-  if (d.pen > 0) chips.push({ text: `+${d.pen}s`, cls: "chip-pen" });
+  // Time penalties live in their own Pen column now, not among the chips.
   // An unserved drive-through isn't a time amount — chip it like the game does.
   const dt = d.unservedDT ?? 0;
   if (dt > 0) chips.push({ text: dt > 1 ? `DT ×${dt}` : "DT", cls: "chip-pen" });
