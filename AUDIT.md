@@ -304,7 +304,9 @@ Fix: 65536-byte buffer or classify 10040 as non-fatal.
 > eventTally off the 4 Hz snapshot → item 9-partial, item 5-partial). Items 2,
 > 3, 4 were already closed by the P0 fixes.
 >
-> **Third pass:** Motion (packet 0) + a live track map (`046a4b7`), tuner
+> **Third pass:** Motion (packet 0) + a live track map (`046a4b7`; the map and
+> the Motion decode were later removed by request — packet 0 now flows
+> header-only again), tuner
 > ingest hygiene — spectator guard, pit-lane trace filter, actual-compound/
 > tyre-age set identity (`98270de`), and the weather forecast → "Rain ~Nm · P%"
 > tower chip (this commit).

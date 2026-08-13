@@ -47,8 +47,6 @@ export interface LiveDriver {
   /** Session History (packet 11): authoritative lap archive + stints. */
   lapHistory?: LapHistoryEntry[];
   stintHistory?: { endLap: number; actualCompound: number; visualCompound: number }[];
-  /** Motion (packet 0): live world position for the track map. */
-  motion?: { x: number; z: number; yaw: number } | null;
   deltaToLeaderMS: number;
   deltaToCarAheadMS: number;
   /** m_driverStatus: 0 in garage, 1 flying lap, 2 in lap, 3 out lap, 4 on track.
@@ -310,7 +308,6 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
       bestClass,
       sectors,
       status: OUT_STATUS[d.resultStatus ?? 0] ?? null,
-      motion: d.motion ?? null,
       batt: d.batteryPct,
       boost: d.overtakeActive || d.ersDeployMode === 3,
       fuel: d.fuelRemainingLaps,

@@ -97,9 +97,6 @@ export interface DriverRow {
   /** Timed-session activity chip ("GARAGE" / "OUT LAP" / "IN LAP") from
    *  m_driverStatus; null in a race or while simply lapping. */
   qstatus?: string | null;
-  /** Live world position (Motion packet), for the track map. Absent on sample
-   *  rows and until the first motion frame. */
-  motion?: { x: number; z: number; yaw: number } | null;
   batt: number;
   boost: boolean;
   fuel: number;
