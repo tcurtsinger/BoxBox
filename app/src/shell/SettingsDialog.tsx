@@ -37,6 +37,20 @@ const ENGINEER_CATEGORIES: { key: keyof EngineerCategories; label: string }[] = 
   { key: "flagsIncidents", label: "Flags & incidents" },
 ];
 
+/** Mirror of the Rust `DiscordConfig` (serde camelCase). */
+interface DiscordConfig {
+  webhookUrl: string;
+  postQuali: boolean;
+  postRace: boolean;
+  postIncidents: boolean;
+}
+
+const DISCORD_TOGGLES: { key: keyof Omit<DiscordConfig, "webhookUrl">; label: string }[] = [
+  { key: "postQuali", label: "Qualifying results" },
+  { key: "postRace", label: "Race results" },
+  { key: "postIncidents", label: "Major incidents" },
+];
+
 /** Editing draft for a forward target — port is a string so it can be cleared
  *  mid-edit; parsed back to a number on Apply. */
 interface TargetDraft {
@@ -90,6 +104,16 @@ export function SettingsDialog({
   const [retention, setRetention] = useState<number | null>(null);
   const [pendingRetention, setPendingRetention] = useState<number | null>(null);
   const [retentionNote, setRetentionNote] = useState<string | null>(null);
+  // Discord webhook draft — loaded when the dialog opens, saved on Apply. The
+  // test button saves first, so it always tests what's in the box.
+  const [discord, setDiscord] = useState<DiscordConfig>({
+    webhookUrl: "",
+    postQuali: true,
+    postRace: true,
+    postIncidents: true,
+  });
+  const [discordNote, setDiscordNote] = useState<string | null>(null);
+  const [discordBusy, setDiscordBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -97,10 +121,51 @@ export function SettingsDialog({
     void historyRetention().then((d) => {
       if (active) setRetention(d);
     });
+    if (IN_TAURI) {
+      void import("@tauri-apps/api/core").then(({ invoke }) =>
+        invoke<DiscordConfig>("discord_config").then(
+          (c) => {
+            if (active) {
+              setDiscord(c);
+              setDiscordNote(null);
+            }
+          },
+          () => {},
+        ),
+      );
+    }
     return () => {
       active = false;
     };
   }, [open]);
+
+  async function saveDiscord(): Promise<boolean> {
+    if (!IN_TAURI) return false;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const clean = await invoke<DiscordConfig>("set_discord_config", { config: discord });
+      setDiscord(clean);
+      return true;
+    } catch (e) {
+      setDiscordNote(String(e));
+      return false;
+    }
+  }
+
+  async function testDiscord() {
+    setDiscordBusy(true);
+    setDiscordNote(null);
+    if (await saveDiscord()) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("discord_test");
+        setDiscordNote("Test post sent — check the channel.");
+      } catch (e) {
+        setDiscordNote(String(e));
+      }
+    }
+    setDiscordBusy(false);
+  }
 
   // OS voices populate asynchronously; keep the picker's list in sync while open.
   useEffect(() => {
@@ -160,6 +225,7 @@ export function SettingsDialog({
         port: Number(t.port),
       })),
     });
+    void saveDiscord();
     onClose();
   }
 
@@ -457,6 +523,65 @@ export function SettingsDialog({
             </div>
           )}
         </div>
+
+        {IN_TAURI && (
+          <div className="field">
+            <span className="field-label">Discord posts</span>
+            <input
+              className="field-input mono"
+              type="password"
+              autoComplete="off"
+              placeholder="https://discord.com/api/webhooks/…"
+              aria-label="Discord webhook URL"
+              value={discord.webhookUrl}
+              onChange={(e) => {
+                setDiscordNote(null);
+                setDiscord({ ...discord, webhookUrl: e.target.value });
+              }}
+            />
+            <p className="field-hint">
+              Paste a channel webhook URL (Channel settings → Integrations →
+              Webhooks) and BoxBox posts results there. Leave empty to turn off.
+            </p>
+            {discord.webhookUrl.trim() !== "" && (
+              <div className="eng-config">
+                <div className="eng-cats" role="group" aria-label="Discord post types">
+                  {DISCORD_TOGGLES.map(({ key, label }) => (
+                    <label className="eng-cat" key={key}>
+                      <input
+                        type="checkbox"
+                        checked={discord[key]}
+                        onChange={() => {
+                          setDiscordNote(null);
+                          setDiscord({ ...discord, [key]: !discord[key] });
+                        }}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm eng-test"
+                  onClick={() => void testDiscord()}
+                  disabled={discordBusy}
+                >
+                  {discordBusy ? "Testing…" : "Send test post"}
+                </button>
+              </div>
+            )}
+            {discordNote && (
+              <p
+                className={`field-hint${
+                  discordNote.startsWith("Test post sent") ? "" : " field-hint-error"
+                }`}
+                role="status"
+              >
+                {discordNote}
+              </p>
+            )}
+          </div>
+        )}
 
         <footer className="dialog-foot">
           <button type="button" className="btn btn-ghost" onClick={onClose}>

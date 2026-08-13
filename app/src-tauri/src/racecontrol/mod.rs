@@ -5,4 +5,4 @@
 pub mod labels;
 pub mod state;
 
-pub use state::{SessionSnapshot, SessionState};
+pub use state::{MajorIncident, SessionSnapshot, SessionState};

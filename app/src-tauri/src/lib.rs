@@ -1,3 +1,4 @@
+mod discord;
 mod engineer;
 mod export;
 mod history;
@@ -64,6 +65,19 @@ pub fn run() {
             }
             app.manage(HistoryStoreState(history));
 
+            // Discord webhook posts: load the saved config and start the poster
+            // thread (idle until a job arrives; config re-checked per job).
+            let discord_path = resolve("discord.json");
+            let discord_config = Arc::new(std::sync::Mutex::new(
+                persist::read_json::<discord::DiscordConfig>(&discord_path).unwrap_or_default(),
+            ));
+            let discord_sender = discord::spawn_poster(discord_config.clone());
+            app.manage(discord::DiscordState {
+                config: discord_config,
+                sender: discord_sender,
+                path: discord_path,
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -98,6 +112,9 @@ pub fn run() {
             telemetry::rename_session,
             telemetry::set_history_retention,
             telemetry::history_retention,
+            discord::discord_config,
+            discord::set_discord_config,
+            discord::discord_test,
             export::export_report
         ])
         .run(tauri::generate_context!())
