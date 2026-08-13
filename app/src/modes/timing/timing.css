@@ -8,8 +8,12 @@
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  --tt-cols: 34px 40px minmax(132px, 1.5fr) minmax(84px, 1fr) 72px 80px 84px 84px 70px 100px 58px 58px 46px;
+  /* Status is capped so chips never own the row; Driver takes the slack, and the
+     table itself stops growing at --tt-max (below) so fullscreen doesn't stretch
+     the columns into a sparse smear. */
+  --tt-cols: 34px 40px minmax(132px, 1.5fr) minmax(84px, 200px) 72px 80px 84px 84px 70px 100px 58px 58px 46px;
   --tt-min: 1060px;
+  --tt-max: 1400px;
 }
 
 /* ---- Top bar: session + lap counter ------------------------------------- */
@@ -73,6 +77,9 @@
 .tt-table {
   width: 100%;
   min-width: var(--tt-min);
+  /* Fullscreen: hold a readable broadcast-style band, centered in the space. */
+  max-width: var(--tt-max);
+  margin-inline: auto;
   animation: tt-in var(--dur-base) var(--ease-out);
 }
 @keyframes tt-in {
