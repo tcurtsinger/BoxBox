@@ -1,7 +1,5 @@
 import type { ReactNode } from "react";
 import { useShell, type RaceSection } from "../shell/shell-context";
-import { SectionRail, type RailItem } from "../shell/SectionRail";
-import { StopwatchIcon, FlagIcon, GavelIcon, HistoryIcon } from "../shell/icons";
 import { NoFeed } from "../shell/NoFeed";
 import { ModePlaceholder } from "../shell/ModePlaceholder";
 import { StandbyBanner } from "../shell/StandbyBanner";
@@ -10,13 +8,6 @@ import { ReviewQueue } from "./review/ReviewQueue";
 import { IncidentsFeed } from "./incidents/IncidentsFeed";
 import { HistoryView } from "./history/HistoryView";
 import { RaceStateProvider } from "./timing/RaceStateContext";
-
-const RACE_SECTIONS: RailItem<RaceSection>[] = [
-  { id: "timing", label: "Timing", Icon: StopwatchIcon },
-  { id: "incidents", label: "Incidents", Icon: FlagIcon },
-  { id: "review", label: "Review", Icon: GavelIcon },
-  { id: "history", label: "History", Icon: HistoryIcon },
-];
 
 // Sections with a real, built interface that fills the content area; the rest
 // show a placeholder when live and the shared no-feed state otherwise.
@@ -56,9 +47,9 @@ const SECTION_META: Record<
   },
 };
 
-/** Race Control mode: section rail + content area (density tuned tighter). */
+/** Race Control mode: shared app rail + content area (density tuned tighter). */
 export function RaceControlView() {
-  const { feed, raceSection, setRaceSection, setFeed } = useShell();
+  const { feed, raceSection, setFeed } = useShell();
   // A paused feed (standby) keeps the last live surface up under a banner; we
   // only fall back to the no-feed setup screen once the feed is truly gone (P2.1).
   const hasFeed = feed.state === "live" || feed.state === "standby";
@@ -67,14 +58,7 @@ export function RaceControlView() {
 
   return (
     <RaceStateProvider>
-      <div className="view-rc">
-        <SectionRail
-          items={RACE_SECTIONS}
-          active={raceSection}
-          onSelect={setRaceSection}
-          ariaLabel="Race Control sections"
-        />
-        <div className="rc-content">
+      <div className="rc-content">
         {feed.state === "standby" && <StandbyBanner />}
         {raceSection === "history" ? (
           <HistoryView />
@@ -107,7 +91,6 @@ export function RaceControlView() {
             )}
           </div>
         )}
-        </div>
       </div>
     </RaceStateProvider>
   );

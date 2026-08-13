@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShell } from "../../shell/shell-context";
-import { ScaleIcon } from "../../shell/icons";
+import { BenchIcon } from "../../shell/icons";
 import { useTunerSnapshot } from "../tuner/useTunerSnapshot";
 import { COMPOUND_NAME, fmtLap, SETUP_GROUPS, WEAR_PARAM_LABEL } from "../tuner/tunerData";
 import { listTunes, trackName, type SetupValues, type TuneSummary } from "./tunesData";
@@ -130,7 +130,7 @@ export function BenchView() {
       <div className="setups setups-centered">
         <div className="setups-empty">
           <span className="setups-empty-icon" aria-hidden="true">
-            <ScaleIcon size={26} />
+            <BenchIcon size={26} />
           </span>
           <h2 className="setups-empty-title">Nothing to compare yet</h2>
           <p className="setups-empty-lead">
