@@ -10,9 +10,11 @@
   height: 100%;
   /* Status is capped so chips never own the row; Driver takes the slack, and the
      table itself stops growing at --tt-max (below) so fullscreen doesn't stretch
-     the columns into a sparse smear. */
-  --tt-cols: 34px 40px minmax(132px, 1.5fr) minmax(84px, 200px) 72px 80px 84px 84px 70px 100px 58px 58px 46px;
-  --tt-min: 1060px;
+     the columns into a sparse smear. Pen sits between Driver and Status: the
+     penalty total is a number stewards scan, so it gets a fixed column instead
+     of jostling with the status chips. */
+  --tt-cols: 34px 40px minmax(132px, 1.5fr) 52px minmax(84px, 172px) 72px 80px 84px 84px 70px 100px 58px 58px 46px;
+  --tt-min: 1080px;
   --tt-max: 1400px;
 }
 
