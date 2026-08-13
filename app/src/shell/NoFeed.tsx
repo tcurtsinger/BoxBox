@@ -14,7 +14,7 @@ export function NoFeed({
   /** Optional: offer a one-click sample dataset so the surface is viewable now. */
   onSample?: () => void;
 }) {
-  const { connection, feed, setSettingsOpen } = useShell();
+  const { connection, feed, setMode } = useShell();
   return (
     <div className="nofeed">
       <div className="nofeed-icon" aria-hidden="true">
@@ -51,7 +51,7 @@ export function NoFeed({
         <button
           type="button"
           className="btn btn-ghost"
-          onClick={() => setSettingsOpen(true)}
+          onClick={() => setMode("settings")}
         >
           Connection settings
         </button>

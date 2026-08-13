@@ -614,6 +614,50 @@ textarea {
 /* ======================================================================== */
 /* Settings dialog                                                           */
 /* ======================================================================== */
+/* ---- Settings page (rail destination, replacing the old modal) ---------- */
+.settings-page {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+.settings-inner {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: var(--space-xl) var(--space-lg) 80px;
+}
+.settings-title {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: var(--tracking-tight);
+}
+.settings-sub {
+  margin: 0 0 var(--space-lg);
+  font-size: 13px;
+  color: var(--muted);
+}
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-xl) 0;
+  border-top: 1px solid var(--border);
+}
+.settings-section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
 .dialog {
   width: min(440px, 92vw);
   margin: auto;

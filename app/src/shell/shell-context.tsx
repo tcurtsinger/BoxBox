@@ -11,7 +11,7 @@ import { type UIIncident } from "../modes/incidents/incident";
 import { SEED_INCIDENTS } from "../modes/incidents/sampleIncidents";
 import type { Tune } from "../modes/tunes/tunesData";
 
-export type Mode = "tunes" | "race";
+export type Mode = "tunes" | "race" | "settings";
 
 /** The sections inside the Tunes mode (left section rail). */
 export type TunesSection = "setups" | "tuner" | "bench";
@@ -166,8 +166,6 @@ interface ShellState {
   /** Voice race-engineer settings (persisted locally). */
   engineer: EngineerSettings;
   setEngineer: (e: EngineerSettings) => void;
-  settingsOpen: boolean;
-  setSettingsOpen: (open: boolean) => void;
   /** CAR INDEX of the timing-tower row the steward has selected, if any. The
    *  index is the session-unique identity; race numbers can collide online. */
   selectedDriver: number | null;
@@ -270,7 +268,6 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       // Storage unavailable: settings just won't persist this session.
     }
   }, [engineer]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState<number | null>(null);
   const [incidents, setIncidents] = useState<UIIncident[]>(() =>
     SEED_INCIDENTS.map((x) => ({ ...x })),
@@ -300,14 +297,12 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setConnection,
       engineer,
       setEngineer,
-      settingsOpen,
-      setSettingsOpen,
       selectedDriver,
       setSelectedDriver,
       incidents,
       setIncidents,
     }),
-    [mode, tunesSection, referenceTune, benchSeed, feed, feedEpoch, resetFeed, raceSection, railCollapsed, sessionSaved, connection, engineer, settingsOpen, selectedDriver, incidents],
+    [mode, tunesSection, referenceTune, benchSeed, feed, feedEpoch, resetFeed, raceSection, railCollapsed, sessionSaved, connection, engineer, selectedDriver, incidents],
   );
 
   return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>;

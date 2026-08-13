@@ -46,8 +46,6 @@ export function AppRail() {
     setRaceSection,
     railCollapsed,
     setRailCollapsed,
-    settingsOpen,
-    setSettingsOpen,
   } = useShell();
 
   const railItem = (
@@ -56,14 +54,12 @@ export function AppRail() {
     Icon: typeof StopwatchIcon,
     isActive: boolean,
     onClick: () => void,
-    dialog?: boolean,
   ) => (
     <button
       key={key}
       type="button"
       className={`rail-item${isActive ? " is-active" : ""}`}
-      aria-current={!dialog && isActive ? "page" : undefined}
-      aria-haspopup={dialog ? "dialog" : undefined}
+      aria-current={isActive ? "page" : undefined}
       // Collapsed, the icon is all that's visible — the tooltip carries the name.
       title={railCollapsed ? label : undefined}
       aria-label={label}
@@ -91,7 +87,7 @@ export function AppRail() {
         }),
       )}
       <div className="rail-sep" aria-hidden="true" />
-      {railItem("settings", "Settings", GearIcon, settingsOpen, () => setSettingsOpen(true), true)}
+      {railItem("settings", "Settings", GearIcon, mode === "settings", () => setMode("settings"))}
       <button
         type="button"
         className="rail-collapse"
