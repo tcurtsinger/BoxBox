@@ -7,7 +7,10 @@
   min-height: 0;
   overflow: auto;
   display: grid;
-  grid-template-columns: minmax(360px, 1.5fr) minmax(300px, 1fr);
+  /* Columns stop growing at a readable width and the pair centers in the spare
+     space — same broadcast-band treatment as the timing tower on wide screens. */
+  grid-template-columns: minmax(360px, 760px) minmax(300px, 500px);
+  justify-content: center;
   align-content: start;
   gap: var(--space-2xl);
   padding: var(--space-xl) var(--space-2xl);
