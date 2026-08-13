@@ -253,6 +253,13 @@ textarea {
 .rail-item.is-active .rail-marker {
   transform: translateY(-50%) scaleY(1);
 }
+/* Group separator in the unified rail (Tunes | Race | Settings). */
+.rail-sep {
+  flex: none;
+  height: 1px;
+  margin: 6px 10px;
+  background: var(--border);
+}
 /* Collapse/expand toggle, pinned to the foot of the rail where the feed status
    used to sit (the status moved to the titlebar). No divider — just the icon. */
 .rail-collapse {

@@ -1,14 +1,14 @@
-import { ModeSwitch } from "./ModeSwitch";
 import { WindowControls } from "./WindowControls";
 import { SettingsDialog } from "./SettingsDialog";
 import { FeedStatus } from "./FeedStatus";
 import { useShell } from "./shell-context";
 
 /**
- * The frameless window's titlebar, doubling as the app top bar. The bar and its
- * empty gaps are drag regions (`data-tauri-drag-region`); interactive controls
- * deliberately omit the attribute so they stay clickable. The telemetry-feed
- * status sits on the right, next to the window controls (see `FeedStatus`).
+ * The frameless window's titlebar. Navigation lives in the app rail now, so
+ * the bar is just the brand, the feed status, and the window controls — all of
+ * it (minus the controls) a drag region. The Settings dialog stays mounted
+ * here (opened from the rail via shell context) so it escapes the content
+ * area's stacking context.
  */
 export function Titlebar() {
   const { settingsOpen, setSettingsOpen } = useShell();
@@ -17,18 +17,6 @@ export function Titlebar() {
     <header className="titlebar" data-tauri-drag-region>
       <div className="tb-left" data-tauri-drag-region>
         <span className="brand-mark">BoxBox</span>
-        <div className="tb-nav">
-          <ModeSwitch />
-          <button
-            type="button"
-            className={`mode${settingsOpen ? " is-active" : ""}`}
-            aria-haspopup="dialog"
-            aria-expanded={settingsOpen}
-            onClick={() => setSettingsOpen(true)}
-          >
-            Settings
-          </button>
-        </div>
       </div>
 
       <div className="tb-spacer" data-tauri-drag-region />
