@@ -140,7 +140,9 @@ export function SettingsDialog({
   }, [open]);
 
   async function saveDiscord(): Promise<boolean> {
-    if (!IN_TAURI) return false;
+    // Nothing to save outside Tauri (the section isn't rendered) — report
+    // success so Apply can close the dialog.
+    if (!IN_TAURI) return true;
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const clean = await invoke<DiscordConfig>("set_discord_config", { config: discord });
@@ -213,7 +215,7 @@ export function SettingsDialog({
     setTargets((cur) => cur.filter((_, j) => j !== i));
   }
 
-  function apply(e: React.FormEvent) {
+  async function apply(e: React.FormEvent) {
     e.preventDefault();
     if (!canApply) return;
     setConnection({
@@ -225,7 +227,9 @@ export function SettingsDialog({
         port: Number(t.port),
       })),
     });
-    void saveDiscord();
+    // A rejected webhook URL must be SEEN: stay open with the error hint
+    // showing rather than closing on a save that silently failed.
+    if (!(await saveDiscord())) return;
     onClose();
   }
 

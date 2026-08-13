@@ -8,7 +8,7 @@
 //! webhook endpoints so a mistyped URL can't leak session data elsewhere.
 
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -27,6 +27,11 @@ const MAX_RESULT_ROWS: usize = 24;
 // Webhook rate limit head-room: pause between posts, retry once on 429.
 const POST_GAP: Duration = Duration::from_millis(400);
 const RETRY_AFTER_429: Duration = Duration::from_secs(2);
+// Bound on queued jobs. Posts take up to ~10s each against a slow Discord, so
+// an unbounded queue under a noisy (or spoofed) event stream would grow memory
+// without limit AND deliver a long tail of stale posts; past this depth the
+// listener drops new jobs instead (live beats late for race-control posts).
+const MAX_QUEUED_JOBS: usize = 16;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -77,17 +82,19 @@ pub enum DiscordJob {
 }
 
 /// Tauri-managed handle: the shared config (listener + commands read it), the
-/// poster's job channel, and where the config persists.
+/// poster's job channel, and where the config persists. The sender is bounded —
+/// enqueue with `try_send` and let a full queue drop the job.
 pub struct DiscordState {
     pub config: Arc<Mutex<DiscordConfig>>,
-    pub sender: Sender<DiscordJob>,
+    pub sender: SyncSender<DiscordJob>,
     pub path: PathBuf,
 }
 
 /// Spawn the poster thread. It re-checks the config per job, so a URL cleared
 /// after a job was queued posts nothing.
-pub fn spawn_poster(config: Arc<Mutex<DiscordConfig>>) -> Sender<DiscordJob> {
-    let (tx, rx): (Sender<DiscordJob>, Receiver<DiscordJob>) = mpsc::channel();
+pub fn spawn_poster(config: Arc<Mutex<DiscordConfig>>) -> SyncSender<DiscordJob> {
+    let (tx, rx): (SyncSender<DiscordJob>, Receiver<DiscordJob>) =
+        mpsc::sync_channel(MAX_QUEUED_JOBS);
     std::thread::spawn(move || {
         while let Ok(job) = rx.recv() {
             let cfg = match config.lock() {

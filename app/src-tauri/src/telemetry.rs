@@ -299,7 +299,7 @@ fn spawn_listener(
     engineer_enabled: Arc<AtomicBool>,
     forwards: Vec<SocketAddr>,
     log_path: Option<PathBuf>,
-    discord_tx: std::sync::mpsc::Sender<DiscordJob>,
+    discord_tx: std::sync::mpsc::SyncSender<DiscordJob>,
     discord_cfg: Arc<Mutex<DiscordConfig>>,
 ) -> Result<Listener, String> {
     // Validate the bind up front so a failure is reported to the caller (leaving
@@ -644,7 +644,11 @@ fn spawn_listener(
                                     .map(|c| c.post_incidents)
                                     .unwrap_or(false);
                                 if want {
-                                    let _ = discord_tx.send(DiscordJob::Incidents(announcements));
+                                    // try_send: a full queue (Discord slow/down) drops
+                                    // the job rather than blocking the UDP loop or
+                                    // growing memory — live beats late.
+                                    let _ =
+                                        discord_tx.try_send(DiscordJob::Incidents(announcements));
                                 }
                             }
                             // The official classification arrived: archive the finished
@@ -667,7 +671,7 @@ fn spawn_listener(
                                     })
                                     .unwrap_or(false);
                                 if want {
-                                    let _ = discord_tx.send(DiscordJob::Results(snap));
+                                    let _ = discord_tx.try_send(DiscordJob::Results(snap));
                                 }
                             }
                             // Run the rules + emit OFF the race lock. Each callout is
