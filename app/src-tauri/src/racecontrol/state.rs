@@ -540,13 +540,34 @@ impl SessionState {
         // chance to keep knocked-out drivers' times for the stacked qualifying
         // classification (vault: BoxBox Qualifying Knockout Behaviour). P1.3.
         self.capture_quali_segment();
+        // A crash inside the final hold-back window must still announce: compose
+        // its line from the OUTGOING session's incidents and drivers before the
+        // wipe erases them. The queued announcements survive the reset — the
+        // listener drains them right after this packet.
+        let due: Vec<String> = self
+            .pending_collision_posts
+            .drain(..)
+            .map(|(id, _)| id)
+            .collect();
+        for id in due {
+            if let Some(line) = self.collision_post_line(&id) {
+                let lap_num = self
+                    .incidents
+                    .iter()
+                    .find(|x| x.id == id)
+                    .and_then(|x| x.lap_num);
+                self.queue_announcement(MajorIncident {
+                    label: line,
+                    lap_num,
+                    cars: Vec::new(),
+                });
+            }
+        }
         self.session_uid = uid;
         self.session = None;
         self.drivers.clear();
         self.incidents.clear();
         self.damage_watch.clear();
-        self.pending_announcements.clear();
-        self.pending_collision_posts.clear();
         self.event_tally.clear();
         self.final_classification = None;
         self.num_active_cars = 0;
@@ -985,11 +1006,17 @@ impl SessionState {
             }
         }
 
-        // A real penalty naming both cars is usually the game's fault verdict on
-        // a recent collision: pin it to the matching card so the app can say who
-        // caused it and the delayed Discord post carries fault + sanction.
-        let mut linked_collision = false;
-        if code == "PENA" && e.penalty_type.is_some_and(is_real_penalty) {
+        // A real penalty for a COLLISION infringement (3–6: big/small collision,
+        // failed to hand back) naming both cars is the game's fault verdict on a
+        // recent contact: pin it to the matching card so the app can say who
+        // caused it and the delayed Discord post carries fault + sanction. A
+        // non-collision offence (blocking, corner-cutting overtake) between the
+        // same pair must NOT claim the crash.
+        let mut linked_id: Option<String> = None;
+        if code == "PENA"
+            && e.penalty_type.is_some_and(is_real_penalty)
+            && e.infringement_type.is_some_and(|i| (3..=6).contains(&i))
+        {
             if let (Some(offender), Some(other)) = (
                 e.vehicle_idx.filter(|&v| v != 255),
                 e.other_vehicle_idx.filter(|&v| v != 255),
@@ -1019,22 +1046,28 @@ impl SessionState {
                             .detail
                             .insert("faultPenaltyTime".to_string(), f64::from(t));
                     }
-                    linked_collision = true;
+                    linked_id = Some(prior.id.clone());
                     break;
                 }
             }
         }
+        // The penalty only rides the collision's post if that post is still
+        // pending; a late verdict (after the post flushed) must announce on its
+        // own or it would vanish entirely.
+        let rides_collision_post = linked_id
+            .as_deref()
+            .is_some_and(|id| self.pending_collision_posts.iter().any(|(pid, _)| pid == id));
 
         // Headline incidents worth announcing outside the app: red flags,
         // safety-car deployments (SCAR labels are already deployment-only), and
         // race-ending penalties — unless the penalty just became part of a
-        // collision's story, whose delayed post will carry it instead.
+        // still-pending collision post, which will carry it instead.
         // Collisions themselves never announce here: they go through
         // pending_collision_posts so fault and damage ride along.
         let major = match code.as_str() {
             "RDFL" | "SCAR" => true,
             "PENA" => {
-                !linked_collision
+                !rides_collision_post
                     && e.penalty_type
                         .is_some_and(|pt| RACE_ENDING_PENALTIES.contains(&pt))
             }
@@ -1918,6 +1951,54 @@ mod tests {
         let posts = st.take_pending_announcements();
         assert_eq!(posts.len(), 1);
         assert!(posts[0].label.contains("Drive-through to"), "{}", posts[0].label);
+    }
+
+    #[test]
+    fn non_collision_penalty_does_not_claim_fault() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&event_at("A", coll(3, 7, Some(1)), 10.0), 0.0);
+        // Blocking by slow driving (infringement 0) between the same pair: a
+        // sporting offence, not the crash's verdict.
+        st.ingest(&event_at("A", pena(3, 7, 4, 0, 5), 12.0), 0.0);
+        let s = st.snapshot();
+        assert!(
+            s.incidents[0].detail.get("faultCarIdx").is_none(),
+            "unrelated offence must not claim the collision"
+        );
+    }
+
+    #[test]
+    fn late_race_ending_penalty_still_announces_standalone() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&event_at("A", coll(3, 7, Some(2)), 10.0), 0.0);
+        // The collision's own post flushes first...
+        st.ingest(&tick("A", 19.0), 0.0);
+        assert_eq!(st.take_pending_announcements().len(), 1);
+        // ...then the verdict lands late (12s after contact, post already gone).
+        st.ingest(&event_at("A", pena(3, 7, 0, 3, 0), 22.0), 0.0);
+        let posts = st.take_pending_announcements();
+        assert_eq!(posts.len(), 1, "late drive-through announces on its own");
+        assert!(posts[0].label.starts_with("Drive-through:"), "{}", posts[0].label);
+        // The card still carries the fault for the app.
+        assert_eq!(
+            st.snapshot().incidents[0].detail.get("faultCarIdx"),
+            Some(&3.0)
+        );
+    }
+
+    #[test]
+    fn session_rollover_flushes_a_pending_collision_post() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&event_at("A", coll(3, 7, Some(2)), 10.0), 0.0);
+        // New session UID arrives 2s later — inside the hold-back window.
+        st.ingest(&session("B", 15), 0.0);
+        let posts = st.take_pending_announcements();
+        assert_eq!(posts.len(), 1, "the final-lap crash still posts");
+        assert!(posts[0].label.contains("Heavy contact"), "{}", posts[0].label);
+        assert!(st.snapshot().incidents.is_empty(), "new session starts clean");
     }
 
     #[test]
