@@ -212,8 +212,14 @@ export function reportFromSnapshot(snap: RaceSnapshot): ReportData {
   const session = sessionInfo(snap);
   const finalC = toFinalClassification(snap);
   const qualiC = toQualifyingClassification(snap);
-  const isQualifying = qualiC != null;
-  const baseClassification = qualiC ?? finalC ?? buildClassification(toDriverRows(snap));
+  // Route by CATEGORY, not by which projection happens to be non-null: a
+  // qualifying snapshot must never fall back to the race-style Final
+  // Classification (packet 8's race-time fields are garbage for a knockout
+  // session — "Car N" rows, negative gaps).
+  const isQualifying = session.category === "qualifying";
+  const baseClassification = isQualifying
+    ? (qualiC ?? buildClassification(toDriverRows(snap)))
+    : (finalC ?? buildClassification(toDriverRows(snap)));
   return assembleReport({
     header: {
       name: CATEGORY_LABEL[session.category ?? ""] ?? "Session",

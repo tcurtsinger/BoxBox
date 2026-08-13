@@ -739,6 +739,16 @@ fn auto_archive_session(
     if complete_exists {
         return;
     }
+    // Qualifying arrives as one game session PER SEGMENT (Q1/Q2/Q3 each carry
+    // their own UID and their own classification packet), but it's one event to
+    // the user. Keep a single evolving auto record: this segment's capture
+    // replaces the previous segment's auto capture for the same weekend — its
+    // snapshot carries the completed earlier segments in qualiSegments, so the
+    // stacked report loses nothing. Manual saves and pinned records are never
+    // touched.
+    for id in stale_quali_auto_records(a.list(), &value, &snap.session_uid) {
+        a.delete(&id);
+    }
     let id = a.save(&auto_session_name(snap), value, now_ms());
     if !store.save_if_changed(&a) {
         log_event(
@@ -755,18 +765,68 @@ fn auto_archive_session(
     );
 }
 
-/// "Suzuka — Race (auto)"-style display name for an automatic capture.
+/// "Suzuka — Race (auto)"-style display name for an automatic capture. All of
+/// qualifying is one event to the user, so its record is named for the weekend
+/// ("Mexico — Qualifying (auto)") rather than whichever segment saved last.
 fn auto_session_name(snap: &SessionSnapshot) -> String {
-    let session = snap
-        .session
-        .as_ref()
-        .map(|s| crate::tuner::labels::session_label(s.session_type));
+    use crate::racecontrol::state::{session_category_of, SessionCategory};
+    let session = snap.session.as_ref().map(|s| {
+        if session_category_of(Some(s.session_type)) == SessionCategory::Qualifying {
+            "Qualifying"
+        } else {
+            crate::tuner::labels::session_label(s.session_type)
+        }
+    });
     match (snap.track_name.as_deref(), session) {
         (Some(t), Some(s)) => format!("{t} — {s} (auto)"),
         (Some(t), None) => format!("{t} (auto)"),
         (None, Some(s)) => format!("{s} (auto)"),
         (None, None) => "Session (auto)".into(),
     }
+}
+
+/// The auto records an incoming qualifying-segment capture supersedes: earlier
+/// segments of the SAME weekend (same track, qualifying category, sessionType at
+/// or below the incoming one, different UID). Empty when the incoming snapshot
+/// isn't qualifying. Pinned records and manual saves are never candidates.
+fn stale_quali_auto_records(
+    records: &[SessionRecord],
+    incoming: &serde_json::Value,
+    incoming_uid: &str,
+) -> Vec<String> {
+    fn category(v: &serde_json::Value) -> Option<&str> {
+        v.get("sessionCategory").and_then(|c| c.as_str())
+    }
+    fn track_and_type(v: &serde_json::Value) -> (Option<i64>, i64) {
+        let s = v.get("session");
+        (
+            s.and_then(|s| s.get("trackId")).and_then(|t| t.as_i64()),
+            s.and_then(|s| s.get("sessionType"))
+                .and_then(|t| t.as_i64())
+                .unwrap_or(0),
+        )
+    }
+
+    if category(incoming) != Some("qualifying") {
+        return Vec::new();
+    }
+    let (track, stype) = track_and_type(incoming);
+    if track.is_none() {
+        return Vec::new();
+    }
+    records
+        .iter()
+        .filter(|r| !r.pinned && r.name.ends_with("(auto)"))
+        .filter(|r| category(&r.snapshot) == Some("qualifying"))
+        .filter(|r| {
+            let (rt, rs) = track_and_type(&r.snapshot);
+            rt == track && rs <= stype
+        })
+        .filter(|r| {
+            r.snapshot.get("sessionUid").and_then(|v| v.as_str()) != Some(incoming_uid)
+        })
+        .map(|r| r.id.clone())
+        .collect()
 }
 
 /// Start (or re-point) the UDP listener on `port`. A no-op if already bound there.
@@ -1274,6 +1334,64 @@ mod tests {
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    fn quali_snap(uid: &str, track: i64, stype: i64) -> serde_json::Value {
+        serde_json::json!({
+            "sessionUid": uid,
+            "sessionCategory": "qualifying",
+            "session": { "trackId": track, "sessionType": stype },
+        })
+    }
+
+    fn record(id: &str, name: &str, pinned: bool, snapshot: serde_json::Value) -> SessionRecord {
+        SessionRecord {
+            id: id.into(),
+            name: name.into(),
+            saved_at_ms: 0.0,
+            pinned,
+            snapshot,
+        }
+    }
+
+    #[test]
+    fn quali_segment_capture_replaces_the_previous_segments_auto_record() {
+        let records = vec![
+            // Q1's auto capture for the same weekend: superseded.
+            record("q1", "Mexico — Qualifying (auto)", false, quali_snap("A", 13, 5)),
+            // Pinned auto capture: never touched.
+            record("pin", "Mexico — Qualifying (auto)", true, quali_snap("B", 13, 5)),
+            // Manual save (no "(auto)" suffix): never touched.
+            record("man", "My Q1", false, quali_snap("C", 13, 5)),
+            // Different track: a different weekend.
+            record("other", "Suzuka — Qualifying (auto)", false, quali_snap("D", 21, 5)),
+            // A race auto record: not qualifying.
+            record(
+                "race",
+                "Mexico — Race (auto)",
+                false,
+                serde_json::json!({
+                    "sessionUid": "E",
+                    "sessionCategory": "race",
+                    "session": { "trackId": 13, "sessionType": 15 },
+                }),
+            ),
+        ];
+        // Q2 (type 6) of the same Mexico weekend arrives under its own UID.
+        let stale = stale_quali_auto_records(&records, &quali_snap("F", 13, 6), "F");
+        assert_eq!(stale, vec!["q1".to_string()]);
+
+        // A race capture supersedes nothing.
+        let none = stale_quali_auto_records(
+            &records,
+            &serde_json::json!({
+                "sessionUid": "G",
+                "sessionCategory": "race",
+                "session": { "trackId": 13, "sessionType": 15 },
+            }),
+            "G",
+        );
+        assert!(none.is_empty());
     }
 
     #[test]

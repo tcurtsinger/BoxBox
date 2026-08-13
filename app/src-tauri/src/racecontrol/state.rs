@@ -340,6 +340,17 @@ impl SessionState {
             Some(Body::CarTelemetry(t)) => self.ingest_telemetry(t),
             Some(Body::CarStatus(s)) => self.ingest_status(s),
             Some(Body::FinalClassification(f)) => {
+                // A classification with no session behind it is a ghost: a stray
+                // packet 8 landing right after a UID reset (loading screens replay
+                // it) or a connect mid-results has no names and no track. Ignore it
+                // entirely — accepting it would archive a garbage "Session (auto)"
+                // record AND burn the first-arrival latch below, so the segment's
+                // real capture would never stage.
+                let real = self.session.is_some()
+                    && self.drivers.values().any(|d| !d.name.is_empty());
+                if !real {
+                    return;
+                }
                 // First arrival of the official result: stage an automatic history
                 // capture so the finished session survives the next session's UID
                 // wipe (and an app close) even if nobody clicks Save. A duplicate
@@ -1532,6 +1543,7 @@ mod tests {
     fn final_classification_stages_auto_archive_once() {
         let mut st = SessionState::new();
         st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
         assert!(st.take_pending_auto_archive().is_none());
 
         st.ingest(&final_classification("A"), 1.0);
@@ -1550,6 +1562,7 @@ mod tests {
     fn staged_auto_archive_survives_the_next_sessions_wipe() {
         let mut st = SessionState::new();
         st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
         st.ingest(&final_classification("A"), 1.0);
         // The next session's first packet resets state before the listener drains.
         st.ingest(&session("B", 15), 2.0);
@@ -1557,6 +1570,34 @@ mod tests {
             .take_pending_auto_archive()
             .expect("staged capture survives the reset");
         assert_eq!(staged.session_uid, "A");
+    }
+
+    #[test]
+    fn stray_packet_8_after_a_reset_stages_no_ghost_archive() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 5), 0.0); // Q1
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&final_classification("A"), 1.0);
+        assert!(st.take_pending_auto_archive().is_some(), "real capture stages");
+
+        // A stray classification under the NEXT segment's UID arrives before any
+        // Session/Participants packet: the reset just wiped everything, so this
+        // would archive an empty shell ("Session (auto)", "Car N" rows). Refuse.
+        st.ingest(&final_classification("B"), 2.0);
+        assert!(
+            st.take_pending_auto_archive().is_none(),
+            "no session identity -> nothing worth archiving"
+        );
+
+        // The ghost was ignored outright (not latched), so once the segment is
+        // real (session + named drivers) its true classification still stages.
+        st.ingest(&session("B", 6), 3.0); // Q2
+        st.ingest(&participants("B", vec![participant(0, "Rossi", 1)]), 3.0);
+        st.ingest(&final_classification("B"), 4.0);
+        let staged = st
+            .take_pending_auto_archive()
+            .expect("the real segment capture still stages after a stray packet 8");
+        assert_eq!(staged.session_uid, "B");
     }
 
     #[test]

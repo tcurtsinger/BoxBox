@@ -46,13 +46,15 @@ export function ReportContent({
         <header className="report-head">
           <div>
             <div className="report-title-row">
-              <h2 className="report-title">Race report</h2>
+              <h2 className="report-title">{isQualifying ? "Qualifying report" : "Race report"}</h2>
               <span className={`report-status ${isFinal ? "is-final" : "is-provisional"}`}>
                 {isFinal ? "Final" : "Provisional"}
               </span>
             </div>
             <p className="report-session">
-              {header.name} · {header.track} · {header.totalLaps || "—"} laps
+              {header.name} · {header.track}
+              {/* A lap count is race framing; qualifying is a timed session. */}
+              {!isQualifying && <> · {header.totalLaps || "—"} laps</>}
             </p>
           </div>
           <div className="report-actions">
@@ -74,11 +76,11 @@ export function ReportContent({
         </header>
 
         <dl className="report-summary">
-          <Fact label="Winner" value={summary.winner} />
+          <Fact label={isQualifying ? "Pole" : "Winner"} value={summary.winner} />
           <Fact label="Fastest lap" value={summary.fastestLapName} sub={summary.fastestLapTime} />
           <Fact label="Incidents" value={String(summary.incidentCount)} />
           <Fact label="Penalties" value={String(summary.penaltyCount)} />
-          <Fact label="Pit stops" value={String(summary.pitStops)} />
+          {!isQualifying && <Fact label="Pit stops" value={String(summary.pitStops)} />}
         </dl>
 
         <section className="report-section">
@@ -196,12 +198,15 @@ export function ReportsView() {
   const { grid, session, finalClassification, qualiClassification } = useSharedRaceState();
   const { incidents } = useIncidents(sample);
 
-  const isQualifying = qualiClassification != null;
-  // Prefer the stacked qualifying classification (P1.3); else the authoritative
-  // Final Classification (packet 8); else the live grid projection, provisional
-  // until packet 8 arrives.
+  // Route by CATEGORY: qualifying renders the stacked segment classification
+  // (P1.3) and must never fall back to the race-style Final Classification —
+  // packet 8's race-time fields are garbage for a knockout session. Races use
+  // packet 8 when it arrives, else the live grid projection (provisional).
+  const isQualifying = session.category === "qualifying";
   const isFinal = sample || finalClassification != null;
-  const baseClassification = qualiClassification ?? finalClassification ?? buildClassification(grid);
+  const baseClassification = isQualifying
+    ? (qualiClassification ?? buildClassification(grid))
+    : (finalClassification ?? buildClassification(grid));
 
   // Called before the early return so hook order stays stable across renders.
   const { rowProps } = useRovingGrid(baseClassification.length);
