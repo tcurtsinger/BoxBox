@@ -38,6 +38,12 @@
   font-size: 12px;
   color: var(--faint);
 }
+.feed-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: none;
+}
 
 .feed-list {
   display: flex;
