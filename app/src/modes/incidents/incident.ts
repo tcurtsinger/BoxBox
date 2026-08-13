@@ -27,8 +27,12 @@ export interface CarRef {
 export interface UIIncident {
   id: string;
   lap: number | null;
-  code: string; // raw event code (COLL/PENA/SCAR/RTMT/MANUAL/…); tone via toneForCode
+  code: string; // raw event code (COLL/PENA/SCAR/RTMT/MANUAL/…)
   label: string;
+  /** How hard this should pull the steward's eye — drives the dot colour. */
+  tone: Tone;
+  /** The sanction the game already issued ("+5s", "Drive-through"), or null. */
+  sanction: string | null;
   cars: CarRef[];
   detail: string;
   source: IncidentSource;
@@ -37,19 +41,57 @@ export interface UIIncident {
   outcome: string | null; // the ruling text on an approved penalty
 }
 
-// Severity tone per code. Covers the live raw codes and the sample set;
-// informational events (fastest lap, chequered flag, …) fall through to muted.
-const TONE_BY_CODE: Record<string, Tone> = {
-  COLL: "danger",
-  RDFL: "danger",
-  PENA: "caution",
-  SCAR: "caution",
-  TLIM: "caution",
-  MANUAL: "caution",
-};
+/** Tone graded by what actually happened, not just the event code: collisions
+ *  by the game's severity byte (2 heavy / 1 normal / 0 brush), penalties by how
+ *  big the sanction is, track limits muted (they're the hideable noise). */
+export function toneForIncident(i: {
+  code: string;
+  severity?: number | null;
+  penaltyType?: number | null;
+}): Tone {
+  switch (i.code) {
+    case "COLL":
+      if (i.severity === 2) return "danger";
+      if (i.severity === 0) return "muted";
+      return "caution"; // severity 1, or a format that carries none
+    case "RDFL":
+      return "danger";
+    case "PENA":
+      // Drive-through / stop-go / DSQ / black flag end races: danger.
+      return i.penaltyType != null && [0, 1, 6, 17].includes(i.penaltyType)
+        ? "danger"
+        : "caution";
+    case "SCAR":
+    case "MANUAL":
+      return "caution";
+    default:
+      return "muted"; // TLIM, RTMT, informational events
+  }
+}
 
-export function toneForCode(code: string): Tone {
-  return TONE_BY_CODE[code] ?? "muted";
+/** Short chip for the sanction the game issued with a PENA event, or null when
+ *  the penalty type carries no headline sanction. penaltyType 4 is a time
+ *  penalty whose `time` byte is the seconds. */
+export function sanctionLabel(
+  penaltyType: number | undefined,
+  time: number | undefined,
+): string | null {
+  switch (penaltyType) {
+    case 0:
+      return "Drive-through";
+    case 1:
+      return "Stop-go";
+    case 2:
+      return "Grid penalty";
+    case 4:
+      return time != null && time > 0 ? `+${time}s` : "Time penalty";
+    case 6:
+      return "Disqualified";
+    case 17:
+      return "Black flag";
+    default:
+      return null;
+  }
 }
 
 /** A decision has been recorded (penalty or no action). */

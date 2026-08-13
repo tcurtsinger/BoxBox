@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useShell } from "../../shell/shell-context";
 import { useIncidents } from "./useIncidents";
-import { carLabel, isDecided, toneForCode, type UIIncident } from "./incident";
+import { carLabel, isDecided, type UIIncident } from "./incident";
 import { FlagDialog } from "./FlagDialog";
 import "./incidents.css";
 
@@ -114,11 +114,12 @@ function FeedItem({ inc, onSend }: { inc: UIIncident; onSend: () => Promise<bool
   return (
     <article className={`feed-item${decided ? " is-decided" : ""}`}>
       <span className="feed-lap mono">{inc.lap != null ? `L${inc.lap}` : "—"}</span>
-      <span className={`feed-dot tone-${toneForCode(inc.code)}`} aria-hidden="true" />
+      <span className={`feed-dot tone-${inc.tone}`} aria-hidden="true" />
 
       <div className="feed-main">
         <div className="feed-top">
           <span className="feed-type">{inc.label}</span>
+          {inc.sanction && <span className="feed-sanction">{inc.sanction}</span>}
           {inc.source === "manual" && <span className="feed-flagged">Manual</span>}
           {inc.status === "logged" && (
             <button

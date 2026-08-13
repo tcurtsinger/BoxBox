@@ -5,11 +5,28 @@
  * cross-link, plus surname for the label), and the numeric detail map is folded
  * into a readable line.
  */
-import type { CarRef, IncidentSource, IncidentStatus, UIIncident } from "./incident";
+import {
+  sanctionLabel,
+  toneForIncident,
+  type CarRef,
+  type IncidentSource,
+  type IncidentStatus,
+  type UIIncident,
+} from "./incident";
 
 export interface RawRuling {
   outcome: string;
   decidedAtMs: number;
+}
+
+/** Damage one car picked up from a collision, percent points per part. */
+export interface RawIncidentDamage {
+  carIndex: number;
+  frontWing: number;
+  rearWing: number;
+  floor: number;
+  diffuser: number;
+  sidepod: number;
 }
 
 /** The wire shape of a Rust `Incident` (serde camelCase). */
@@ -22,6 +39,8 @@ export interface RawIncident {
   label: string;
   carIndices: number[];
   detail: Record<string, number>;
+  /** Present on collisions once the damage watcher has attributed something. */
+  damage?: RawIncidentDamage[];
   status: IncidentStatus;
   note: string;
   ruling: RawRuling | null;
@@ -62,15 +81,18 @@ function resolveCar(index: number, byIndex: Map<number, IncidentDriver>): CarRef
   return { index, no: d.raceNumber, name: surname(d.nameOverride ?? d.name) };
 }
 
-// Detail keys worth surfacing, in display order. The label already carries the
-// infringement; this just adds the salient numbers.
+// Detail keys worth surfacing, in display order. Severity is folded into the
+// label ("Heavy contact") and penaltyType+time into the sanction chip, so only
+// leftovers that add information — and only non-zero ones — surface here.
 function formatDetail(detail: Record<string, number>): string {
   const parts: string[] = [];
-  if (detail.severity != null) parts.push(`Severity ${detail.severity}`);
   // The event's time byte is "time gained, or time spent doing action" (spec:
-  // Penalty union) — NOT the sanction, so a bare "3s" would read as the penalty.
-  if (detail.time != null) parts.push(`time ${detail.time}s`);
-  if (detail.placesGained != null) {
+  // Penalty union). For a time penalty (type 4) it's the sanction and lives in
+  // the chip; otherwise it's context.
+  if (detail.time != null && detail.time > 0 && detail.penaltyType !== 4) {
+    parts.push(`~${detail.time}s gained`);
+  }
+  if (detail.placesGained != null && detail.placesGained > 0) {
     parts.push(`${detail.placesGained} place${detail.placesGained === 1 ? "" : "s"} gained`);
   }
   if (detail.speed != null) parts.push(`${Math.round(detail.speed)} km/h`);
@@ -83,6 +105,32 @@ function formatDetail(detail: Record<string, number>): string {
     parts.push(`rewound to ${m}:${s}`);
   }
   return parts.join(" · ");
+}
+
+// What the crash cost, per car: "Vance: front wing +45%, floor +12%".
+const DAMAGE_PARTS: [keyof Omit<RawIncidentDamage, "carIndex">, string][] = [
+  ["frontWing", "front wing"],
+  ["rearWing", "rear wing"],
+  ["floor", "floor"],
+  ["diffuser", "diffuser"],
+  ["sidepod", "sidepod"],
+];
+
+function formatDamage(
+  damage: RawIncidentDamage[] | undefined,
+  byIndex: Map<number, IncidentDriver>,
+): string {
+  if (!damage || damage.length === 0) return "";
+  return damage
+    .map((d) => {
+      const parts = DAMAGE_PARTS.filter(([key]) => d[key] > 0).map(
+        ([key, label]) => `${label} +${d[key]}%`,
+      );
+      if (parts.length === 0) return "";
+      return `${resolveCar(d.carIndex, byIndex).name}: ${parts.join(", ")}`;
+    })
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /** Every known driver as a flag-dialog option. */
@@ -102,8 +150,17 @@ export function toUIIncidents(snap: IncidentSnapshot): UIIncident[] {
     lap: raw.lapNum,
     code: raw.code,
     label: raw.label,
+    tone: toneForIncident({
+      code: raw.code,
+      severity: raw.detail.severity ?? null,
+      penaltyType: raw.detail.penaltyType ?? null,
+    }),
+    sanction:
+      raw.code === "PENA" ? sanctionLabel(raw.detail.penaltyType, raw.detail.time) : null,
     cars: raw.carIndices.map((i) => resolveCar(i, byIndex)),
-    detail: formatDetail(raw.detail),
+    detail: [formatDetail(raw.detail), formatDamage(raw.damage, byIndex)]
+      .filter(Boolean)
+      .join(" · "),
     source: raw.source,
     status: raw.status,
     note: raw.note,

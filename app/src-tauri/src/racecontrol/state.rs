@@ -14,7 +14,9 @@ use crate::packets::{
     TyreStintEntry,
 };
 
-use super::labels::{incident_label, infringement_type, is_real_penalty, penalty_type};
+use super::labels::{
+    collision_label, incident_label, infringement_type, is_real_penalty, penalty_type,
+};
 
 /// Broad session kind, derived from Session.sessionType. Sprint shootouts are
 /// knockout-style qualifying, so they fold into "qualifying".
@@ -62,6 +64,30 @@ pub struct Ruling {
     pub decided_at_ms: f64,
 }
 
+/// Damage one car picked up in the seconds after a collision, in percent points
+/// per part — the watcher folds in the worst delta seen inside its window, so
+/// the card answers "what did that contact actually cost them".
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncidentCarDamage {
+    pub car_index: u8,
+    pub front_wing: u8,
+    pub rear_wing: u8,
+    pub floor: u8,
+    pub diffuser: u8,
+    pub sidepod: u8,
+}
+
+impl IncidentCarDamage {
+    fn any(&self) -> bool {
+        self.front_wing > 0
+            || self.rear_wing > 0
+            || self.floor > 0
+            || self.diffuser > 0
+            || self.sidepod > 0
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Incident {
@@ -73,9 +99,24 @@ pub struct Incident {
     pub label: String,
     pub car_indices: Vec<u8>,
     pub detail: HashMap<String, f64>,
+    /// Per-car damage attributed to this incident (collisions only; empty and
+    /// omitted from the JSON otherwise, so older saved snapshots match).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub damage: Vec<IncidentCarDamage>,
     pub status: IncidentStatus,
     pub note: String,
     pub ruling: Option<Ruling>,
+}
+
+/// A pending "what did the crash cost" measurement: the involved car's damage
+/// the moment the COLL event landed, compared against the CarDamage packets
+/// that follow inside the watch window.
+#[derive(Debug, Clone)]
+struct DamageWatch {
+    incident_id: String,
+    car_index: u8,
+    started: f64, // session time of the collision
+    base: IncidentCarDamage,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -168,6 +209,9 @@ pub struct DriverState {
     pub tyre_wear: Vec<f32>,
     pub front_wing_damage: u8,
     pub rear_wing_damage: u8,
+    pub floor_damage: u8,
+    pub diffuser_damage: u8,
+    pub sidepod_damage: u8,
     pub engine_damage: u8,
     pub gearbox_damage: u8,
     pub power_unit_wear: PowerUnitWear,
@@ -262,6 +306,9 @@ pub struct SessionState {
     // weekend's qualifying begins on a different track. P1.3.
     quali_segments: HashMap<u8, Vec<QualiSegmentEntry>>,
     quali_track_id: Option<i8>,
+    // Open damage watches: one per car per recent collision, measuring what the
+    // contact cost against the CarDamage packets that follow. Bounded.
+    damage_watch: Vec<DamageWatch>,
     // Snapshot staged for automatic history capture, taken the moment the official
     // FinalClassification (packet 8) first arrives for a session. Drained by the
     // listener (telemetry.rs), which archives it off this state's lock. Deliberately
@@ -275,6 +322,19 @@ pub struct SessionState {
 const MAX_INCIDENTS: usize = 1000;
 // Exact-duplicate auto incidents within this window (seconds) are suppressed.
 const INCIDENT_DEDUPE_SECS: f64 = 2.0;
+// Collisions between the same pair within this window fold into one card: the
+// game emits one COLL per perspective (A-hits-B and B-hits-A), and one per
+// contact in a multi-hit shunt — to a steward that's a single incident.
+const COLL_MERGE_SECS: f64 = 5.0;
+// How many trailing incidents that merge scans (other cars' incidents can
+// interleave inside the window).
+const COLL_MERGE_SCAN: usize = 12;
+// How long after a collision CarDamage deltas are still attributed to it. Long
+// enough for the game's ~2 Hz damage packets to land a few times, short enough
+// that unrelated wear doesn't get pinned on the crash.
+const DAMAGE_WATCH_SECS: f64 = 6.0;
+// Bound on open damage watches (a flood of collisions can't grow this).
+const MAX_DAMAGE_WATCHES: usize = 48;
 
 // The event codes the F1 title emits. Only these are tallied, so a spoofed packet
 // with an arbitrary 4-char code can't grow the tally map without bound.
@@ -425,6 +485,7 @@ impl SessionState {
         self.session = None;
         self.drivers.clear();
         self.incidents.clear();
+        self.damage_watch.clear();
         self.event_tally.clear();
         self.final_classification = None;
         self.num_active_cars = 0;
@@ -617,14 +678,70 @@ impl SessionState {
     }
 
     fn ingest_damage(&mut self, dmg: &CarDamageData) {
+        self.apply_damage_watches(dmg);
         for c in &dmg.cars {
             let d = self.driver_mut(c.index as u8);
             d.tyre_wear = c.tyres_wear.clone();
             d.front_wing_damage = c.front_left_wing_damage.max(c.front_right_wing_damage);
             d.rear_wing_damage = c.rear_wing_damage;
+            d.floor_damage = c.floor_damage;
+            d.diffuser_damage = c.diffuser_damage;
+            d.sidepod_damage = c.sidepod_damage;
             d.engine_damage = c.engine_damage;
             d.gearbox_damage = c.gear_box_damage;
             d.power_unit_wear = c.power_unit_wear.clone();
+        }
+    }
+
+    /// Fold this damage packet into any open collision watches: the increase over
+    /// the car's pre-crash baseline (worst seen inside the window) becomes the
+    /// incident's per-car damage record. Expired watches (and ones orphaned by a
+    /// rewound clock) drop first.
+    fn apply_damage_watches(&mut self, dmg: &CarDamageData) {
+        if self.damage_watch.is_empty() {
+            return;
+        }
+        let now = self.session_time;
+        self.damage_watch
+            .retain(|w| (0.0..DAMAGE_WATCH_SECS).contains(&(now - w.started)));
+        // Clone the (small, bounded) watch list so incidents can be mutated below.
+        let watches = self.damage_watch.clone();
+        for w in &watches {
+            let Some(c) = dmg.cars.iter().find(|c| c.index == w.car_index as usize) else {
+                continue;
+            };
+            let delta = IncidentCarDamage {
+                car_index: w.car_index,
+                front_wing: c
+                    .front_left_wing_damage
+                    .max(c.front_right_wing_damage)
+                    .saturating_sub(w.base.front_wing),
+                rear_wing: c.rear_wing_damage.saturating_sub(w.base.rear_wing),
+                floor: c.floor_damage.saturating_sub(w.base.floor),
+                diffuser: c.diffuser_damage.saturating_sub(w.base.diffuser),
+                sidepod: c.sidepod_damage.saturating_sub(w.base.sidepod),
+            };
+            if !delta.any() {
+                continue;
+            }
+            let Some(inc) = self.incidents.iter_mut().find(|i| i.id == w.incident_id) else {
+                continue;
+            };
+            let entry = match inc.damage.iter_mut().find(|d| d.car_index == w.car_index) {
+                Some(e) => e,
+                None => {
+                    inc.damage.push(IncidentCarDamage {
+                        car_index: w.car_index,
+                        ..Default::default()
+                    });
+                    inc.damage.last_mut().expect("just pushed")
+                }
+            };
+            entry.front_wing = entry.front_wing.max(delta.front_wing);
+            entry.rear_wing = entry.rear_wing.max(delta.rear_wing);
+            entry.floor = entry.floor.max(delta.floor);
+            entry.diffuser = entry.diffuser.max(delta.diffuser);
+            entry.sidepod = entry.sidepod.max(delta.sidepod);
         }
     }
 
@@ -694,7 +811,64 @@ impl SessionState {
             detail.insert("flashbackSessionTime".to_string(), t as f64);
         }
 
-        let lap_num = e.lap_num.map(|v| v as u32);
+        // Collisions: canonical pair order, so both perspectives of one crash
+        // carry the same car list and can merge below.
+        if code == "COLL" {
+            car_indices.sort_unstable();
+        }
+
+        // Stamp a lap on every incident, not just the PENA ones that carry it on
+        // the wire: the primary involved car's current lap, else the leader's
+        // (session-wide events like a safety car involve no car).
+        let lap_num = e.lap_num.map(|v| v as u32).or_else(|| {
+            e.vehicle_idx
+                .filter(|&v| v != 255)
+                .and_then(|i| self.drivers.get(&i))
+                .map(|d| d.current_lap_num)
+                .filter(|&l| l > 0)
+                .or_else(|| {
+                    self.drivers
+                        .values()
+                        .map(|d| d.current_lap_num)
+                        .max()
+                        .filter(|&l| l > 0)
+                })
+                .map(|l| l as u32)
+        });
+
+        // Fold a repeat of the same collision into the existing card, keeping the
+        // WORST severity. Only undecided auto cards merge — once a steward has
+        // flagged or ruled on one, it's part of the audit trail and a later hit
+        // becomes a new incident.
+        if code == "COLL" {
+            let mut merged = false;
+            for prior in self.incidents.iter_mut().rev().take(COLL_MERGE_SCAN) {
+                let dt = session_time - prior.session_time;
+                if !(0.0..COLL_MERGE_SECS).contains(&dt) {
+                    break; // out of the window (or a rewound clock): all older too
+                }
+                if prior.source != IncidentSource::Auto
+                    || prior.code != "COLL"
+                    || prior.status != IncidentStatus::Logged
+                    || prior.car_indices != car_indices
+                {
+                    continue;
+                }
+                if let Some(sev) = e.severity {
+                    let prev = prior.detail.get("severity").copied().unwrap_or(-1.0);
+                    if f64::from(sev) > prev {
+                        prior.detail.insert("severity".to_string(), f64::from(sev));
+                        prior.label = collision_label(Some(sev)).to_string();
+                    }
+                }
+                merged = true;
+                break;
+            }
+            if merged {
+                return;
+            }
+        }
+
         // Suppress an exact-duplicate auto incident right after another (same code,
         // cars, lap and detail within a short window) so a flood of identical
         // spammed events can't fill the log (P2.2).
@@ -714,6 +888,33 @@ impl SessionState {
 
         let id = self.next_incident_id;
         self.next_incident_id += 1;
+
+        // Open a damage watch per involved car on a collision: baseline is the
+        // car's damage as of the last CarDamage packet, so the packets that
+        // follow show what THIS contact cost. Unknown cars (no state yet) are
+        // skipped — a zero baseline would pin their whole damage history on this
+        // one crash.
+        if code == "COLL" && self.damage_watch.len() < MAX_DAMAGE_WATCHES {
+            for &car in &car_indices {
+                let Some(d) = self.drivers.get(&car) else {
+                    continue;
+                };
+                self.damage_watch.push(DamageWatch {
+                    incident_id: id.to_string(),
+                    car_index: car,
+                    started: session_time,
+                    base: IncidentCarDamage {
+                        car_index: car,
+                        front_wing: d.front_wing_damage,
+                        rear_wing: d.rear_wing_damage,
+                        floor: d.floor_damage,
+                        diffuser: d.diffuser_damage,
+                        sidepod: d.sidepod_damage,
+                    },
+                });
+            }
+        }
+
         self.incidents.push(Incident {
             id: id.to_string(),
             source: IncidentSource::Auto,
@@ -723,6 +924,7 @@ impl SessionState {
             label,
             car_indices,
             detail,
+            damage: Vec::new(),
             status: IncidentStatus::Logged,
             note: String::new(),
             ruling: None,
@@ -746,6 +948,11 @@ impl SessionState {
 
     // The incident-log label for an event, or None to keep it out of the log.
     fn event_incident_label(&self, e: &EventData) -> Option<String> {
+        if e.code == "COLL" {
+            // Graded by the severity byte where the format carries one, so a
+            // brush and a shunt stop reading identically in the feed.
+            return Some(collision_label(e.severity).to_string());
+        }
         if e.code == "SCAR" {
             // Real safety-car deployments only (event type 0 = Deployed).
             if e.safety_car_event_type != Some(0) {
@@ -833,6 +1040,7 @@ impl SessionState {
                 .unwrap_or_else(|| "Manual incident".to_string()),
             car_indices,
             detail: HashMap::new(),
+            damage: Vec::new(),
             status: IncidentStatus::Flagged,
             note: note.map(|s| capped(&s, MAX_NOTE_LEN)).unwrap_or_default(),
             ruling: None,
@@ -1161,6 +1369,23 @@ mod tests {
         pkt(3, uid, Body::Event(e))
     }
 
+    /// An event at an explicit session time (the shared header pins 10.0).
+    fn event_at(uid: &str, e: EventData, t: f32) -> ParsedPacket {
+        let mut p = pkt(3, uid, Body::Event(e));
+        p.header.session_time = t;
+        p
+    }
+
+    fn coll(a: u8, b: u8, severity: Option<u8>) -> EventData {
+        EventData {
+            code: "COLL".into(),
+            vehicle_idx: Some(a),
+            other_vehicle_idx: Some(b),
+            severity,
+            ..Default::default()
+        }
+    }
+
     fn final_classification(uid: &str) -> ParsedPacket {
         pkt(
             8,
@@ -1280,11 +1505,135 @@ mod tests {
         let s = st.snapshot();
         assert_eq!(s.incidents.len(), 1);
         let inc = &s.incidents[0];
-        assert_eq!(inc.label, "Collision");
+        assert_eq!(inc.label, "Heavy contact", "severity 2 grades the label");
         assert_eq!(inc.car_indices, vec![3, 7]);
         assert_eq!(inc.status, IncidentStatus::Logged);
         assert_eq!(inc.detail.get("severity"), Some(&2.0));
         assert_eq!(st.event_tally.get("COLL"), Some(&1));
+    }
+
+    #[test]
+    fn mirrored_collision_pair_merges_keeping_worst_severity() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        // One crash, both perspectives: (7,3) light then (3,7) heavy, 1s apart.
+        st.ingest(&event_at("A", coll(7, 3, Some(0)), 10.0), 0.0);
+        st.ingest(&event_at("A", coll(3, 7, Some(2)), 11.0), 0.0);
+        let s = st.snapshot();
+        assert_eq!(s.incidents.len(), 1, "one crash, one card");
+        assert_eq!(s.incidents[0].label, "Heavy contact");
+        assert_eq!(s.incidents[0].car_indices, vec![3, 7], "canonical pair order");
+        assert_eq!(s.incidents[0].detail.get("severity"), Some(&2.0));
+        assert_eq!(st.event_tally.get("COLL"), Some(&2), "both hits still tallied");
+    }
+
+    #[test]
+    fn same_pair_collision_outside_window_is_a_new_incident() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&event_at("A", coll(3, 7, Some(1)), 10.0), 0.0);
+        st.ingest(&event_at("A", coll(3, 7, Some(1)), 10.0 + COLL_MERGE_SECS as f32), 0.0);
+        assert_eq!(st.snapshot().incidents.len(), 2, "later contact is its own card");
+    }
+
+    #[test]
+    fn collision_merge_skips_steward_touched_cards() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&event_at("A", coll(3, 7, Some(1)), 10.0), 0.0);
+        let id = st.snapshot().incidents[0].id.clone();
+        st.flag_for_review(&id, 1.0);
+        st.ingest(&event_at("A", coll(3, 7, Some(2)), 11.0), 0.0);
+        let s = st.snapshot();
+        assert_eq!(s.incidents.len(), 2, "flagged card is frozen; repeat logs anew");
+        assert_eq!(s.incidents[0].label, "Contact", "flagged card unchanged");
+        assert_eq!(s.incidents[1].label, "Heavy contact");
+    }
+
+    /// A CarDamage packet at an explicit session time.
+    fn damage_at(uid: &str, cars: Vec<CarDamageEntry>, t: f32) -> ParsedPacket {
+        let mut p = pkt(10, uid, Body::CarDamage(CarDamageData { cars }));
+        p.header.session_time = t;
+        p
+    }
+
+    fn dmg_entry(index: usize, fw: u8, floor: u8) -> CarDamageEntry {
+        CarDamageEntry {
+            index,
+            front_left_wing_damage: fw,
+            floor_damage: floor,
+            tyres_wear: vec![0.0; 4],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn collision_watch_attributes_damage_to_the_incident() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(
+            &participants("A", vec![participant(0, "A", 1), participant(1, "B", 2)]),
+            0.0,
+        );
+        // Pre-crash baseline: car 1 already carries 10% front wing.
+        st.ingest(&damage_at("A", vec![dmg_entry(0, 0, 0), dmg_entry(1, 10, 0)], 9.0), 0.0);
+        // The crash, then the next damage packet shows car 1 at 55% FW + 12% floor.
+        st.ingest(&event_at("A", coll(1, 0, Some(2)), 10.0), 0.0);
+        st.ingest(
+            &damage_at("A", vec![dmg_entry(0, 0, 0), dmg_entry(1, 55, 12)], 11.0),
+            0.0,
+        );
+        let s = st.snapshot();
+        let inc = &s.incidents[0];
+        assert_eq!(inc.damage.len(), 1, "only the damaged car is recorded");
+        let d = &inc.damage[0];
+        assert_eq!(d.car_index, 1);
+        assert_eq!(d.front_wing, 45, "delta over the pre-crash baseline");
+        assert_eq!(d.floor, 12);
+
+        // A later packet OUTSIDE the window must not grow the attribution.
+        st.ingest(
+            &damage_at("A", vec![dmg_entry(0, 0, 0), dmg_entry(1, 80, 40)], 20.0),
+            0.0,
+        );
+        let s = st.snapshot();
+        assert_eq!(s.incidents[0].damage[0].front_wing, 45, "watch expired");
+    }
+
+    #[test]
+    fn incident_laps_stamp_from_the_involved_car() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(
+            &participants("A", vec![participant(0, "A", 1), participant(1, "B", 2)]),
+            0.0,
+        );
+        st.ingest(
+            &laps(
+                "A",
+                vec![lap_entry(0, 1, 1, 0, 12), lap_entry(1, 2, 2, 0, 11)],
+            ),
+            0.0,
+        );
+        // Collision: the primary car (index 1) is on lap 11.
+        st.ingest(&event_at("A", coll(1, 0, Some(1)), 10.0), 0.0);
+        // Safety car involves no car -> leader's lap (12).
+        st.ingest(
+            &event_at(
+                "A",
+                EventData {
+                    code: "SCAR".into(),
+                    safety_car_type: Some(1),
+                    safety_car_event_type: Some(0),
+                    ..Default::default()
+                },
+                11.0,
+            ),
+            1.0,
+        );
+        let s = st.snapshot();
+        assert_eq!(s.incidents[0].lap_num, Some(11), "primary involved car's lap");
+        assert_eq!(s.incidents[1].lap_num, Some(12), "leader-lap fallback");
     }
 
     #[test]

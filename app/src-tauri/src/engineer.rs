@@ -746,6 +746,7 @@ mod tests {
                 label: "Corner cutting, gained time".into(),
                 car_indices: vec![penalised, other],
                 detail,
+                damage: Vec::new(),
                 status: IncidentStatus::Logged,
                 note: String::new(),
                 ruling: None,

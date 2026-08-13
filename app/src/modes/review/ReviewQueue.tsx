@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useShell } from "../../shell/shell-context";
 import { useIncidents } from "../incidents/useIncidents";
-import { toneForCode, type CarRef, type UIIncident } from "../incidents/incident";
+import { type CarRef, type UIIncident } from "../incidents/incident";
 import "./review.css";
 
 /** Immutably drop a key from a string-keyed record (for per-incident maps). */
@@ -147,8 +147,9 @@ function PendingCard({
     <article className="rev-card">
       <header className="rev-head">
         <span className="rev-lap mono">{inc.lap != null ? `L${inc.lap}` : "—"}</span>
-        <span className={`rev-dot tone-${toneForCode(inc.code)}`} aria-hidden="true" />
+        <span className={`rev-dot tone-${inc.tone}`} aria-hidden="true" />
         <span className="rev-type">{inc.label}</span>
+        {inc.sanction && <span className="rev-sanction">{inc.sanction}</span>}
         <span className={`rev-source rev-source-${inc.source}`}>
           {inc.source === "auto" ? "Auto" : "Flagged"}
         </span>

@@ -3,10 +3,9 @@
 //! packets into the steward-facing incident log.
 
 /// Event codes promoted into the incident log (the rest are tallied only).
-/// SCAR and PENA are handled separately (sub-type filtering).
+/// SCAR, PENA and COLL are handled separately (sub-type / severity labels).
 pub fn incident_label(code: &str) -> Option<&'static str> {
     Some(match code {
-        "COLL" => "Collision",
         "RTMT" => "Retirement",
         "RDFL" => "Red Flag",
         "DRSD" => "DRS Disabled",
@@ -20,6 +19,17 @@ pub fn incident_label(code: &str) -> Option<&'static str> {
         "FLBK" => "Flashback",
         _ => return None,
     })
+}
+
+/// Collision label graded by the COLL event's severity byte (2026 format only;
+/// the 2025 format carries no severity, so it lands on the plain middle grade).
+/// Ordering inferred from the encoding: higher = heavier contact.
+pub fn collision_label(severity: Option<u8>) -> &'static str {
+    match severity {
+        Some(0) => "Light contact",
+        Some(2) => "Heavy contact",
+        _ => "Contact",
+    }
 }
 
 /// penaltyType values that are real sporting penalties. Warnings (5) and lap

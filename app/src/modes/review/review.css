@@ -105,6 +105,18 @@
   font-weight: 600;
   color: var(--ink);
 }
+/* The sanction the game already issued, mirrored from the feed chip. */
+.rev-sanction {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in oklch, var(--data-caution) 40%, transparent);
+  background: var(--data-caution-tint);
+  color: var(--data-caution);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
 .rev-source {
   margin-left: auto;
   padding: 1px 7px;
