@@ -1,13 +1,14 @@
 import { ModeSwitch } from "./ModeSwitch";
 import { WindowControls } from "./WindowControls";
 import { SettingsDialog } from "./SettingsDialog";
+import { FeedStatus } from "./FeedStatus";
 import { useShell } from "./shell-context";
 
 /**
  * The frameless window's titlebar, doubling as the app top bar. The bar and its
  * empty gaps are drag regions (`data-tauri-drag-region`); interactive controls
  * deliberately omit the attribute so they stay clickable. The telemetry-feed
- * status now lives at the foot of the section rail (see `RailFeedStatus`).
+ * status sits on the right, next to the window controls (see `FeedStatus`).
  */
 export function Titlebar() {
   const { settingsOpen, setSettingsOpen } = useShell();
@@ -33,6 +34,7 @@ export function Titlebar() {
       <div className="tb-spacer" data-tauri-drag-region />
 
       <div className="tb-right">
+        <FeedStatus />
         <WindowControls />
       </div>
 

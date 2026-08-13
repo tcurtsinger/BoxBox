@@ -27,6 +27,16 @@ export function ChevronIcon({ size = 16, className }: IconProps) {
   );
 }
 
+/** Double chevron pointing left (rail collapse); flipped via CSS when collapsed. */
+export function CollapseIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M11 17l-5-5 5-5" />
+      <path d="M18 17l-5-5 5-5" />
+    </svg>
+  );
+}
+
 /* ---- Window controls (square 10-unit glyphs centred in 24 box) ---------- */
 export function MinimizeIcon({ size = 16, className }: IconProps) {
   return (

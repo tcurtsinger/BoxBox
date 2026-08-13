@@ -1,5 +1,6 @@
 import type { StopwatchIcon } from "./icons";
-import { RailFeedStatus } from "./RailFeedStatus";
+import { CollapseIcon } from "./icons";
+import { useShell } from "./shell-context";
 
 export interface RailItem<T extends string> {
   id: T;
@@ -10,8 +11,9 @@ export interface RailItem<T extends string> {
 /**
  * A left section rail, shared by the railed modes (Race, Tunes). Muted at rest;
  * the active item is teal text with a left-aligned teal marker (DESIGN.md
- * Navigation, in-mode nav). The global telemetry-feed status is pinned to its
- * foot. The owning view supplies the items, the active id, and the select handler.
+ * Navigation, in-mode nav). Collapsible to icons only — the toggle sits at the
+ * rail's foot and the choice is shared across modes (shell context, persisted).
+ * The owning view supplies the items, the active id, and the select handler.
  */
 export function SectionRail<T extends string>({
   items,
@@ -24,8 +26,9 @@ export function SectionRail<T extends string>({
   onSelect: (id: T) => void;
   ariaLabel: string;
 }) {
+  const { railCollapsed, setRailCollapsed } = useShell();
   return (
-    <nav className="rail" aria-label={ariaLabel}>
+    <nav className={`rail${railCollapsed ? " is-collapsed" : ""}`} aria-label={ariaLabel}>
       {items.map(({ id, label, Icon }) => {
         const isActive = id === active;
         return (
@@ -34,6 +37,9 @@ export function SectionRail<T extends string>({
             type="button"
             className={`rail-item${isActive ? " is-active" : ""}`}
             aria-current={isActive ? "page" : undefined}
+            // Collapsed, the icon is all that's visible — the tooltip carries the name.
+            title={railCollapsed ? label : undefined}
+            aria-label={label}
             onClick={() => onSelect(id)}
           >
             <span className="rail-marker" aria-hidden="true" />
@@ -42,7 +48,16 @@ export function SectionRail<T extends string>({
           </button>
         );
       })}
-      <RailFeedStatus />
+      <button
+        type="button"
+        className="rail-collapse"
+        aria-expanded={!railCollapsed}
+        aria-label={railCollapsed ? "Expand navigation" : "Collapse navigation"}
+        title={railCollapsed ? "Expand" : "Collapse"}
+        onClick={() => setRailCollapsed(!railCollapsed)}
+      >
+        <CollapseIcon size={15} />
+      </button>
     </nav>
   );
 }

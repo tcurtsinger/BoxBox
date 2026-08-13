@@ -153,6 +153,9 @@ interface ShellState {
   resetFeed: () => void;
   raceSection: RaceSection;
   setRaceSection: (s: RaceSection) => void;
+  /** Section rail collapsed to icons only (shared by Tunes and Race; persisted). */
+  railCollapsed: boolean;
+  setRailCollapsed: (collapsed: boolean) => void;
   /** Whether the current live session has been saved to history. Reset when the
    *  feed goes away (a fresh connect is a new, unsaved session). Drives the
    *  "Save before closing?" guard and the History current-session indicator. */
@@ -192,6 +195,21 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     setFeedEpoch((e) => e + 1);
   }, []);
   const [raceSection, setRaceSection] = useState<RaceSection>("timing");
+  const [railCollapsed, setRailCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("boxbox.rail.collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  // Persisted from an effect (not the setter) so StrictMode double-invokes stay pure.
+  useEffect(() => {
+    try {
+      localStorage.setItem("boxbox.rail.collapsed", railCollapsed ? "1" : "0");
+    } catch {
+      /* private mode: collapse still works for this session */
+    }
+  }, [railCollapsed]);
   const [sessionSaved, setSessionSaved] = useState(false);
   const [connection, setConnection] = useState<Connection>(loadConnection);
   const [engineer, setEngineer] = useState<EngineerSettings>(loadEngineer);
@@ -274,6 +292,8 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       resetFeed,
       raceSection,
       setRaceSection,
+      railCollapsed,
+      setRailCollapsed,
       sessionSaved,
       setSessionSaved,
       connection,
@@ -287,7 +307,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       incidents,
       setIncidents,
     }),
-    [mode, tunesSection, referenceTune, benchSeed, feed, feedEpoch, resetFeed, raceSection, sessionSaved, connection, engineer, settingsOpen, selectedDriver, incidents],
+    [mode, tunesSection, referenceTune, benchSeed, feed, feedEpoch, resetFeed, raceSection, railCollapsed, sessionSaved, connection, engineer, settingsOpen, selectedDriver, incidents],
   );
 
   return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>;

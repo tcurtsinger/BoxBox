@@ -8,16 +8,16 @@ const LABEL: Record<FeedState, string> = {
 };
 
 /**
- * Telemetry-feed status, pinned to the bottom of the section rail. State is
- * carried by the label's colour alone (no dot), set off from the section items by
- * a faint divider. Replaces the old titlebar-centred indicator.
+ * Telemetry-feed status in the titlebar's right side (next to the window
+ * controls). State is carried by the label's colour alone — green Live, amber
+ * Standby/Connecting, blue Sample, muted No feed.
  */
-export function RailFeedStatus() {
+export function FeedStatus() {
   const { feed } = useShell();
   const sample = feed.state === "live" && feed.sample === true;
   const state = sample ? "sample" : feed.state;
   return (
-    <div className={`rail-feed is-${state}`} role="status" aria-live="polite">
+    <div className={`tb-feed is-${state}`} role="status" aria-live="polite">
       {sample ? "Sample" : LABEL[feed.state]}
     </div>
   );

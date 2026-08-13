@@ -7,12 +7,13 @@ import { TunerConsole } from "./tuner/TunerConsole";
 export function TunerView() {
   const { feed, setFeed } = useShell();
   // Keep the last advice up while the feed is paused, under a banner (P2.1).
+  // The wrapper is the banner's positioning context (bottom-centred in the panel).
   if (feed.state === "live" || feed.state === "standby") {
     return (
-      <>
+      <div className="mode-pane">
         {feed.state === "standby" && <StandbyBanner />}
         <TunerConsole />
-      </>
+      </div>
     );
   }
   return (

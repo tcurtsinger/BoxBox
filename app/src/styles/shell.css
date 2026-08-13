@@ -55,6 +55,29 @@ textarea {
   display: flex;
   align-items: stretch;
 }
+/* Telemetry-feed status in the titlebar (right, before the window controls).
+   State is carried by the label's colour alone. */
+.tb-feed {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-md);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--faint);
+}
+.tb-feed.is-connecting,
+.tb-feed.is-standby {
+  color: var(--data-caution);
+}
+.tb-feed.is-live {
+  color: var(--data-good);
+}
+.tb-feed.is-sample {
+  color: var(--data-info);
+}
 
 /* ---- Mode switch (full titlebar height; underline rides the bottom edge) - */
 .modeswitch {
@@ -173,6 +196,19 @@ textarea {
   gap: 2px;
   padding: var(--space-md) var(--space-sm);
   border-right: 1px solid var(--border);
+  transition: width var(--dur-fast) var(--ease-out);
+}
+/* Collapsed: icons only. Labels are removed from flow (not just hidden) so the
+   buttons shrink to square-ish icon tiles; tooltips carry the names. */
+.rail.is-collapsed {
+  width: 56px;
+}
+.rail.is-collapsed .rail-label {
+  display: none;
+}
+.rail.is-collapsed .rail-item {
+  justify-content: center;
+  padding: 9px 0;
 }
 .rail-item {
   position: relative;
@@ -217,32 +253,31 @@ textarea {
 .rail-item.is-active .rail-marker {
   transform: translateY(-50%) scaleY(1);
 }
-/* Telemetry-feed status, pinned to the foot of the rail. The state is carried by
-   the label's colour alone (no dot), centred in its box, set off by a faint
-   divider; the negative side margins let the divider span the rail's full width. */
-.rail-feed {
-  margin: auto calc(-1 * var(--space-sm)) 0;
-  padding: var(--space-sm) var(--space-sm);
-  border-top: 1px solid var(--border-soft);
-  text-align: center;
-  font-size: var(--text-label);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Collapse/expand toggle, pinned to the foot of the rail where the feed status
+   used to sit (the status moved to the titlebar). No divider — just the icon. */
+.rail-collapse {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
   color: var(--faint);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
-.rail-feed.is-connecting,
-.rail-feed.is-standby {
-  color: var(--data-caution);
+.rail-collapse:hover {
+  background: var(--surface);
+  color: var(--ink);
 }
-.rail-feed.is-live {
-  color: var(--data-good);
+.rail-collapse svg {
+  transition: transform var(--dur-fast) var(--ease-out);
 }
-.rail-feed.is-sample {
-  color: var(--data-info);
+.rail.is-collapsed .rail-collapse svg {
+  transform: rotate(180deg);
 }
 .rc-content {
   flex: 1;
@@ -251,13 +286,27 @@ textarea {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* The standby banner centres itself against this panel. */
+  position: relative;
+}
+/* A mode's content pane when it isn't inside .rc-content (the Tuner): same
+   fill-the-row behaviour, and the same banner positioning context. */
+.mode-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
 }
 
-/* Standby banner: floats below the 52px title bar so the stale live
-   surfaces stay put while the feed is paused (P2.1). */
+/* Standby banner: floats at the bottom, centred in the content panel, so the
+   stale live surfaces stay put while the feed is paused (P2.1). Positioned
+   against the panel (.rc-content / .mode-pane), not the window. */
 .feed-banner {
-  position: fixed;
-  top: 64px;
+  position: absolute;
+  bottom: 18px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 60;
