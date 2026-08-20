@@ -234,16 +234,22 @@ fn out_status(result_status: u8) -> Option<&'static str> {
 }
 
 /// The results embed for a finished session, or None when the snapshot isn't a
-/// completed race/qualifying session (practice and TT never post).
+/// completed race/qualifying session (practice and TT never post). A snapshot
+/// with no classification is a session whose packet 8 never arrived (lost at
+/// the online session boundary): it still posts, marked provisional, from the
+/// live standings at the flag.
 pub fn build_results_embed(snap: &SessionSnapshot) -> Option<Value> {
-    let class = snap.final_classification.as_ref()?;
-    if class.classification.is_empty() {
-        return None;
-    }
     let quali = match snap.session_category {
         SessionCategory::Race => false,
         SessionCategory::Qualifying => true,
         _ => return None,
+    };
+    let Some(class) = snap
+        .final_classification
+        .as_ref()
+        .filter(|c| !c.classification.is_empty())
+    else {
+        return build_provisional_results_embed(snap, quali);
     };
 
     // index -> "16 Rossi" (steward overrides already applied in the snapshot).
@@ -330,6 +336,65 @@ pub fn build_results_embed(snap: &SessionSnapshot) -> Option<Value> {
             "description": lines.join("\n"),
             "color": COLOR_RESULTS,
             "footer": { "text": "BoxBox Race Control" },
+        }]
+    }))
+}
+
+/// Results from the live standings at session end (snapshot drivers arrive
+/// pre-sorted: position in a race, best lap in qualifying). Used when the
+/// official classification never arrived, so the post says so.
+fn build_provisional_results_embed(snap: &SessionSnapshot, quali: bool) -> Option<Value> {
+    if snap.drivers.is_empty() {
+        return None;
+    }
+    let pole_ms = snap.drivers.iter().map(|d| d.best_lap_ms).find(|&ms| ms > 0);
+    let lines: Vec<String> = snap
+        .drivers
+        .iter()
+        .take(MAX_RESULT_ROWS)
+        .enumerate()
+        .map(|(i, d)| {
+            let name = d.name_override.clone().unwrap_or_else(|| d.name.clone());
+            let who = if d.race_number > 0 {
+                format!("{} {}", d.race_number, name)
+            } else {
+                name
+            };
+            let timing = if d.best_lap_ms == 0 {
+                "no time".to_string()
+            } else if quali {
+                match pole_ms {
+                    Some(pole) if d.best_lap_ms > pole => {
+                        format!("+{}", fmt_gap_ms(d.best_lap_ms - pole))
+                    }
+                    _ => fmt_lap_ms(d.best_lap_ms),
+                }
+            } else {
+                format!("best {}", fmt_lap_ms(d.best_lap_ms))
+            };
+            format!("`P{:<2}` **{who}** — `{timing}`", i + 1)
+        })
+        .collect();
+
+    let what = if quali {
+        format!(
+            "{} result",
+            session_name(snap.session.as_ref().map(|s| s.session_type).unwrap_or(0))
+        )
+    } else {
+        "Race result".to_string()
+    };
+    let title = match &snap.track_name {
+        Some(track) => format!("{what} — {track} (provisional)"),
+        None => format!("{what} (provisional)"),
+    };
+
+    Some(json!({
+        "embeds": [{
+            "title": title,
+            "description": lines.join("\n"),
+            "color": COLOR_RESULTS,
+            "footer": { "text": "BoxBox Race Control · official classification never arrived — standings from live timing at the flag" },
         }]
     }))
 }
@@ -520,6 +585,45 @@ mod tests {
     fn practice_and_empty_sessions_never_post() {
         assert!(build_results_embed(&snap(1, vec![entry(0, 1, 90_000)])).is_none());
         assert!(build_results_embed(&snap(15, vec![])).is_none());
+    }
+
+    #[test]
+    fn missing_classification_posts_provisional_standings() {
+        use crate::racecontrol::state::DriverState;
+        // Packet 8 never arrived: the snapshot carries live standings only.
+        let mut s = snap(15, vec![]);
+        s.final_classification = None;
+        let mut d1 = DriverState::default();
+        d1.index = 0;
+        d1.name = "Rossi".into();
+        d1.race_number = 16;
+        d1.best_lap_ms = 80_000;
+        let mut d2 = DriverState::default();
+        d2.index = 1;
+        d2.name = "Vane".into();
+        d2.race_number = 7;
+        d2.best_lap_ms = 80_500;
+        s.drivers = vec![d1, d2];
+
+        let v = build_results_embed(&s).expect("provisional embed");
+        let title = v["embeds"][0]["title"].as_str().unwrap();
+        assert!(title.contains("(provisional)"), "{title}");
+        let d = description(&v);
+        let lines: Vec<&str> = d.lines().collect();
+        assert!(lines[0].contains("16 Rossi"), "{d}");
+        assert!(lines[0].contains("best 1:20.000"), "{d}");
+        assert!(lines[1].contains("7 Vane"), "{d}");
+
+        // Qualifying flavour: gaps to the provisional pole.
+        let mut q = s.clone();
+        q.session = Some(SessionData {
+            session_type: 6,
+            ..Default::default()
+        });
+        q.session_category = session_category_of(Some(6));
+        let v = build_results_embed(&q).expect("quali provisional");
+        let d = description(&v);
+        assert!(d.lines().nth(1).unwrap().contains("+0.500"), "{d}");
     }
 
     #[test]

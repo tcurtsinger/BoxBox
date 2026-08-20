@@ -540,6 +540,27 @@ impl SessionState {
         // chance to keep knocked-out drivers' times for the stacked qualifying
         // classification (vault: BoxBox Qualifying Knockout Behaviour). P1.3.
         self.capture_quali_segment();
+        // The official classification (packet 8) is a SINGLE datagram sent right
+        // at the session boundary — easily lost online, where the lobby cuts
+        // over the moment the race ends. A finished race/quali session whose
+        // classification never arrived still gets archived and announced:
+        // stage a snapshot now, marked provisional by its missing
+        // classification. The stage survives this reset (same latch the packet-8
+        // path uses); the listener drains it right after this packet.
+        if self.pending_auto_archive.is_none() && self.final_classification.is_none() {
+            let category = session_category_of(self.session.as_ref().map(|s| s.session_type));
+            let raced = self
+                .drivers
+                .values()
+                .any(|d| !d.name.is_empty() && (d.best_lap_ms > 0 || d.current_lap_num > 1));
+            if matches!(
+                category,
+                SessionCategory::Race | SessionCategory::Qualifying
+            ) && raced
+            {
+                self.pending_auto_archive = Some(Box::new(self.snapshot()));
+            }
+        }
         // A crash inside the final hold-back window must still announce: compose
         // its line from the OUTGOING session's incidents and drivers before the
         // wipe erases them. The queued announcements survive the reset — the
@@ -1951,6 +1972,53 @@ mod tests {
         let posts = st.take_pending_announcements();
         assert_eq!(posts.len(), 1);
         assert!(posts[0].label.contains("Drive-through to"), "{}", posts[0].label);
+    }
+
+    #[test]
+    fn uid_change_stages_provisional_archive_for_unclassified_race() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        // The lobby cuts over; packet 8 (single datagram) never arrived.
+        st.ingest(&session("B", 15), 0.0);
+        let snap = st.take_pending_auto_archive().expect("provisional staged");
+        assert_eq!(snap.session_uid, "A", "the FINISHED session is archived");
+        assert!(snap.final_classification.is_none(), "provisional by shape");
+        assert_eq!(snap.drivers.len(), 1);
+        assert_eq!(snap.drivers[0].best_lap_ms, 80_000);
+    }
+
+    #[test]
+    fn practice_and_lapless_sessions_stage_no_provisional() {
+        // Practice: never staged, however much running happened.
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 1), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&session("B", 15), 0.0);
+        assert!(st.take_pending_auto_archive().is_none(), "practice stays out");
+
+        // A race that never got going (no laps driven): nothing to archive.
+        let mut st = SessionState::new();
+        st.ingest(&session("C", 15), 0.0);
+        st.ingest(&participants("C", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&session("D", 15), 0.0);
+        assert!(st.take_pending_auto_archive().is_none(), "no laps, no archive");
+    }
+
+    #[test]
+    fn official_classification_prevents_a_second_provisional_stage() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&final_classification("A"), 0.0);
+        // The official path staged; the listener drained it.
+        assert!(st.take_pending_auto_archive().is_some());
+        // The UID change must NOT stage the same session again as provisional.
+        st.ingest(&session("B", 15), 0.0);
+        assert!(st.take_pending_auto_archive().is_none(), "no double archive");
     }
 
     #[test]

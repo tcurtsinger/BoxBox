@@ -655,9 +655,24 @@ fn spawn_listener(
                             // session automatically (off the race lock) so the next
                             // session's wipe or an app close can't destroy it.
                             if let Some(snap) = auto_archive_snap {
+                                // Evidence for "why didn't my race save/post": every
+                                // drained result leaves a line, official or not.
+                                log_event(
+                                    &log_path,
+                                    &format!(
+                                        "session result staged: uid {} {:?} (classification: {})",
+                                        snap.session_uid,
+                                        snap.session_category,
+                                        if snap.final_classification.is_some() {
+                                            "official"
+                                        } else {
+                                            "missing - provisional"
+                                        }
+                                    ),
+                                );
                                 auto_archive_session(&app, &history, &history_store, &snap, &log_path);
-                                // Same trigger posts the result to Discord: this is the
-                                // one moment the classification is official.
+                                // Same trigger posts the result to Discord — either the
+                                // official classification or the provisional standings.
                                 let want = discord_cfg
                                     .lock()
                                     .map(|c| match snap.session_category {
