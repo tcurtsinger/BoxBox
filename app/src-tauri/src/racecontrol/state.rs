@@ -334,11 +334,28 @@ pub struct SessionState {
     // NOT cleared by reset_for_session: it belongs to the outgoing session, and the
     // next session's first packet must not wipe it before the listener drains it.
     pending_auto_archive: Option<Box<SessionSnapshot>>,
+    // Wall-clock ms of the session-end (SEND) event, latched so a finished
+    // session whose classification never arrives is staged after a grace period
+    // rather than waiting for a session rollover that may never come. Cleared
+    // when the classification lands, when the stage happens, and on reset.
+    session_ended_at_ms: Option<f64>,
+    // A provisional capture was already staged for this session, so the two
+    // fallback paths (grace timeout, UID rollover) can't stage it twice.
+    provisional_staged: bool,
+    // UID of the last session whose result the listener actually enqueued to
+    // Discord. NOT cleared on reset: the rollover fallback drains (and posts)
+    // the OUTGOING session after the reset already ran.
+    last_posted_result_uid: Option<String>,
 }
 
 // Bound the live incident log so an event flood can't grow memory without limit;
 // the snapshot clones this vector each poll, so its size also caps poll latency.
 const MAX_INCIDENTS: usize = 1000;
+// How long after the session-end (SEND) event to keep waiting for the official
+// classification (packet 8) before staging a provisional capture. The packet
+// normally lands within a second of SEND, and it's a single datagram — well
+// past this, it isn't coming.
+const CLASSIFICATION_GRACE_MS: f64 = 10_000.0;
 // Exact-duplicate auto incidents within this window (seconds) are suppressed.
 const INCIDENT_DEDUPE_SECS: f64 = 2.0;
 // Collisions between the same pair within this window fold into one card: the
@@ -450,7 +467,14 @@ impl SessionState {
                 self.spectator_car_index = s.spectator_car_index;
             }
             Some(Body::LapData(d)) => self.ingest_lap(d),
-            Some(Body::Event(e)) => self.ingest_event(e, self.session_time),
+            Some(Body::Event(e)) => {
+                // Latch the moment the session ended: the classification grace
+                // for a lost packet 8 counts from here.
+                if e.code == "SEND" {
+                    self.session_ended_at_ms = Some(at_ms);
+                }
+                self.ingest_event(e, self.session_time)
+            }
             Some(Body::Participants(p)) => self.ingest_participants(p),
             Some(Body::CarTelemetry(t)) => self.ingest_telemetry(t),
             Some(Body::CarStatus(s)) => self.ingest_status(s),
@@ -472,6 +496,9 @@ impl SessionState {
                 // packet-8 resend doesn't re-stage.
                 let first = self.final_classification.is_none();
                 self.final_classification = Some(f.clone());
+                // The official result arrived — the provisional grace has
+                // nothing left to wait for.
+                self.session_ended_at_ms = None;
                 if first {
                     self.pending_auto_archive = Some(Box::new(self.snapshot()));
                 }
@@ -485,6 +512,7 @@ impl SessionState {
         // Release any collision announcements whose hold-back has elapsed (cheap
         // when nothing is pending).
         self.flush_collision_posts();
+        self.stage_provisional_if_due(at_ms);
     }
 
     /// Fold one car's authoritative lap archive in. Bests become the min of the
@@ -529,6 +557,70 @@ impl SessionState {
         self.pending_auto_archive.take()
     }
 
+    /// Stage the current session as a provisional capture — the shape packet 8
+    /// would have staged, marked provisional by its missing classification. At
+    /// most once per session, and only for a race/quali session someone
+    /// actually raced in.
+    fn stage_provisional_capture(&mut self) {
+        if self.provisional_staged
+            || self.pending_auto_archive.is_some()
+            || self.final_classification.is_some()
+        {
+            return;
+        }
+        let category = session_category_of(self.session.as_ref().map(|s| s.session_type));
+        let raced = self
+            .drivers
+            .values()
+            .any(|d| !d.name.is_empty() && (d.best_lap_ms > 0 || d.current_lap_num > 1));
+        if matches!(
+            category,
+            SessionCategory::Race | SessionCategory::Qualifying
+        ) && raced
+        {
+            self.provisional_staged = true;
+            self.pending_auto_archive = Some(Box::new(self.snapshot()));
+        }
+    }
+
+    /// Once the classification grace after SEND has passed, packet 8 is lost
+    /// (single UDP datagram) — stage the provisional capture rather than waiting
+    /// for a session rollover that may never come (user parked on the results
+    /// screen, game closed). Runs at the end of every ingest AND from the
+    /// listener's idle ticks, so it doesn't depend on another packet arriving.
+    pub fn stage_provisional_if_due(&mut self, now_ms: f64) {
+        let Some(ended) = self.session_ended_at_ms else {
+            return;
+        };
+        if now_ms - ended < CLASSIFICATION_GRACE_MS {
+            return;
+        }
+        self.session_ended_at_ms = None;
+        self.stage_provisional_capture();
+    }
+
+    /// The listener is stopping: no further packet can arrive, so the grace has
+    /// nothing left to wait for — stage a finished-but-unclassified session now.
+    pub fn stage_provisional_on_stop(&mut self) {
+        if self.session_ended_at_ms.take().is_some() {
+            self.stage_provisional_capture();
+        }
+    }
+
+    /// Remember that a result for `uid` actually went out to Discord (the
+    /// listener enqueued it). Keyed by UID and kept across session resets — the
+    /// rollover fallback posts the OUTGOING session after the reset.
+    pub fn mark_result_posted(&mut self, uid: String) {
+        self.last_posted_result_uid = Some(uid);
+    }
+
+    /// Whether a result for `uid` was actually enqueued to Discord. Deliberately
+    /// NOT "was a provisional staged": a provisional whose post was disabled or
+    /// dropped must not suppress the later official post.
+    pub fn result_posted(&self, uid: &str) -> bool {
+        self.last_posted_result_uid.as_deref() == Some(uid)
+    }
+
     /// The current game session's UID ("" before the first packet).
     pub fn session_uid(&self) -> &str {
         &self.session_uid
@@ -540,6 +632,25 @@ impl SessionState {
         // chance to keep knocked-out drivers' times for the stacked qualifying
         // classification (vault: BoxBox Qualifying Knockout Behaviour). P1.3.
         self.capture_quali_segment();
+        // The official classification (packet 8) is a SINGLE datagram sent right
+        // at the session boundary — easily lost online, where the lobby cuts
+        // over the moment the race ends. A finished race/quali session whose
+        // classification never arrived still gets archived and announced:
+        // stage a snapshot now, marked provisional by its missing
+        // classification. The stage survives this reset (same latch the packet-8
+        // path uses); the listener drains it right after this packet.
+        // Restarting or abandoning a session ALSO changes the UID with no
+        // classification — by shape alone that's identical to a lost packet 8,
+        // and archiving it would post an unfinished attempt as a result. The
+        // chequered flag (CHQF) / session-end (SEND) events are the evidence the
+        // session actually finished: the flag is broadcast when the leader takes
+        // it, well before the boundary, so it survives the lobby cut that loses
+        // the single classification datagram — and a restart never waves it.
+        // (event_tally still holds the outgoing session's events here; it's
+        // cleared below.)
+        if self.event_tally.contains_key("CHQF") || self.event_tally.contains_key("SEND") {
+            self.stage_provisional_capture();
+        }
         // A crash inside the final hold-back window must still announce: compose
         // its line from the OUTGOING session's incidents and drivers before the
         // wipe erases them. The queued announcements survive the reset — the
@@ -572,6 +683,8 @@ impl SessionState {
         self.final_classification = None;
         self.num_active_cars = 0;
         self.next_incident_id = 1;
+        self.session_ended_at_ms = None;
+        self.provisional_staged = false;
     }
 
     // Snapshot the outgoing session's standings into quali_segments if it was a
@@ -1951,6 +2064,185 @@ mod tests {
         let posts = st.take_pending_announcements();
         assert_eq!(posts.len(), 1);
         assert!(posts[0].label.contains("Drive-through to"), "{}", posts[0].label);
+    }
+
+    fn chequered() -> EventData {
+        EventData {
+            code: "CHQF".into(),
+            ..Default::default()
+        }
+    }
+
+    fn session_end() -> EventData {
+        EventData {
+            code: "SEND".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn uid_change_stages_provisional_archive_for_unclassified_race() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&event("A", chequered()), 0.0);
+        // The lobby cuts over; packet 8 (single datagram) never arrived.
+        st.ingest(&session("B", 15), 0.0);
+        let snap = st.take_pending_auto_archive().expect("provisional staged");
+        assert_eq!(snap.session_uid, "A", "the FINISHED session is archived");
+        assert!(snap.final_classification.is_none(), "provisional by shape");
+        assert_eq!(snap.drivers.len(), 1);
+        assert_eq!(snap.drivers[0].best_lap_ms, 80_000);
+    }
+
+    #[test]
+    fn restarted_or_abandoned_session_stages_no_provisional() {
+        // Laps were driven, but no chequered flag / session end ever arrived:
+        // the driver restarted (or quit) mid-race. Same UID-change shape as a
+        // lost packet 8 — the missing finish evidence is what tells them apart.
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&session("B", 15), 0.0);
+        assert!(
+            st.take_pending_auto_archive().is_none(),
+            "an unfinished attempt is not a result"
+        );
+    }
+
+    #[test]
+    fn lost_classification_stages_after_the_grace_without_another_session() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&event("A", session_end()), 1_000.0);
+        // Still inside the grace: packet 8 could yet arrive.
+        st.ingest(&tick("A", 20.0), 5_000.0);
+        assert!(st.take_pending_auto_archive().is_none(), "grace still open");
+        // Grace over, same session — the user is parked on the results screen
+        // and no rollover is coming.
+        st.ingest(&tick("A", 25.0), 12_000.0);
+        let snap = st.take_pending_auto_archive().expect("provisional staged");
+        assert_eq!(snap.session_uid, "A");
+        assert!(snap.final_classification.is_none(), "provisional by shape");
+        // The eventual rollover must not stage the same session again.
+        st.ingest(&session("B", 15), 13_000.0);
+        assert!(st.take_pending_auto_archive().is_none(), "no double archive");
+    }
+
+    #[test]
+    fn late_official_classification_upgrades_but_flags_the_repost() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&event("A", session_end()), 1_000.0);
+        st.ingest(&tick("A", 25.0), 12_000.0);
+        assert!(st.take_pending_auto_archive().is_some(), "provisional drained");
+        // The listener actually enqueued that provisional to Discord.
+        st.mark_result_posted("A".into());
+        // Packet 8 lands anyway (replayed / very late): the official capture
+        // still stages — the archive record upgrade — and the posted marker
+        // tells the listener not to send a second Discord result.
+        st.ingest(&final_classification("A"), 20_000.0);
+        let snap = st.take_pending_auto_archive().expect("official upgrade staged");
+        assert!(snap.final_classification.is_some());
+        assert!(st.result_posted("A"), "repost marker for the listener");
+    }
+
+    #[test]
+    fn unposted_provisional_does_not_suppress_the_official_post() {
+        // The provisional drained but never went out (Discord toggle off, or
+        // the queue was full) — the later official result must still post.
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&event("A", session_end()), 1_000.0);
+        st.ingest(&tick("A", 25.0), 12_000.0);
+        assert!(st.take_pending_auto_archive().is_some(), "provisional drained");
+        st.ingest(&final_classification("A"), 20_000.0);
+        assert!(st.take_pending_auto_archive().is_some(), "official staged");
+        assert!(!st.result_posted("A"), "nothing went out — no suppression");
+    }
+
+    #[test]
+    fn classification_inside_the_grace_cancels_the_provisional() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&event("A", session_end()), 1_000.0);
+        st.ingest(&final_classification("A"), 1_500.0);
+        let snap = st.take_pending_auto_archive().expect("official staged");
+        assert!(snap.final_classification.is_some());
+        // Long past the grace: the official capture already happened.
+        st.stage_provisional_if_due(60_000.0);
+        assert!(
+            st.take_pending_auto_archive().is_none(),
+            "no provisional on top of the official result"
+        );
+    }
+
+    #[test]
+    fn stop_stages_a_finished_unclassified_session_immediately() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&event("A", session_end()), 1_000.0);
+        // The listener stops before the grace elapses: no more packets can
+        // arrive, so waiting is pointless.
+        st.stage_provisional_on_stop();
+        assert!(st.take_pending_auto_archive().is_some(), "staged on stop");
+
+        // Without the session-end evidence (a mid-race stop), nothing stages.
+        let mut st = SessionState::new();
+        st.ingest(&session("C", 15), 0.0);
+        st.ingest(&participants("C", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("C", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.stage_provisional_on_stop();
+        assert!(
+            st.take_pending_auto_archive().is_none(),
+            "a mid-race stop is not a finished session"
+        );
+    }
+
+    #[test]
+    fn practice_and_lapless_sessions_stage_no_provisional() {
+        // Practice: never staged, however much running happened (even to the flag).
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 1), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&event("A", chequered()), 0.0);
+        st.ingest(&session("B", 15), 0.0);
+        assert!(st.take_pending_auto_archive().is_none(), "practice stays out");
+
+        // A race that never got going (no laps driven): nothing to archive.
+        let mut st = SessionState::new();
+        st.ingest(&session("C", 15), 0.0);
+        st.ingest(&participants("C", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&event("C", chequered()), 0.0);
+        st.ingest(&session("D", 15), 0.0);
+        assert!(st.take_pending_auto_archive().is_none(), "no laps, no archive");
+    }
+
+    #[test]
+    fn official_classification_prevents_a_second_provisional_stage() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&final_classification("A"), 0.0);
+        // The official path staged; the listener drained it.
+        assert!(st.take_pending_auto_archive().is_some());
+        // The UID change must NOT stage the same session again as provisional.
+        st.ingest(&session("B", 15), 0.0);
+        assert!(st.take_pending_auto_archive().is_none(), "no double archive");
     }
 
     #[test]

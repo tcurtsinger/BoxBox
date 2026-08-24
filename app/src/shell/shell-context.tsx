@@ -221,21 +221,30 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   // Rust announces session transitions. A new game session (UID change) re-arms
   // the close guard — the feed never drops between sessions, so without this a
   // save in Race 1 would leave Race 2 marked "saved" and closable without a
-  // prompt. An automatic capture (official classification arrived) marks the
-  // session saved so the guard doesn't nag about data that's already archived.
+  // prompt. An automatic capture marks the session saved — but only the session
+  // it actually archived: the provisional fallback saves the OUTGOING session
+  // right after the new one begins, and that save must not disarm the guard for
+  // the new session's data. Until a transition is seen, the archived session can
+  // only be the current one.
   useEffect(() => {
     if (!IN_TAURI) return;
     let cancelled = false;
+    let currentUid: string | null = null;
     const disposers: Array<() => void> = [];
     (async () => {
       const { listen } = await import("@tauri-apps/api/event");
-      const onChanged = await listen("race:session-changed", () => setSessionSaved(false));
+      const onChanged = await listen<{ sessionUid: string }>("race:session-changed", (e) => {
+        currentUid = e.payload.sessionUid;
+        setSessionSaved(false);
+      });
       if (cancelled) {
         onChanged();
         return;
       }
       disposers.push(onChanged);
-      const onAutoSaved = await listen("history:auto-saved", () => setSessionSaved(true));
+      const onAutoSaved = await listen<{ sessionUid: string }>("history:auto-saved", (e) => {
+        if (currentUid === null || e.payload.sessionUid === currentUid) setSessionSaved(true);
+      });
       if (cancelled) {
         onAutoSaved();
         return;

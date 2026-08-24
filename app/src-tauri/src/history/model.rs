@@ -24,6 +24,10 @@ pub struct SessionRecord {
     pub saved_at_ms: f64,
     #[serde(default)]
     pub pinned: bool,
+    /// App-created (auto-archive) rather than user-saved. The replacement logic
+    /// keys on this — never on the display name, which the user can edit.
+    #[serde(default)]
+    pub auto: bool,
     /// The serialized `SessionSnapshot` captured at save time. Opaque to Rust; the
     /// frontend deserializes it to render the report.
     pub snapshot: serde_json::Value,
@@ -119,9 +123,20 @@ impl HistoryArchive {
             name,
             saved_at_ms: now_ms,
             pinned: false,
+            auto: false,
             snapshot,
         });
         self.rev += 1;
+        id
+    }
+
+    /// Save an automatic capture: like `save`, with the record marked
+    /// app-created so replacement logic can tell it from a manual save.
+    pub fn save_auto(&mut self, name: &str, snapshot: serde_json::Value, now_ms: f64) -> String {
+        let id = self.save(name, snapshot, now_ms);
+        if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+            s.auto = true;
+        }
         id
     }
 
