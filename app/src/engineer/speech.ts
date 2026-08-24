@@ -36,6 +36,10 @@ export class Speaker {
   // (a cancelled Rust playback resolving, a stale onend) then no-op instead of
   // double-advancing the caller's queue.
   private epoch = 0;
+  // The last voice_cancel IPC in flight. A pre-empting speak() awaits it so the
+  // cancel is processed FIRST on the Rust side — otherwise the new line could
+  // be enqueued under the pre-cancel generation and be discarded with the old one.
+  private pendingCancel: Promise<void> = Promise.resolve();
 
   get isSpeaking(): boolean {
     return this.speaking;
@@ -52,6 +56,7 @@ export class Speaker {
     if (IN_TAURI) {
       void (async () => {
         try {
+          await this.pendingCancel;
           const { invoke } = await import("@tauri-apps/api/core");
           await invoke("voice_speak", { text, rate: opts.rate, volume: opts.volume });
           done();
@@ -82,9 +87,12 @@ export class Speaker {
     this.speaking = false;
     if (speechAvailable()) window.speechSynthesis.cancel();
     if (IN_TAURI) {
-      void import("@tauri-apps/api/core")
+      this.pendingCancel = import("@tauri-apps/api/core")
         .then(({ invoke }) => invoke("voice_cancel"))
-        .catch(() => {});
+        .then(
+          () => {},
+          () => {},
+        );
     }
   }
 }
