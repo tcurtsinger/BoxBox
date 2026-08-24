@@ -228,7 +228,14 @@ function lapTimeCallouts(prev: PlayerFrame, next: PlayerFrame): Callout[] {
   }
   const isPB = prev.bestLapMS === 0 || lap < prev.bestLapMS;
   if (isPB) {
-    return [{ category: "lapTimes", priority: PRIORITY.info, text: "Personal best — well done.", key }];
+    // In a timed session position IS the lap's result, and praising a lap that
+    // left you P8 rings false — report where it put you instead. Races keep
+    // the plain call: position there has its own callouts.
+    const text =
+      !next.isRace && next.position > 0
+        ? `That puts you P${next.position}.`
+        : "Personal best — well done.";
+    return [{ category: "lapTimes", priority: PRIORITY.info, text, key }];
   }
   const delta = lap - next.bestLapMS;
   if (next.bestLapMS > 0 && delta > 0 && delta <= LAP_DELTA_SPEAK_MS) {

@@ -41,6 +41,15 @@ describe("lap-time callouts", () => {
     expect(out.some((t) => /personal best/i.test(t))).toBe(true);
   });
 
+  it("reports the position a quali personal best earned, not praise", () => {
+    const out = texts(
+      frame({ lap: 5, isRace: false, position: 12 }),
+      frame({ lap: 6, lastLapMS: 80_200, bestLapMS: 80_200, sessionBestMS: 79_000, isRace: false, position: 8 }),
+    );
+    expect(out.some((t) => /puts you P8/i.test(t))).toBe(true);
+    expect(out.some((t) => /well done/i.test(t))).toBe(false);
+  });
+
   it("announces the fastest lap of the session", () => {
     const out = texts(frame({ lap: 5 }), frame({ lap: 6, lastLapMS: 79_000, bestLapMS: 79_000, sessionBestMS: 79_000 }));
     expect(out.some((t) => /fastest lap of the session/i.test(t))).toBe(true);
