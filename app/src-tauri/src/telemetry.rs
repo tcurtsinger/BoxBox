@@ -833,7 +833,7 @@ fn process_staged_result(
             }
         ),
     );
-    auto_archive_session(app, history, store, &snap, log_path);
+    auto_archive_session(app, history, store, &snap, announce, log_path);
     // A just-in-case boundary capture (no finish evidence) archives silently:
     // it may be an abandoned attempt, and an abandoned attempt must never be
     // announced as a result.
@@ -865,6 +865,7 @@ fn auto_archive_session(
     archive: &Arc<Mutex<HistoryArchive>>,
     store: &Arc<HistoryStore>,
     snap: &SessionSnapshot,
+    announce: bool,
     log_path: &Option<PathBuf>,
 ) {
     let value = match serde_json::to_value(snap) {
@@ -902,7 +903,10 @@ fn auto_archive_session(
     for id in superseded_auto_records(a.list(), &value, &snap.session_uid) {
         a.delete(&id);
     }
-    let id = a.save_auto(&auto_session_name(snap), value, now_ms());
+    // Unconfirmed = saved with neither a classification nor finish evidence: a
+    // just-in-case capture that a later attempt at this track+type may replace.
+    let unconfirmed = snap.final_classification.is_none() && !announce;
+    let id = a.save_auto(&auto_session_name(snap), value, now_ms(), unconfirmed);
     if !store.save_if_changed(&a) {
         log_event(
             log_path,
@@ -943,9 +947,12 @@ fn auto_session_name(snap: &SessionSnapshot) -> String {
 ///  - the same session re-captured (same UID): a late/replayed official
 ///    classification upgrades an already-archived provisional;
 ///  - an abandoned attempt's just-in-case capture (same track and sessionType,
-///    still provisional, different UID): the re-run's capture replaces it, so
-///    restarts don't accumulate silent duplicates in history.
-/// Pinned records and manual saves are never candidates.
+///    UNCONFIRMED — saved with no finish evidence, different UID): the re-run's
+///    capture replaces it, so restarts don't accumulate silent duplicates.
+/// An evidence-backed provisional (lost classification packet after a
+/// chequered flag / SEND) is a REAL result: it is never unconfirmed and a
+/// later event at the same track must not delete it. Pinned records and
+/// manual saves are never candidates.
 fn superseded_auto_records(
     records: &[SessionRecord],
     incoming: &serde_json::Value,
@@ -967,12 +974,10 @@ fn superseded_auto_records(
             let same_uid =
                 r.snapshot.get("sessionUid").and_then(|v| v.as_str()) == Some(incoming_uid);
             let abandoned_attempt = !same_uid
+                && r.unconfirmed
                 && track.is_some()
                 && session_of(&r.snapshot, "trackId") == track
-                && session_of(&r.snapshot, "sessionType") == stype
-                && r.snapshot
-                    .get("finalClassification")
-                    .map_or(true, |v| v.is_null());
+                && session_of(&r.snapshot, "sessionType") == stype;
             same_uid || abandoned_attempt
         })
         .map(|r| r.id.clone())
@@ -1550,6 +1555,7 @@ mod tests {
             saved_at_ms: 0.0,
             pinned,
             auto,
+            unconfirmed: false,
             snapshot,
         }
     }
@@ -1567,15 +1573,27 @@ mod tests {
             }
             v
         };
+        let unconfirmed = |mut r: SessionRecord| {
+            r.unconfirmed = true;
+            r
+        };
         let records = vec![
-            // The abandoned first attempt: provisional, same track + type.
-            record("aborted", true, false, snap_json("A", 13, 15, false)),
-            // An OFFICIAL record at the same track + type: a real result, kept.
-            record("official", true, false, snap_json("B", 13, 15, true)),
+            // The abandoned first attempt: unconfirmed, same track + type.
+            unconfirmed(record(
+                "aborted",
+                true,
+                false,
+                snap_json("A", 13, 15, false),
+            )),
+            // An evidence-backed provisional (lost packet 8 after the flag):
+            // a REAL result — same track + type, but confirmed, so it stays.
+            record("provisional", true, false, snap_json("B", 13, 15, false)),
+            // An OFFICIAL record at the same track + type: kept.
+            record("official", true, false, snap_json("E", 13, 15, true)),
             // A manual save: never touched, whatever it contains.
             record("manual", false, false, snap_json("A", 13, 15, false)),
             // Different track: unrelated weekend.
-            record("other", true, false, snap_json("C", 21, 15, false)),
+            unconfirmed(record("other", true, false, snap_json("C", 21, 15, false))),
         ];
         let incoming = snap_json("D", 13, 15, true);
         assert_eq!(
