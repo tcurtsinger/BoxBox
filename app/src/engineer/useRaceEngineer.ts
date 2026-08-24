@@ -69,7 +69,7 @@ export function useRaceEngineer(): void {
     }
     speakingPriorityRef.current = c.priority;
     const s = settingsRef.current;
-    speaker.speak(c.text, { voiceURI: s.voiceURI, rate: s.rate, volume: s.volume }, () => {
+    speaker.speak(c.text, { rate: s.rate, volume: s.volume }, () => {
       speakingPriorityRef.current = 0;
       pump();
     });

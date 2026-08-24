@@ -8,6 +8,7 @@ mod racecontrol;
 mod telemetry;
 mod tuner;
 mod tunes;
+mod voice;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -78,6 +79,10 @@ pub fn run() {
                 path: discord_path,
             });
 
+            // The engineer's bundled Piper voice (worker thread; Piper itself
+            // spawns lazily on the first callout).
+            app.manage(voice::VoiceState::new(voice::piper_dir(app.handle())));
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -115,6 +120,8 @@ pub fn run() {
             discord::discord_config,
             discord::set_discord_config,
             discord::discord_test,
+            voice::voice_speak,
+            voice::voice_cancel,
             export::export_report
         ])
         .run(tauri::generate_context!())

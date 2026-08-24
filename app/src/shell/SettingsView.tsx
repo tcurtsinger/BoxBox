@@ -3,7 +3,7 @@ import { useShell, type ForwardTarget, type EngineerCategories } from "./shell-c
 import { CloseIcon } from "./icons";
 import { Segmented, type SegmentedOption } from "./Segmented";
 import { historyRetention, setHistoryRetention } from "../modes/history/historyData";
-import { listVoices, onVoicesReady, speakOnce } from "../engineer/speech";
+import { speakOnce } from "../engineer/speech";
 
 /** Feed controls talk to the Rust listener, which only exists inside Tauri. */
 const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -101,7 +101,6 @@ function Section({
 export function SettingsView() {
   const { connection, setConnection, engineer, setEngineer, feed, resetFeed, setMode } =
     useShell();
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   // --- Telemetry draft (applies as a batch) --------------------------------
   const [port, setPort] = useState(String(connection.port));
@@ -145,14 +144,6 @@ export function SettingsView() {
     return () => {
       active = false;
     };
-  }, []);
-
-  // OS voices populate asynchronously; keep the picker's list in sync.
-  useEffect(() => {
-    const update = () => setVoices(listVoices());
-    const off = onVoicesReady(update);
-    update();
-    return off;
   }, []);
 
   const cats = engineer.categories;
@@ -492,25 +483,6 @@ export function SettingsView() {
                     ))}
                   </div>
 
-                  <label className="field-label" htmlFor="eng-voice">
-                    Voice
-                  </label>
-                  <select
-                    id="eng-voice"
-                    className="field-input"
-                    value={engineer.voiceURI ?? ""}
-                    onChange={(e) =>
-                      setEngineer({ ...engineer, voiceURI: e.target.value || null })
-                    }
-                  >
-                    <option value="">System default</option>
-                    {voices.map((v) => (
-                      <option key={v.voiceURI} value={v.voiceURI}>
-                        {v.name} ({v.lang})
-                      </option>
-                    ))}
-                  </select>
-
                   <label className="field-label eng-rate-label" htmlFor="eng-rate">
                     Speech speed — {engineer.rate.toFixed(1)}×
                   </label>
@@ -531,7 +503,6 @@ export function SettingsView() {
                     className="btn btn-ghost btn-sm eng-test"
                     onClick={() =>
                       speakOnce("Radio check — loud and clear.", {
-                        voiceURI: engineer.voiceURI,
                         rate: engineer.rate,
                         volume: engineer.volume,
                       })
