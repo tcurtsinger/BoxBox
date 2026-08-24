@@ -7,6 +7,7 @@ import { sampleFrames } from "./sampleScript";
 const ALL: EngineerCategories = {
   fuelTyres: true,
   gapsPosition: true,
+  drs: true,
   lapTimes: true,
   flagsIncidents: true,
 };
@@ -149,8 +150,23 @@ describe("flag & incident callouts", () => {
 
 describe("category gating", () => {
   it("emits nothing when every category is disabled", () => {
-    const off: EngineerCategories = { fuelTyres: false, gapsPosition: false, lapTimes: false, flagsIncidents: false };
+    const off: EngineerCategories = { fuelTyres: false, gapsPosition: false, drs: false, lapTimes: false, flagsIncidents: false };
     expect(deriveCallouts(frame({ fuelLaps: 0.5 }), frame({ fuelLaps: 0.2 }), off)).toHaveLength(0);
+  });
+
+  it("mutes DRS independently of the position callouts", () => {
+    const noDrs = { ...ALL, drs: false };
+    const out = deriveCallouts(
+      frame({ position: 5, intervalAheadSec: 1.5 }),
+      frame({ position: 4, intervalAheadSec: 0.8 }),
+      noDrs,
+    );
+    expect(out.some((c) => /DRS/i.test(c.text))).toBe(false);
+    expect(out.some((c) => /P4 now/i.test(c.text))).toBe(true);
+
+    const onlyDrs: EngineerCategories = { fuelTyres: false, gapsPosition: false, drs: true, lapTimes: false, flagsIncidents: false };
+    const drsOnly = deriveCallouts(frame({ intervalAheadSec: 1.5 }), frame({ intervalAheadSec: 0.8 }), onlyDrs);
+    expect(drsOnly.some((c) => /DRS/i.test(c.text))).toBe(true);
   });
 });
 

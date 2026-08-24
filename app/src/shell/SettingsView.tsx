@@ -33,6 +33,7 @@ const ONOFF_OPTIONS: SegmentedOption<"off" | "on">[] = [
 const ENGINEER_CATEGORIES: { key: keyof EngineerCategories; label: string }[] = [
   { key: "fuelTyres", label: "Fuel & tyres" },
   { key: "gapsPosition", label: "Gaps & position" },
+  { key: "drs", label: "DRS" },
   { key: "lapTimes", label: "Lap times" },
   { key: "flagsIncidents", label: "Flags & incidents" },
 ];

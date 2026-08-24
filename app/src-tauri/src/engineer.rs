@@ -38,6 +38,7 @@ const SESSION_EVENT_CODES: [&str; 3] = ["SCAR", "RDFL", "CHQF"];
 pub enum Category {
     FuelTyres,
     GapsPosition,
+    Drs,
     LapTimes,
     FlagsIncidents,
 }
@@ -236,10 +237,15 @@ fn gaps_position(prev: &PlayerFrame, next: &PlayerFrame, out: &mut Vec<Callout>)
         ));
     }
 
+}
+
+// Into DRS range of the car ahead. Its own category so the webview can mute it
+// without losing the position callouts.
+fn drs(prev: &PlayerFrame, next: &PlayerFrame, out: &mut Vec<Callout>) {
     if let (Some(p), Some(n)) = (prev.interval_ahead, next.interval_ahead) {
         if crossed_below(p, n, DRS_RANGE_SEC) {
             out.push(Callout::new(
-                Category::GapsPosition,
+                Category::Drs,
                 P_POSITION,
                 "Car ahead is within a second — DRS available.",
                 "drs-range",
@@ -402,6 +408,7 @@ pub fn derive_callouts(prev: &PlayerFrame, next: &PlayerFrame) -> Vec<Callout> {
     let mut out = Vec::new();
     fuel_tyres(prev, next, &mut out);
     gaps_position(prev, next, &mut out);
+    drs(prev, next, &mut out);
     lap_times(prev, next, &mut out);
     flags_incidents(prev, next, &mut out);
     out
