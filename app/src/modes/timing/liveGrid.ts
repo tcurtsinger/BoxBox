@@ -307,7 +307,7 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
   const overallS2 = minOver((d) => d.bestS2MS ?? 0);
   const overallS3 = minOver((d) => d.bestS3MS ?? 0);
 
-  return drivers.map((d, i) => {
+  const live = drivers.map((d, i) => {
     const pos = i + 1; // snapshot is pre-sorted into running order
     const leader = pos === 1;
 
@@ -397,6 +397,28 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
       },
     };
   });
+  // A live qualifying segment only carries the surviving field: keep the
+  // earlier segments' knockouts stacked below it (dimmed, tagged with the
+  // segment that eliminated them), so the tower reads as one session across
+  // Q1/Q2/Q3 — same order the report shows.
+  if (snap.sessionCategory === "qualifying" && snap.qualiSegments.length > 0) {
+    const stacked = toQualifyingClassification(snap);
+    if (stacked && stacked.length > live.length) {
+      return [
+        ...live,
+        ...stacked.slice(drivers.length).map((c) => {
+          const row = stackedRow(c);
+          // One gap baseline for the whole tower: knockouts compare to the
+          // LIVE segment's best like every row above them — the stacked
+          // classification's cross-segment pole baseline would let a knockout
+          // show a smaller gap than the current leader.
+          row.gapSec = overallBest > 0 && c.bestMs > 0 ? (c.bestMs - overallBest) / 1000 : null;
+          return row;
+        }),
+      ];
+    }
+  }
+  return live;
 }
 
 export interface SessionInfo {
@@ -601,21 +623,24 @@ export function toQualifyingClassification(snap: RaceSnapshot): ClassRow[] | nul
   // The newest group (Q3 / the live segment) are the top finishers (no elimination
   // badge). Then walk older segments, appending each one's knockouts.
   //
-  // Match cars across segments by RACE NUMBER, not car index: F1 re-packs the
-  // per-car array indices into 0..N-1 each qualifying segment (confirmed on a real
-  // capture — the same driver is a different index in Q2 vs Q3), so the index is not
-  // a stable identity across segments; the car number is. P1.3.
+  // Match cars across segments by RACE NUMBER + game name, not car index: F1
+  // re-packs the per-car array indices into 0..N-1 each qualifying segment
+  // (confirmed on a real capture), so the index is not a stable identity; the
+  // number mostly is, but online lobbies allow duplicates — the name breaks
+  // the tie so one survivor can't filter every earlier entry sharing its
+  // number. P1.3.
+  const identity = (e: QualiSegmentEntry) => `${e.raceNumber}|${e.name}`;
   const rows: ClassRow[] = [];
-  let advancing = new Set<number>();
+  let advancing = new Set<string>();
   for (let i = groups.length - 1; i >= 0; i--) {
     const seg = groups[i];
     const newest = i === groups.length - 1;
     const members = newest
       ? seg.standings
-      : seg.standings.filter((e) => !advancing.has(e.raceNumber));
+      : seg.standings.filter((e) => !advancing.has(identity(e)));
     const label = newest ? null : (seg.type != null ? QUALI_SEGMENT_LABEL[seg.type] ?? null : null);
     for (const e of members) rows.push(rowOf(e, label, newest));
-    advancing = new Set(seg.standings.map((e) => e.raceNumber));
+    advancing = new Set(seg.standings.map(identity));
   }
   rows.forEach((r, i) => (r.pos = i + 1));
   // Gap is to pole (the fastest lap across all segments); null for pole and no-time.

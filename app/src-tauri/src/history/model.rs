@@ -28,6 +28,12 @@ pub struct SessionRecord {
     /// keys on this — never on the display name, which the user can edit.
     #[serde(default)]
     pub auto: bool,
+    /// A just-in-case boundary capture saved with NO finish evidence — possibly
+    /// an abandoned attempt. Only these may be superseded by a later attempt at
+    /// the same track and session type; an evidence-backed provisional (lost
+    /// classification packet after a chequered flag) is a real result and stays.
+    #[serde(default)]
+    pub unconfirmed: bool,
     /// The serialized `SessionSnapshot` captured at save time. Opaque to Rust; the
     /// frontend deserializes it to render the report.
     pub snapshot: serde_json::Value,
@@ -124,6 +130,7 @@ impl HistoryArchive {
             saved_at_ms: now_ms,
             pinned: false,
             auto: false,
+            unconfirmed: false,
             snapshot,
         });
         self.rev += 1;
@@ -132,10 +139,18 @@ impl HistoryArchive {
 
     /// Save an automatic capture: like `save`, with the record marked
     /// app-created so replacement logic can tell it from a manual save.
-    pub fn save_auto(&mut self, name: &str, snapshot: serde_json::Value, now_ms: f64) -> String {
+    /// `unconfirmed` marks a just-in-case capture with no finish evidence.
+    pub fn save_auto(
+        &mut self,
+        name: &str,
+        snapshot: serde_json::Value,
+        now_ms: f64,
+        unconfirmed: bool,
+    ) -> String {
         let id = self.save(name, snapshot, now_ms);
         if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
             s.auto = true;
+            s.unconfirmed = unconfirmed;
         }
         id
     }

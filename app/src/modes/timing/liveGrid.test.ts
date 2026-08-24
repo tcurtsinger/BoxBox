@@ -74,6 +74,27 @@ describe("qualifying rows", () => {
     expect(rows[2].gapSec).toBeNull();
   });
 
+  it("stacks earlier segments' knockouts below the live field", () => {
+    // Live Q2: Rossi survived; Vane went out in Q1 and must stay on the tower.
+    const live: RaceSnapshot = {
+      ...snap("qualifying", [drv({ index: 0, raceNumber: 46, name: "Rossi", bestLapMS: 80_000 })], 6),
+      qualiSegments: [
+        {
+          sessionType: 5,
+          standings: [
+            { index: 0, name: "Rossi", nameOverride: null, teamId: 0, raceNumber: 46, position: 1, bestLapMS: 80_500 },
+            { index: 1, name: "Vane", nameOverride: null, teamId: 1, raceNumber: 7, position: 2, bestLapMS: 81_000 },
+          ],
+        },
+      ],
+    };
+    const rows = toDriverRows(live);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].name).toBe("Rossi");
+    expect(rows[1].name).toBe("Vane");
+    expect(rows[1].status).toBe("Q1");
+  });
+
   it("keeps showing captured segment standings between segments", () => {
     // The between-segments gap: field wiped, next Session packet not yet seen
     // ("unknown"), but Q1's standings were captured.
