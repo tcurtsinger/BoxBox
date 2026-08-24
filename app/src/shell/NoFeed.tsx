@@ -21,17 +21,14 @@ export function NoFeed({
         <PlugIcon size={22} />
       </div>
       <h2 className="nofeed-title">Waiting for telemetry</h2>
-      <p className="nofeed-body">
-        {context} appears here once BoxBox is receiving your game's UDP feed.
-      </p>
+      <p className="nofeed-body">{context} appears here once the game connects.</p>
       {feed.formatWarning != null && (
         <p className="nofeed-warn" role="alert">
-          Your game is sending UDP format{" "}
+          Your game is sending format{" "}
           <span className="mono">{feed.formatWarning}</span>, which BoxBox
-          can&rsquo;t read — set <strong>UDP Format</strong> to{" "}
-          <span className="mono">2025</span> (or{" "}
-          <span className="mono">2026</span>) in the game&rsquo;s telemetry
-          settings.
+          can&rsquo;t read. In the game&rsquo;s telemetry settings, set{" "}
+          <strong>UDP Format</strong> to <span className="mono">2026</span> or{" "}
+          <span className="mono">2025</span>.
         </p>
       )}
       <ol className="nofeed-steps">
@@ -45,7 +42,7 @@ export function NoFeed({
           <strong>Port</strong> to{" "}
           <span className="mono">{connection.port}</span>.
         </li>
-        <li>Drive — the feed is detected automatically.</li>
+        <li>Drive — BoxBox connects on its own.</li>
       </ol>
       <div className="nofeed-actions">
         <button
@@ -62,13 +59,12 @@ export function NoFeed({
         )}
       </div>
       <p className="nofeed-note">
-        Telemetry on in-game but still nothing here? Windows Firewall may be
-        silently blocking the port — allow <strong>BoxBox</strong> on{" "}
-        <strong>Private networks</strong> in Windows Defender Firewall. Also
-        check that no other app is already bound to port{" "}
-        <span className="mono">{connection.port}</span>; if a dashboard needs it
-        too, turn on <strong>Forward telemetry</strong> in connection settings
-        instead of pointing both apps at the same port.
+        Telemetry on but still nothing? Windows Firewall may be blocking BoxBox
+        — allow it on <strong>Private networks</strong>. Or another app (SimHub,
+        a dashboard) may be using port{" "}
+        <span className="mono">{connection.port}</span> — close it, or turn on{" "}
+        <strong>Forward telemetry</strong> in connection settings so both get
+        the feed.
       </p>
     </div>
   );
