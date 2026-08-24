@@ -553,10 +553,22 @@ impl SessionState {
                 .drivers
                 .values()
                 .any(|d| !d.name.is_empty() && (d.best_lap_ms > 0 || d.current_lap_num > 1));
+            // Restarting or abandoning a session ALSO changes the UID with no
+            // classification — by shape alone that's identical to a lost packet
+            // 8, and archiving it would post an unfinished attempt as a result.
+            // The chequered flag (CHQF) / session-end (SEND) events are the
+            // evidence the session actually finished: the flag is broadcast when
+            // the leader takes it, well before the boundary, so it survives the
+            // lobby cut that loses the single classification datagram — and a
+            // restart never waves it. (event_tally still holds the outgoing
+            // session's events here; it's cleared below.)
+            let finished =
+                self.event_tally.contains_key("CHQF") || self.event_tally.contains_key("SEND");
             if matches!(
                 category,
                 SessionCategory::Race | SessionCategory::Qualifying
             ) && raced
+                && finished
             {
                 self.pending_auto_archive = Some(Box::new(self.snapshot()));
             }
@@ -1974,12 +1986,20 @@ mod tests {
         assert!(posts[0].label.contains("Drive-through to"), "{}", posts[0].label);
     }
 
+    fn chequered() -> EventData {
+        EventData {
+            code: "CHQF".into(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn uid_change_stages_provisional_archive_for_unclassified_race() {
         let mut st = SessionState::new();
         st.ingest(&session("A", 15), 0.0);
         st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
         st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&event("A", chequered()), 0.0);
         // The lobby cuts over; packet 8 (single datagram) never arrived.
         st.ingest(&session("B", 15), 0.0);
         let snap = st.take_pending_auto_archive().expect("provisional staged");
@@ -1990,12 +2010,29 @@ mod tests {
     }
 
     #[test]
+    fn restarted_or_abandoned_session_stages_no_provisional() {
+        // Laps were driven, but no chequered flag / session end ever arrived:
+        // the driver restarted (or quit) mid-race. Same UID-change shape as a
+        // lost packet 8 — the missing finish evidence is what tells them apart.
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&session("B", 15), 0.0);
+        assert!(
+            st.take_pending_auto_archive().is_none(),
+            "an unfinished attempt is not a result"
+        );
+    }
+
+    #[test]
     fn practice_and_lapless_sessions_stage_no_provisional() {
-        // Practice: never staged, however much running happened.
+        // Practice: never staged, however much running happened (even to the flag).
         let mut st = SessionState::new();
         st.ingest(&session("A", 1), 0.0);
         st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
         st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&event("A", chequered()), 0.0);
         st.ingest(&session("B", 15), 0.0);
         assert!(st.take_pending_auto_archive().is_none(), "practice stays out");
 
@@ -2003,6 +2040,7 @@ mod tests {
         let mut st = SessionState::new();
         st.ingest(&session("C", 15), 0.0);
         st.ingest(&participants("C", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&event("C", chequered()), 0.0);
         st.ingest(&session("D", 15), 0.0);
         assert!(st.take_pending_auto_archive().is_none(), "no laps, no archive");
     }
