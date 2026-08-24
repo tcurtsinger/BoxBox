@@ -52,15 +52,18 @@ export class CalloutScheduler {
    *  genuine hazard — the cooldown exists to stop chatter, not safety calls. */
   push(callouts: Callout[], now: number): void {
     for (const c of callouts) {
+      // The newest fact invalidates queued slot-mates BEFORE its own cooldown
+      // check: the driver being back in P8 makes a queued "P7" wrong even when
+      // "P8" itself is still cooling down and won't be re-spoken.
+      const slot = slotOf(c);
+      if (slot != null) {
+        this.queue = this.queue.filter((q) => slotOf(q) !== slot);
+      }
       if (c.priority < PRIORITY.safety) {
         const last = this.lastKeyAt.get(c.key);
         if (last != null && now - last < this.opts.keyCooldownMs) continue;
       }
       if (this.queue.some((q) => q.key === c.key)) continue;
-      const slot = slotOf(c);
-      if (slot != null) {
-        this.queue = this.queue.filter((q) => slotOf(q) !== slot);
-      }
       this.queue.push(c);
     }
     if (this.queue.length > this.opts.maxQueue) {

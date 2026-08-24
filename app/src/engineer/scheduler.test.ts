@@ -42,6 +42,17 @@ describe("CalloutScheduler", () => {
     expect(s.take(600)).not.toBeNull();
   });
 
+  it("returning to a cooling-down position still clears the stale queued one", () => {
+    // P8 spoken, P7 queued, driver falls back to P8 within the key cooldown:
+    // the suppressed "P8" must still invalidate the now-wrong queued "P7".
+    const s = new CalloutScheduler({ keyCooldownMs: 20_000, categoryCooldownMs: 0, maxQueue: 8 });
+    s.push([c({ key: "pos-8" })], 0);
+    expect(s.take(0)!.key).toBe("pos-8");
+    s.push([c({ key: "pos-7" })], 1_000);
+    s.push([c({ key: "pos-8" })], 2_000); // cooling down — not re-spoken
+    expect(s.take(3_000)).toBeNull();
+  });
+
   it("de-dupes a key while it's within cooldown", () => {
     const s = new CalloutScheduler({ keyCooldownMs: 1000, categoryCooldownMs: 0, maxQueue: 8 });
     s.push([c({ key: "k" })], 0);
