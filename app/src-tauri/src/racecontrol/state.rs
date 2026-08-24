@@ -350,11 +350,10 @@ pub struct SessionState {
     // (index→race-number map, held prefix length), applied when the new
     // segment's first Participants packet names the re-packed grid.
     pending_incident_remap: Option<(HashMap<u8, u8>, usize)>,
-    // Snapshot of a qualifying session that ended with neither a classification
-    // nor flag evidence (an instant "advance" skips both). The Session-packet
-    // arm archives it if the RACE follows at this track — reaching the race is
-    // itself proof qualifying ended — and drops it otherwise.
-    pending_quali_finish: Option<Box<SessionSnapshot>>,
+    // Whether the staged pending_auto_archive may be ANNOUNCED (Discord): true
+    // for official classifications and evidence-backed provisionals, false for
+    // just-in-case boundary captures whose session may not have finished.
+    pending_archive_announce: bool,
     // Open damage watches: one per car per recent collision, measuring what the
     // contact cost against the CarDamage packets that follow. Bounded.
     damage_watch: Vec<DamageWatch>,
@@ -528,18 +527,6 @@ impl SessionState {
                         self.incidents.drain(..held.count.min(self.incidents.len()));
                     }
                 }
-                // A quali snapshot held at the last reset (see reset_for_session):
-                // the race starting at this track proves qualifying is over —
-                // archive it. Anything else (a restarted segment, a different
-                // event) discards it.
-                if let Some(held_snap) = self.pending_quali_finish.take() {
-                    let race_here = session_category_of(Some(s.session_type))
-                        == SessionCategory::Race
-                        && held_snap.session.as_ref().map(|q| q.track_id) == Some(s.track_id);
-                    if race_here && self.pending_auto_archive.is_none() {
-                        self.pending_auto_archive = Some(held_snap);
-                    }
-                }
                 self.session = Some(s.clone());
                 self.is_spectating = s.is_spectating;
                 self.spectator_car_index = s.spectator_car_index;
@@ -578,6 +565,7 @@ impl SessionState {
                 // nothing left to wait for.
                 self.session_ended_at_ms = None;
                 if first {
+                    self.pending_archive_announce = true;
                     self.pending_auto_archive = Some(Box::new(self.snapshot()));
                 }
             }
@@ -632,14 +620,28 @@ impl SessionState {
     /// The staged auto-archive snapshot, if the official classification arrived
     /// since the last drain. Taken by the listener, which persists it to history.
     pub fn take_pending_auto_archive(&mut self) -> Option<Box<SessionSnapshot>> {
-        self.pending_auto_archive.take()
+        self.take_pending_auto_archive_with_announce()
+            .map(|(s, _)| s)
+    }
+
+    /// The staged capture plus whether it may be ANNOUNCED (Discord). Archiving
+    /// always proceeds; announcing requires finish evidence — a just-in-case
+    /// boundary capture returns false here and stays out of the webhook.
+    pub fn take_pending_auto_archive_with_announce(
+        &mut self,
+    ) -> Option<(Box<SessionSnapshot>, bool)> {
+        let announce = self.pending_archive_announce;
+        self.pending_auto_archive.take().map(|s| (s, announce))
     }
 
     /// Stage the current session as a provisional capture — the shape packet 8
     /// would have staged, marked provisional by its missing classification. At
-    /// most once per session, and only for a race/quali session someone
-    /// actually raced in.
-    fn stage_provisional_capture(&mut self) {
+    /// most once per session, and only for a race/quali session with real
+    /// content (someone raced, or captured quali segments to preserve).
+    /// `announce` says whether the capture may post to Discord: true only with
+    /// finish evidence behind it — a just-in-case boundary capture archives
+    /// silently.
+    fn stage_provisional_capture(&mut self, announce: bool) {
         if self.provisional_staged
             || self.pending_auto_archive.is_some()
             || self.final_classification.is_some()
@@ -651,12 +653,15 @@ impl SessionState {
             .drivers
             .values()
             .any(|d| !d.name.is_empty() && (d.best_lap_ms > 0 || d.current_lap_num > 1));
+        let has_content =
+            raced || (category == SessionCategory::Qualifying && !self.quali_segments.is_empty());
         if matches!(
             category,
             SessionCategory::Race | SessionCategory::Qualifying
-        ) && raced
+        ) && has_content
         {
             self.provisional_staged = true;
+            self.pending_archive_announce = announce;
             self.pending_auto_archive = Some(Box::new(self.snapshot()));
         }
     }
@@ -674,14 +679,16 @@ impl SessionState {
             return;
         }
         self.session_ended_at_ms = None;
-        self.stage_provisional_capture();
+        // SEND itself is the finish evidence — this capture may announce.
+        self.stage_provisional_capture(true);
     }
 
     /// The listener is stopping: no further packet can arrive, so the grace has
     /// nothing left to wait for — stage a finished-but-unclassified session now.
     pub fn stage_provisional_on_stop(&mut self) {
         if self.session_ended_at_ms.take().is_some() {
-            self.stage_provisional_capture();
+            // Gated on the SEND latch above, so finish evidence exists.
+            self.stage_provisional_capture(true);
         }
     }
 
@@ -712,44 +719,19 @@ impl SessionState {
         self.capture_quali_segment();
         // The official classification (packet 8) is a SINGLE datagram sent right
         // at the session boundary — easily lost online, where the lobby cuts
-        // over the moment the race ends. A finished race/quali session whose
-        // classification never arrived still gets archived and announced:
-        // stage a snapshot now, marked provisional by its missing
-        // classification. The stage survives this reset (same latch the packet-8
-        // path uses); the listener drains it right after this packet.
-        // Restarting or abandoning a session ALSO changes the UID with no
-        // classification — by shape alone that's identical to a lost packet 8,
-        // and archiving it would post an unfinished attempt as a result. The
-        // chequered flag (CHQF) / session-end (SEND) events are the evidence the
-        // session actually finished: the flag is broadcast when the leader takes
-        // it, well before the boundary, so it survives the lobby cut that loses
-        // the single classification datagram — and a restart never waves it.
-        // (event_tally still holds the outgoing session's events here; it's
-        // cleared below.)
-        if self.event_tally.contains_key("CHQF") || self.event_tally.contains_key("SEND") {
-            self.stage_provisional_capture();
-        }
-        // A qualifying session can end with NO evidence at all — no packet 8,
-        // no flag, no SEND — when the driver retires and instantly advances
-        // (the game simulates the rest off-feed). Whether it truly finished
-        // isn't knowable until the next session identifies itself: hold a
-        // snapshot, and let the Session-packet arm archive it if the race
-        // follows at this track (a restarted segment drops it instead).
-        self.pending_quali_finish = None;
-        if session_category_of(self.session.as_ref().map(|s| s.session_type))
-            == SessionCategory::Qualifying
-            && !self.provisional_staged
-            && self.pending_auto_archive.is_none()
-            && self.final_classification.is_none()
-        {
-            let raced = self
-                .drivers
-                .values()
-                .any(|d| !d.name.is_empty() && (d.best_lap_ms > 0 || d.current_lap_num > 1));
-            if raced || !self.quali_segments.is_empty() {
-                self.pending_quali_finish = Some(Box::new(self.snapshot()));
-            }
-        }
+        // over the moment the race ends. Some exits send no evidence at ALL
+        // (retire-and-advance simulates the rest off-feed). The archive must
+        // not depend on proving the session ended, so a raced race/quali that
+        // reaches this boundary unclassified is ALWAYS archived — the pattern
+        // the mature UDP apps use (f1laps syncs continuously; pits-n-giggles
+        // saves "just in case" at every boundary). What the evidence decides is
+        // ANNOUNCING: only a session with a chequered flag / SEND behind it may
+        // post to Discord, so a restarted attempt can never announce a false
+        // result. An abandoned attempt's silent record is later superseded by
+        // the re-run's capture (see auto_archive_session).
+        let finished =
+            self.event_tally.contains_key("CHQF") || self.event_tally.contains_key("SEND");
+        self.stage_provisional_capture(finished);
         // A crash inside the final hold-back window must still announce: compose
         // its line from the OUTGOING session's incidents and drivers before the
         // wipe erases them. The queued announcements survive the reset — the
@@ -2323,27 +2305,32 @@ mod tests {
         st.ingest(&event("A", chequered()), 0.0);
         // The lobby cuts over; packet 8 (single datagram) never arrived.
         st.ingest(&session("B", 15), 0.0);
-        let snap = st.take_pending_auto_archive().expect("provisional staged");
+        let (snap, announce) = st
+            .take_pending_auto_archive_with_announce()
+            .expect("provisional staged");
         assert_eq!(snap.session_uid, "A", "the FINISHED session is archived");
         assert!(snap.final_classification.is_none(), "provisional by shape");
+        assert!(announce, "the flag is finish evidence - this one may post");
         assert_eq!(snap.drivers.len(), 1);
         assert_eq!(snap.drivers[0].best_lap_ms, 80_000);
     }
 
     #[test]
-    fn restarted_or_abandoned_session_stages_no_provisional() {
+    fn restarted_or_abandoned_session_archives_silently() {
         // Laps were driven, but no chequered flag / session end ever arrived:
-        // the driver restarted (or quit) mid-race. Same UID-change shape as a
-        // lost packet 8 — the missing finish evidence is what tells them apart.
+        // the driver restarted (or quit) mid-race. The data is still archived —
+        // no exit path may lose a session — but with announce=false, so an
+        // unfinished attempt can never post to Discord as a result.
         let mut st = SessionState::new();
         st.ingest(&session("A", 15), 0.0);
         st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
         st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
         st.ingest(&session("B", 15), 0.0);
-        assert!(
-            st.take_pending_auto_archive().is_none(),
-            "an unfinished attempt is not a result"
-        );
+        let (snap, announce) = st
+            .take_pending_auto_archive_with_announce()
+            .expect("just-in-case archive staged");
+        assert_eq!(snap.session_uid, "A");
+        assert!(!announce, "no finish evidence - never announced");
     }
 
     #[test]
@@ -2435,33 +2422,26 @@ mod tests {
     }
 
     #[test]
-    fn advancing_to_the_race_archives_the_unclassified_quali() {
+    fn advancing_out_of_quali_archives_it_without_any_evidence() {
         let mut st = SessionState::new();
         st.ingest(&session("A", 7), 0.0); // Q3
         st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
         st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
-        // Instant advance: no chequered flag, no SEND, no packet 8 — the race
-        // simply begins at the same track. Reaching it proves quali ended.
-        st.ingest(&session("B", 15), 1.0);
-        let snap = st.take_pending_auto_archive().expect("quali archived");
+        // Instant advance: no chequered flag, no SEND, no packet 8 — the game
+        // simulated the rest off-feed. The boundary itself archives the data
+        // (just-in-case), silently.
+        st.ingest(&laps("B", vec![]), 1.0);
+        let (snap, announce) = st
+            .take_pending_auto_archive_with_announce()
+            .expect("quali archived");
         assert_eq!(snap.session_uid, "A");
         assert!(snap.final_classification.is_none(), "provisional by shape");
+        assert!(!announce, "no evidence - archive only, no Discord post");
         assert_eq!(
             snap.quali_segments.len(),
             1,
             "the stacked segments travel with the archive"
         );
-    }
-
-    #[test]
-    fn a_restarted_quali_segment_archives_nothing() {
-        let mut st = SessionState::new();
-        st.ingest(&session("A", 7), 0.0); // Q3
-        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
-        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
-        // Q3 again: an abandoned attempt, not a finished qualifying.
-        st.ingest(&session("B", 7), 1.0);
-        assert!(st.take_pending_auto_archive().is_none());
     }
 
     #[test]

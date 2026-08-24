@@ -411,9 +411,9 @@ fn spawn_listener(
                         let staged = {
                             let mut r = race.lock().unwrap_or_else(|p| p.into_inner());
                             r.stage_provisional_on_stop();
-                            r.take_pending_auto_archive()
+                            r.take_pending_auto_archive_with_announce()
                         };
-                        if let Some(snap) = staged {
+                        if let Some((snap, announce)) = staged {
                             process_staged_result(
                                 &app,
                                 &race,
@@ -423,6 +423,7 @@ fn spawn_listener(
                                 &discord_tx,
                                 &log_path,
                                 snap,
+                                announce,
                             );
                         }
                         return InnerExit::Stopped;
@@ -640,7 +641,7 @@ fn spawn_listener(
                                 if !prev_uid.is_empty() && prev_uid != r.session_uid() {
                                     session_changed = Some(r.session_uid().to_string());
                                 }
-                                auto_archive_snap = r.take_pending_auto_archive();
+                                auto_archive_snap = r.take_pending_auto_archive_with_announce();
                                 announcements = r.take_pending_announcements();
                                 if engineer_enabled.load(Ordering::Relaxed)
                                     && last_engineer_eval.elapsed() >= ENGINEER_EVAL
@@ -676,7 +677,7 @@ fn spawn_listener(
                             // A result was staged (official classification, or the
                             // provisional fallback): archive it (off the race lock) so
                             // the next session's wipe or an app close can't destroy it.
-                            if let Some(snap) = auto_archive_snap {
+                            if let Some((snap, announce)) = auto_archive_snap {
                                 process_staged_result(
                                     &app,
                                     &race,
@@ -686,6 +687,7 @@ fn spawn_listener(
                                     &discord_tx,
                                     &log_path,
                                     snap,
+                                    announce,
                                 );
                             }
                             // Run the rules + emit OFF the race lock. Each callout is
@@ -707,9 +709,9 @@ fn spawn_listener(
                             let staged = {
                                 let mut r = race.lock().unwrap_or_else(|p| p.into_inner());
                                 r.stage_provisional_if_due(now_ms());
-                                r.take_pending_auto_archive()
+                                r.take_pending_auto_archive_with_announce()
                             };
-                            if let Some(snap) = staged {
+                            if let Some((snap, announce)) = staged {
                                 process_staged_result(
                                     &app,
                                     &race,
@@ -719,6 +721,7 @@ fn spawn_listener(
                                     &discord_tx,
                                     &log_path,
                                     snap,
+                                    announce,
                                 );
                             }
                         }
@@ -798,6 +801,7 @@ fn process_staged_result(
     discord_tx: &std::sync::mpsc::SyncSender<DiscordJob>,
     log_path: &Option<PathBuf>,
     snap: Box<SessionSnapshot>,
+    announce: bool,
 ) {
     // An official classification landing after this session's provisional
     // result already went out (late or replayed packet 8) upgrades the archive
@@ -822,13 +826,18 @@ fn process_staged_result(
                 "official - upgrades posted provisional, not re-posting"
             } else if snap.final_classification.is_some() {
                 "official"
-            } else {
+            } else if announce {
                 "missing - provisional"
+            } else {
+                "missing - just-in-case archive, not announcing"
             }
         ),
     );
     auto_archive_session(app, history, store, &snap, log_path);
-    if already_posted {
+    // A just-in-case boundary capture (no finish evidence) archives silently:
+    // it may be an abandoned attempt, and an abandoned attempt must never be
+    // announced as a result.
+    if already_posted || !announce {
         return;
     }
     // Same trigger posts the result to Discord — either the official
@@ -890,21 +899,7 @@ fn auto_archive_session(
     for id in stale_quali_auto_records(a.list(), &value, &snap.session_uid) {
         a.delete(&id);
     }
-    // A provisional capture of this same session may already be on disk (grace
-    // fallback); an official classification arriving after it (late or replayed
-    // packet 8) supersedes it — replace, never duplicate. Keyed on the record's
-    // auto flag, never its display name (the user can rename); manual saves and
-    // pinned records stay.
-    let superseded: Vec<String> = a
-        .list()
-        .iter()
-        .filter(|r| !r.pinned && r.auto)
-        .filter(|r| {
-            r.snapshot.get("sessionUid").and_then(|v| v.as_str()) == Some(snap.session_uid.as_str())
-        })
-        .map(|r| r.id.clone())
-        .collect();
-    for id in superseded {
+    for id in superseded_auto_records(a.list(), &value, &snap.session_uid) {
         a.delete(&id);
     }
     let id = a.save_auto(&auto_session_name(snap), value, now_ms());
@@ -941,6 +936,47 @@ fn auto_session_name(snap: &SessionSnapshot) -> String {
         (None, Some(s)) => format!("{s} (auto)"),
         (None, None) => "Session (auto)".into(),
     }
+}
+
+/// The auto records an incoming capture supersedes, keyed on the record's auto
+/// flag, never its display name (the user can rename). Two cases:
+///  - the same session re-captured (same UID): a late/replayed official
+///    classification upgrades an already-archived provisional;
+///  - an abandoned attempt's just-in-case capture (same track and sessionType,
+///    still provisional, different UID): the re-run's capture replaces it, so
+///    restarts don't accumulate silent duplicates in history.
+/// Pinned records and manual saves are never candidates.
+fn superseded_auto_records(
+    records: &[SessionRecord],
+    incoming: &serde_json::Value,
+    incoming_uid: &str,
+) -> Vec<String> {
+    let session_of = |v: &serde_json::Value, key: &str| -> Option<i64> {
+        v.get("session")
+            .and_then(|s| s.get(key))
+            .and_then(|t| t.as_i64())
+    };
+    let (track, stype) = (
+        session_of(incoming, "trackId"),
+        session_of(incoming, "sessionType"),
+    );
+    records
+        .iter()
+        .filter(|r| !r.pinned && r.auto)
+        .filter(|r| {
+            let same_uid =
+                r.snapshot.get("sessionUid").and_then(|v| v.as_str()) == Some(incoming_uid);
+            let abandoned_attempt = !same_uid
+                && track.is_some()
+                && session_of(&r.snapshot, "trackId") == track
+                && session_of(&r.snapshot, "sessionType") == stype
+                && r.snapshot
+                    .get("finalClassification")
+                    .map_or(true, |v| v.is_null());
+            same_uid || abandoned_attempt
+        })
+        .map(|r| r.id.clone())
+        .collect()
 }
 
 /// The auto records an incoming qualifying-segment capture supersedes: earlier
@@ -1516,6 +1552,36 @@ mod tests {
             auto,
             snapshot,
         }
+    }
+
+    #[test]
+    fn abandoned_attempt_records_are_superseded_by_the_rerun() {
+        let snap_json = |uid: &str, track: i64, stype: i64, official: bool| {
+            let mut v = serde_json::json!({
+                "sessionUid": uid,
+                "sessionCategory": "race",
+                "session": { "trackId": track, "sessionType": stype },
+            });
+            if official {
+                v["finalClassification"] = serde_json::json!({ "numCars": 1 });
+            }
+            v
+        };
+        let records = vec![
+            // The abandoned first attempt: provisional, same track + type.
+            record("aborted", true, false, snap_json("A", 13, 15, false)),
+            // An OFFICIAL record at the same track + type: a real result, kept.
+            record("official", true, false, snap_json("B", 13, 15, true)),
+            // A manual save: never touched, whatever it contains.
+            record("manual", false, false, snap_json("A", 13, 15, false)),
+            // Different track: unrelated weekend.
+            record("other", true, false, snap_json("C", 21, 15, false)),
+        ];
+        let incoming = snap_json("D", 13, 15, true);
+        assert_eq!(
+            superseded_auto_records(&records, &incoming, "D"),
+            vec!["aborted".to_string()]
+        );
     }
 
     #[test]
