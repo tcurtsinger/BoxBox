@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { deriveCallouts, extractPlayerFrame, PRIORITY, type PlayerFrame } from "./callouts";
 import type { EngineerCategories } from "../shell/shell-context";
+import type { RaceSnapshot, LiveDriver } from "../modes/timing/liveGrid";
 import { sampleFrames } from "./sampleScript";
 
 const ALL: EngineerCategories = {
@@ -74,6 +75,35 @@ describe("gap & position callouts", () => {
 
   it("announces coming into DRS range", () => {
     expect(texts(frame({ intervalAheadSec: 1.5 }), frame({ intervalAheadSec: 0.8 })).some((t) => /DRS/i.test(t))).toBe(true);
+  });
+
+  /** Callout texts for a gap closing across two extracted frames — whether DRS
+   *  is announced is decided entirely by the interval gate in extractPlayerFrame. */
+  function drsTexts(over: Partial<LiveDriver>, sessionCategory: string, deltas: [number, number]): string[] {
+    const snap = (deltaToCarAheadMS: number): RaceSnapshot => {
+      const s = sampleFrames()[0];
+      s.sessionCategory = sessionCategory;
+      Object.assign(s.drivers.find((d) => d.index === 0)!, { deltaToCarAheadMS, ...over });
+      return s;
+    };
+    return texts(extractPlayerFrame(snap(deltas[0]))!, extractPlayerFrame(snap(deltas[1]))!);
+  }
+
+  it("announces DRS when genuinely racing on track", () => {
+    expect(drsTexts({ pitStatus: 0, driverStatus: 4 }, "race", [1_500, 800]).some((t) => /DRS/i.test(t))).toBe(true);
+  });
+
+  it("stays silent in the pit lane", () => {
+    expect(drsTexts({ pitStatus: 1, driverStatus: 4 }, "race", [1_500, 800]).some((t) => /DRS/i.test(t))).toBe(false);
+  });
+
+  it("stays silent when the game zeroes the delta", () => {
+    // On-track gap 1.5s, then the off-track 0 — the old pit-entry misfire shape.
+    expect(drsTexts({ pitStatus: 0, driverStatus: 4 }, "race", [1_500, 0]).some((t) => /DRS/i.test(t))).toBe(false);
+  });
+
+  it("stays silent outside a race", () => {
+    expect(drsTexts({ pitStatus: 0, driverStatus: 1 }, "qualifying", [1_500, 800]).some((t) => /DRS/i.test(t))).toBe(false);
   });
 });
 
