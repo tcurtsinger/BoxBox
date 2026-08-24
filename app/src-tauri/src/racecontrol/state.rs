@@ -817,10 +817,24 @@ impl SessionState {
         // situation allowed to supersede that session's just-in-case record.
         // Set AFTER the staging above, which consumed the outgoing session's
         // own replaces_session_uid.
+        //
+        // An attempt that never archived anything (restarted before racing)
+        // has no record to supersede — naming IT would orphan the last
+        // archived attempt's record forever. Point the chain at the last
+        // attempt that DID archive instead, so rapid restart chains still
+        // clean up.
+        let archived_something = self.provisional_staged || self.final_classification.is_some();
+        let chain_uid = if archived_something {
+            self.session_uid.clone()
+        } else {
+            self.replaces_session_uid
+                .take()
+                .unwrap_or_else(|| self.session_uid.clone())
+        };
         self.prior_session = self
             .session
             .as_ref()
-            .map(|s| (self.session_uid.clone(), s.track_id, s.session_type));
+            .map(|s| (chain_uid, s.track_id, s.session_type));
         self.replaces_session_uid = None;
         self.session_uid = uid;
         self.session = None;
@@ -2505,6 +2519,35 @@ mod tests {
             .expect("B archived");
         assert_eq!(snap.session_uid, "B");
         assert_eq!(supersedes.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn the_chain_skips_attempts_that_never_archived() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0); // a race, raced
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&session("B", 15), 1.0);
+        assert!(st.take_pending_auto_archive_with_announce().is_some());
+        // B is restarted before anyone races: it archives nothing, and must
+        // not swallow the chain link to A's record.
+        st.ingest(&session("C", 15), 2.0);
+        assert!(
+            st.take_pending_auto_archive_with_announce().is_none(),
+            "an empty attempt stages nothing"
+        );
+        st.ingest(&participants("C", vec![participant(0, "Rossi", 1)]), 2.0);
+        st.ingest(&laps("C", vec![lap_entry(0, 1, 1, 79_000, 5)]), 2.0);
+        st.ingest(&session("D", 15), 3.0);
+        let (snap, _, supersedes) = st
+            .take_pending_auto_archive_with_announce()
+            .expect("C archived");
+        assert_eq!(snap.session_uid, "C");
+        assert_eq!(
+            supersedes.as_deref(),
+            Some("A"),
+            "the chain names the last ARCHIVED attempt, skipping empty B"
+        );
     }
 
     #[test]
