@@ -188,20 +188,27 @@ function gapsPositionCallouts(prev: PlayerFrame, next: PlayerFrame): Callout[] {
     });
   }
 
-  // Into DRS range of the car ahead (crossing below the DRS gap).
+  return out;
+}
+
+// Into DRS range of the car ahead (crossing below the DRS gap). Its own
+// category so it can be muted without losing the position callouts.
+function drsCallouts(prev: PlayerFrame, next: PlayerFrame): Callout[] {
   if (
     prev.intervalAheadSec != null &&
     next.intervalAheadSec != null &&
     crossedBelow(prev.intervalAheadSec, next.intervalAheadSec, DRS_RANGE_SEC)
   ) {
-    out.push({
-      category: "gapsPosition",
-      priority: PRIORITY.position,
-      text: "Car ahead is within a second — DRS available.",
-      key: "drs-range",
-    });
+    return [
+      {
+        category: "drs",
+        priority: PRIORITY.position,
+        text: "Car ahead is within a second — DRS available.",
+        key: "drs-range",
+      },
+    ];
   }
-  return out;
+  return [];
 }
 
 function lapTimeCallouts(prev: PlayerFrame, next: PlayerFrame): Callout[] {
@@ -316,6 +323,7 @@ export function deriveCallouts(
   const out: Callout[] = [];
   if (categories.fuelTyres) out.push(...fuelTyresCallouts(prev, next));
   if (categories.gapsPosition) out.push(...gapsPositionCallouts(prev, next));
+  if (categories.drs) out.push(...drsCallouts(prev, next));
   if (categories.lapTimes) out.push(...lapTimeCallouts(prev, next));
   if (categories.flagsIncidents) out.push(...flagIncidentCallouts(prev, next));
   return out;

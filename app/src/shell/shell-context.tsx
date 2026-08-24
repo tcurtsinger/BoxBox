@@ -89,6 +89,7 @@ function loadConnection(): Connection {
 export interface EngineerCategories {
   fuelTyres: boolean;
   gapsPosition: boolean;
+  drs: boolean;
   lapTimes: boolean;
   flagsIncidents: boolean;
 }
@@ -108,7 +109,7 @@ const ENGINEER_STORAGE_KEY = "boxbox.engineer";
 
 const DEFAULT_ENGINEER: EngineerSettings = {
   enabled: false,
-  categories: { fuelTyres: true, gapsPosition: true, lapTimes: true, flagsIncidents: true },
+  categories: { fuelTyres: true, gapsPosition: true, drs: true, lapTimes: true, flagsIncidents: true },
   voiceURI: null,
   rate: 1,
   volume: 1,
