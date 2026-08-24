@@ -10,6 +10,7 @@
 use serde::Serialize;
 use std::collections::HashSet;
 
+use crate::racecontrol::state::SessionCategory;
 use crate::racecontrol::SessionSnapshot;
 
 // Higher speaks first / can pre-empt lower (matches the TS PRIORITY map).
@@ -112,7 +113,17 @@ pub fn extract_player_frame(snap: &SessionSnapshot) -> Option<PlayerFrame> {
         .map(|x| x.best_lap_ms)
         .min()
         .unwrap_or(0);
-    let interval = if d.position <= 1 {
+    // The game zeroes deltaToCarInFront whenever the car isn't genuinely racing
+    // on track (pits, garage, in/out laps), and outside a race the on-track
+    // delta is meaningless — the timing grid already ignores it there. A zeroed
+    // delta would read as "crossed below 1s" and misfire the DRS callout, so
+    // the interval is unknown unless the player is racing on track.
+    // driver_status: 1 = flying lap, 4 = on track.
+    let racing = snap.session_category == SessionCategory::Race
+        && d.pit_status == 0
+        && matches!(d.driver_status, 1 | 4)
+        && d.delta_to_car_ahead_ms > 0;
+    let interval = if d.position <= 1 || !racing {
         None
     } else {
         Some(d.delta_to_car_ahead_ms as f32 / 1000.0)
@@ -583,6 +594,79 @@ mod tests {
         p.interval_ahead = Some(1.5);
         n.interval_ahead = Some(0.8);
         assert!(texts(p, n).iter().any(|t| t.contains("DRS")));
+    }
+
+    /// Two extracted frames with the given knobs, gap closing across them —
+    /// whether DRS is announced is decided entirely by the interval gate.
+    fn drs_texts(
+        category: crate::racecontrol::state::SessionCategory,
+        pit_status: u8,
+        driver_status: u8,
+        deltas: (u32, u32),
+    ) -> Vec<String> {
+        use crate::racecontrol::state::DriverState;
+        use crate::racecontrol::SessionSnapshot;
+
+        let snap = |delta_ms: u32| -> SessionSnapshot {
+            let mut d = DriverState::default();
+            d.index = 0;
+            d.position = 3;
+            d.telemetry_public = true;
+            d.fuel_remaining_laps = 1.0;
+            d.tyre_wear = vec![10.0; 4];
+            d.pit_status = pit_status;
+            d.driver_status = driver_status;
+            d.delta_to_car_ahead_ms = delta_ms;
+            SessionSnapshot {
+                format: 2025,
+                game_year: 25,
+                session_uid: "A".into(),
+                session_time: 0.0,
+                session: None,
+                session_category: category,
+                track_name: None,
+                is_spectating: false,
+                spectator_car_index: 255,
+                player_car_index: 0,
+                num_active_cars: 1,
+                drivers: vec![d],
+                incidents: vec![],
+                final_classification: None,
+                quali_segments: vec![],
+                packet_count: 1,
+                last_update: 0.0,
+                last_packet_at: 0.0,
+            }
+        };
+        let p = extract_player_frame(&snap(deltas.0)).unwrap();
+        let n = extract_player_frame(&snap(deltas.1)).unwrap();
+        texts(p, n)
+    }
+
+    #[test]
+    fn drs_announced_when_racing_on_track() {
+        let out = drs_texts(SessionCategory::Race, 0, 4, (1_500, 800));
+        assert!(out.iter().any(|t| t.contains("DRS")));
+    }
+
+    #[test]
+    fn drs_silent_in_the_pit_lane() {
+        let out = drs_texts(SessionCategory::Race, 1, 4, (1_500, 800));
+        assert!(!out.iter().any(|t| t.contains("DRS")));
+    }
+
+    #[test]
+    fn drs_silent_when_the_game_zeroes_the_delta() {
+        // On-track gap 1.5s, then the delta drops to the game's off-track 0 —
+        // exactly the pit-entry shape that used to read as "crossed below 1s".
+        let out = drs_texts(SessionCategory::Race, 0, 4, (1_500, 0));
+        assert!(!out.iter().any(|t| t.contains("DRS")));
+    }
+
+    #[test]
+    fn drs_silent_outside_a_race() {
+        let out = drs_texts(SessionCategory::Qualifying, 0, 1, (1_500, 800));
+        assert!(!out.iter().any(|t| t.contains("DRS")));
     }
 
     #[test]

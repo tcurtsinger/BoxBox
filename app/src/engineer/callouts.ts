@@ -52,7 +52,7 @@ export interface PlayerFrame {
   fuelLaps: number; // margin: laps of fuel surplus (+) / shortfall (−)
   tyreWear: number[]; // per corner, [RL, RR, FL, FR]
   fiaFlag: number; // -1 unknown, 0 none, 1 green, 2 blue, 3 yellow, 4 red
-  intervalAheadSec: number | null; // null when leading
+  intervalAheadSec: number | null; // null when leading or the delta isn't live (pits, off-track, non-race)
   /** Session-wide events (safety car, red/chequered flag), by incident id.
    *  safetyCarType: 1 = full safety car, 2 = virtual (spec: SafetyCar union). */
   sessionEvents: { id: string; code: string; safetyCarType: number | null }[];
@@ -99,6 +99,17 @@ export function extractPlayerFrame(snap: RaceSnapshot): PlayerFrame | null {
   if (idx == null || idx >= 255) return null;
   const d = snap.drivers.find((x) => x.index === idx);
   if (!d) return null;
+  // The game zeroes deltaToCarAheadMS whenever the car isn't genuinely racing
+  // on track (pits, garage, in/out laps), and outside a race the on-track delta
+  // is meaningless — the timing grid already ignores it there. A zeroed delta
+  // would read as "crossed below 1s" and misfire the DRS callout, so the
+  // interval is unknown unless the player is racing on track. driverStatus:
+  // 1 = flying lap, 4 = on track; absent (pre-field saved replays) counts as valid.
+  const racing =
+    snap.sessionCategory === "race" &&
+    d.pitStatus === 0 &&
+    (d.driverStatus === undefined || d.driverStatus === 1 || d.driverStatus === 4) &&
+    d.deltaToCarAheadMS > 0;
   return {
     carIndex: idx,
     position: d.position,
@@ -109,7 +120,7 @@ export function extractPlayerFrame(snap: RaceSnapshot): PlayerFrame | null {
     fuelLaps: d.fuelRemainingLaps,
     tyreWear: d.tyreWear ?? [],
     fiaFlag: d.fiaFlags,
-    intervalAheadSec: d.position <= 1 ? null : d.deltaToCarAheadMS / 1000,
+    intervalAheadSec: d.position <= 1 || !racing ? null : d.deltaToCarAheadMS / 1000,
     sessionEvents: sessionEvents(snap.incidents),
     playerEvents: playerEvents(snap.incidents, idx),
   };
