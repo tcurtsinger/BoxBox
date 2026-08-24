@@ -58,7 +58,7 @@ pub enum IncidentSource {
 
 /// Incident log held across a qualifying UID reset, waiting for the next
 /// Session packet to rule on continuation (see `reset_for_session`).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct HeldQualiIncidents {
     track_id: i8,
     /// The OUTGOING segment's session type — a continuation must progress past
@@ -68,6 +68,9 @@ struct HeldQualiIncidents {
     /// incident of the NEW session that arrived before its first Session
     /// packet (event packets can precede it) survives.
     count: usize,
+    /// Outgoing car index → race number: the stable identity used to remap the
+    /// held incidents onto the next segment's re-packed indices.
+    numbers: HashMap<u8, u8>,
 }
 
 /// A steward's decision. `outcome` is free text, set when an incident is approved.
@@ -112,6 +115,13 @@ pub struct Incident {
     pub code: String,
     pub label: String,
     pub car_indices: Vec<u8>,
+    /// The involved cars resolved to "16 Rossi" labels at creation, aligned
+    /// with `car_indices`. Car indices are only stable within one game session
+    /// (qualifying re-packs them each segment), so this is the identity that
+    /// survives an incident log held across segments — the UI falls back to it
+    /// when an index no longer resolves. Empty on pre-field records.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub car_names: Vec<String>,
     pub detail: HashMap<String, f64>,
     /// Per-car damage attributed to this incident (collisions only; empty and
     /// omitted from the JSON otherwise, so older saved snapshots match).
@@ -336,6 +346,10 @@ pub struct SessionState {
     // waiting for the next Session packet to rule on continuation — see
     // reset_for_session and the Session-packet arm.
     incidents_held_from_quali: Option<HeldQualiIncidents>,
+    // A confirmed continuation still speaks the OLD segment's car indices:
+    // (index→race-number map, held prefix length), applied when the new
+    // segment's first Participants packet names the re-packed grid.
+    pending_incident_remap: Option<(HashMap<u8, u8>, usize)>,
     // Open damage watches: one per car per recent collision, measuring what the
     // contact cost against the CarDamage packets that follow. Bounded.
     damage_watch: Vec<DamageWatch>,
@@ -488,12 +502,24 @@ impl SessionState {
                 // a new-session incident that arrived before this Session
                 // packet survives (its id is already unique — the counter was
                 // never rewound).
+                // Continuation means the SAME knockout sequence: Q1→Q2→Q3 or
+                // SS1→SS2→SS3. A different quali format at the same circuit
+                // (Short/OSQ, a shootout after a quali) is a new event.
                 if let Some(held) = self.incidents_held_from_quali.take() {
-                    let continues = session_category_of(Some(s.session_type))
-                        == SessionCategory::Qualifying
-                        && s.track_id == held.track_id
+                    let family = |t: u8| match t {
+                        5..=7 => Some("quali"),
+                        10..=12 => Some("shootout"),
+                        _ => None,
+                    };
+                    let continues = s.track_id == held.track_id
+                        && family(held.session_type).is_some()
+                        && family(s.session_type) == family(held.session_type)
                         && s.session_type > held.session_type;
-                    if !continues {
+                    if continues {
+                        // The new segment re-packs car indices: remap the held
+                        // incidents once its Participants packet names the grid.
+                        self.pending_incident_remap = Some((held.numbers, held.count));
+                    } else {
                         self.incidents.drain(..held.count.min(self.incidents.len()));
                     }
                 }
@@ -721,6 +747,12 @@ impl SessionState {
                     track_id: s.track_id,
                     session_type: s.session_type,
                     count: self.incidents.len(),
+                    numbers: self
+                        .drivers
+                        .values()
+                        .filter(|d| d.race_number > 0)
+                        .map(|d| (d.index, d.race_number))
+                        .collect(),
                 })
             }
             _ => None,
@@ -729,6 +761,9 @@ impl SessionState {
             self.incidents.clear();
             self.next_incident_id = 1;
         }
+        // A remap the previous segment never applied (its Participants packet
+        // never came) is meaningless against yet another new grid.
+        self.pending_incident_remap = None;
         self.session_uid = uid;
         self.session = None;
         self.drivers.clear();
@@ -778,14 +813,26 @@ impl SessionState {
     // Captured qualifying segments for the CURRENT track only (so a previous
     // weekend's segments can't leak into this weekend's report), sorted Q1 -> Q3.
     // While the session is unresolved (a reset just ran; the next Session packet
-    // hasn't arrived) the segments stay exposed — that between-segments gap is
-    // exactly where the tower needs them to keep showing the standings.
+    // hasn't arrived) the segments stay exposed only when the outgoing segment
+    // was INTERMEDIATE (Q1/Q2, SS1/SS2) — that between-segments gap is where the
+    // tower needs them. After a final segment the next session is normally the
+    // race, and its rollover must not show qualifying standings.
     fn quali_segments_view(&self) -> Vec<QualiSegment> {
-        let current_track = self.session.as_ref().map(|s| s.track_id);
-        if (current_track.is_some() && current_track != self.quali_track_id)
-            || self.quali_track_id.is_none()
-        {
-            return Vec::new();
+        match self.session.as_ref().map(|s| s.track_id) {
+            None => {
+                let intermediate = self
+                    .incidents_held_from_quali
+                    .as_ref()
+                    .is_some_and(|h| matches!(h.session_type, 5 | 6 | 10 | 11));
+                if !intermediate {
+                    return Vec::new();
+                }
+            }
+            current => {
+                if current != self.quali_track_id {
+                    return Vec::new();
+                }
+            }
         }
         let mut segs: Vec<QualiSegment> = self
             .quali_segments
@@ -854,6 +901,49 @@ impl SessionState {
             d.telemetry_public = e.telemetry_public;
             d.show_online_names = e.show_online_names;
             d.livery_colours = e.livery_colours.clone();
+        }
+        // Incidents held from the previous quali segment still speak the OLD
+        // segment's car indices, which the game re-packs each segment. Race
+        // numbers are the stable identity: rewrite the held prefix onto this
+        // grid. A knocked-out car has no index here any more — its entries keep
+        // their stored labels (car_names) but lose the live link (255, the
+        // game's own "no value" sentinel, which the UI resolves via the label).
+        if let Some((numbers, count)) = self.pending_incident_remap.take() {
+            let by_number: HashMap<u8, u8> = self
+                .drivers
+                .values()
+                .filter(|d| d.race_number > 0)
+                .map(|d| (d.race_number, d.index))
+                .collect();
+            let remap = |old: u8| -> u8 {
+                numbers
+                    .get(&old)
+                    .and_then(|n| by_number.get(n))
+                    .copied()
+                    .unwrap_or(255)
+            };
+            for inc in self.incidents.iter_mut().take(count) {
+                for i in inc.car_indices.iter_mut() {
+                    *i = remap(*i);
+                }
+                for key in ["vehicleIdx", "otherVehicleIdx", "faultCarIdx"] {
+                    if let Some(&v) = inc.detail.get(key) {
+                        match remap(v as u8) {
+                            255 => {
+                                inc.detail.remove(key);
+                            }
+                            mapped => {
+                                inc.detail.insert(key.to_string(), f64::from(mapped));
+                            }
+                        }
+                    }
+                }
+                // Damage of a departed car keeps no meaningful anchor — drop it.
+                inc.damage.retain_mut(|d| {
+                    d.car_index = remap(d.car_index);
+                    d.car_index != 255
+                });
+            }
         }
     }
 
@@ -1296,6 +1386,7 @@ impl SessionState {
                 .push((id.to_string(), session_time));
         }
 
+        let car_names = car_indices.iter().map(|&i| self.car_label(i)).collect();
         self.incidents.push(Incident {
             id: id.to_string(),
             source: IncidentSource::Auto,
@@ -1304,6 +1395,7 @@ impl SessionState {
             code,
             label,
             car_indices,
+            car_names,
             detail,
             damage: Vec::new(),
             status: IncidentStatus::Logged,
@@ -1476,11 +1568,13 @@ impl SessionState {
             .max()
             .unwrap_or(0);
         let car_indices = self.sanitize_car_indices(car_indices);
+        let car_names = car_indices.iter().map(|&i| self.car_label(i)).collect();
         let id = self.next_incident_id;
         self.next_incident_id += 1;
         let incident = Incident {
             id: id.to_string(),
             source: IncidentSource::Manual,
+            car_names,
             session_time: self.session_time,
             lap_num: if leader_lap > 0 {
                 Some(leader_lap as u32)
@@ -2238,6 +2332,62 @@ mod tests {
         let snap = st.snapshot();
         assert_eq!(snap.incidents.len(), 1, "only the quali log was dropped");
         assert_eq!(snap.incidents[0].car_indices, vec![2, 3]);
+    }
+
+    #[test]
+    fn held_incidents_remap_to_the_new_segments_indices() {
+        let num = |index: usize, name: &str, number: u8| ParticipantEntry {
+            index,
+            name: name.into(),
+            race_number: number,
+            ..Default::default()
+        };
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 5), 0.0); // Q1
+        st.ingest(
+            &participants("A", vec![num(0, "Rossi", 46), num(1, "Vane", 7)]),
+            0.0,
+        );
+        st.ingest(&event_at("A", coll(0, 1, Some(2)), 10.0), 0.0);
+        // Q2 re-packs the grid: Rossi is now index 3; Vane was knocked out.
+        st.ingest(&session("B", 6), 1.0);
+        st.ingest(&participants("B", vec![num(3, "Rossi", 46)]), 1.0);
+        let snap = st.snapshot();
+        let inc = &snap.incidents[0];
+        assert_eq!(
+            inc.car_indices,
+            vec![3, 255],
+            "Rossi follows his number; the knocked-out car loses its live link"
+        );
+        assert_eq!(
+            inc.car_names,
+            vec!["46 Rossi".to_string(), "7 Vane".to_string()],
+            "creation-time labels keep the identity the index lost"
+        );
+    }
+
+    #[test]
+    fn a_different_quali_format_is_not_a_continuation() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 5), 0.0); // Q1
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&event_at("A", coll(0, 1, Some(2)), 10.0), 0.0);
+        // Short Qualifying (8) at the same circuit: a new event, not Q2 —
+        // numeric progression alone must not carry the log over.
+        st.ingest(&session("B", 8), 1.0);
+        assert!(st.snapshot().incidents.is_empty());
+    }
+
+    #[test]
+    fn segments_hide_in_the_gap_after_the_final_segment() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 7), 0.0); // Q3
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        // The next UID's first packet isn't a Session packet — but after the
+        // FINAL segment that gap is the race rollover, not more qualifying.
+        st.ingest(&laps("B", vec![]), 1.0);
+        assert!(st.snapshot().quali_segments.is_empty());
     }
 
     #[test]

@@ -835,6 +835,7 @@ mod tests {
                 code: "PENA".into(),
                 label: "Corner cutting, gained time".into(),
                 car_indices: vec![penalised, other],
+                car_names: Vec::new(),
                 detail,
                 damage: Vec::new(),
                 status: IncidentStatus::Logged,

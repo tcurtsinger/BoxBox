@@ -38,6 +38,10 @@ export interface RawIncident {
   code: string;
   label: string;
   carIndices: number[];
+  /** Car labels resolved at creation, aligned with carIndices. The fallback
+   *  identity for incidents held across quali segments, where an index may no
+   *  longer resolve (car knocked out). Absent on pre-field records. */
+  carNames?: string[];
   detail: Record<string, number>;
   /** Present on collisions once the damage watcher has attributed something. */
   damage?: RawIncidentDamage[];
@@ -150,10 +154,13 @@ export function toUIIncidents(snap: IncidentSnapshot): UIIncident[] {
     // when a penalty named the same pair: the offender leads the car list, the
     // detail says so in words, and the sanction rides the collision card too.
     const fault = raw.code === "COLL" ? raw.detail.faultCarIdx : undefined;
-    const indices =
+    // Index + creation-time label travel as a pair, so the fault reorder can't
+    // misalign a held incident's stored names.
+    const pairs = raw.carIndices.map((idx, k) => ({ idx, held: raw.carNames?.[k] }));
+    const ordered =
       fault != null && raw.carIndices.includes(fault)
-        ? [fault, ...raw.carIndices.filter((i) => i !== fault)]
-        : raw.carIndices;
+        ? [...pairs.filter((p) => p.idx === fault), ...pairs.filter((p) => p.idx !== fault)]
+        : pairs;
     const causedBy = fault != null ? `Caused by ${resolveCar(fault, byIndex).name}` : "";
     return {
       id: raw.id,
@@ -171,7 +178,11 @@ export function toUIIncidents(snap: IncidentSnapshot): UIIncident[] {
           : raw.code === "COLL"
             ? sanctionLabel(raw.detail.faultPenaltyType, raw.detail.faultPenaltyTime)
             : null,
-      cars: indices.map((i) => resolveCar(i, byIndex)),
+      // An index that no longer resolves (a knocked-out car in a held quali
+      // incident) falls back to the label captured at creation.
+      cars: ordered.map((p) =>
+        byIndex.has(p.idx) || !p.held ? resolveCar(p.idx, byIndex) : { index: p.idx, no: 0, name: p.held },
+      ),
       detail: [causedBy, formatDetail(raw.detail), formatDamage(raw.damage, byIndex)]
         .filter(Boolean)
         .join(" · "),
