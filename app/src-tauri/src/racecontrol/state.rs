@@ -350,6 +350,11 @@ pub struct SessionState {
     // (index→race-number map, held prefix length), applied when the new
     // segment's first Participants packet names the re-packed grid.
     pending_incident_remap: Option<(HashMap<u8, u8>, usize)>,
+    // Snapshot of a qualifying session that ended with neither a classification
+    // nor flag evidence (an instant "advance" skips both). The Session-packet
+    // arm archives it if the RACE follows at this track — reaching the race is
+    // itself proof qualifying ended — and drops it otherwise.
+    pending_quali_finish: Option<Box<SessionSnapshot>>,
     // Open damage watches: one per car per recent collision, measuring what the
     // contact cost against the CarDamage packets that follow. Bounded.
     damage_watch: Vec<DamageWatch>,
@@ -521,6 +526,18 @@ impl SessionState {
                         self.pending_incident_remap = Some((held.numbers, held.count));
                     } else {
                         self.incidents.drain(..held.count.min(self.incidents.len()));
+                    }
+                }
+                // A quali snapshot held at the last reset (see reset_for_session):
+                // the race starting at this track proves qualifying is over —
+                // archive it. Anything else (a restarted segment, a different
+                // event) discards it.
+                if let Some(held_snap) = self.pending_quali_finish.take() {
+                    let race_here = session_category_of(Some(s.session_type))
+                        == SessionCategory::Race
+                        && held_snap.session.as_ref().map(|q| q.track_id) == Some(s.track_id);
+                    if race_here && self.pending_auto_archive.is_none() {
+                        self.pending_auto_archive = Some(held_snap);
                     }
                 }
                 self.session = Some(s.clone());
@@ -711,6 +728,27 @@ impl SessionState {
         // cleared below.)
         if self.event_tally.contains_key("CHQF") || self.event_tally.contains_key("SEND") {
             self.stage_provisional_capture();
+        }
+        // A qualifying session can end with NO evidence at all — no packet 8,
+        // no flag, no SEND — when the driver retires and instantly advances
+        // (the game simulates the rest off-feed). Whether it truly finished
+        // isn't knowable until the next session identifies itself: hold a
+        // snapshot, and let the Session-packet arm archive it if the race
+        // follows at this track (a restarted segment drops it instead).
+        self.pending_quali_finish = None;
+        if session_category_of(self.session.as_ref().map(|s| s.session_type))
+            == SessionCategory::Qualifying
+            && !self.provisional_staged
+            && self.pending_auto_archive.is_none()
+            && self.final_classification.is_none()
+        {
+            let raced = self
+                .drivers
+                .values()
+                .any(|d| !d.name.is_empty() && (d.best_lap_ms > 0 || d.current_lap_num > 1));
+            if raced || !self.quali_segments.is_empty() {
+                self.pending_quali_finish = Some(Box::new(self.snapshot()));
+            }
         }
         // A crash inside the final hold-back window must still announce: compose
         // its line from the OUTGOING session's incidents and drivers before the
@@ -2394,6 +2432,36 @@ mod tests {
         // FINAL segment that gap is the race rollover, not more qualifying.
         st.ingest(&laps("B", vec![]), 1.0);
         assert!(st.snapshot().quali_segments.is_empty());
+    }
+
+    #[test]
+    fn advancing_to_the_race_archives_the_unclassified_quali() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 7), 0.0); // Q3
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        // Instant advance: no chequered flag, no SEND, no packet 8 — the race
+        // simply begins at the same track. Reaching it proves quali ended.
+        st.ingest(&session("B", 15), 1.0);
+        let snap = st.take_pending_auto_archive().expect("quali archived");
+        assert_eq!(snap.session_uid, "A");
+        assert!(snap.final_classification.is_none(), "provisional by shape");
+        assert_eq!(
+            snap.quali_segments.len(),
+            1,
+            "the stacked segments travel with the archive"
+        );
+    }
+
+    #[test]
+    fn a_restarted_quali_segment_archives_nothing() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 7), 0.0); // Q3
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        // Q3 again: an abandoned attempt, not a finished qualifying.
+        st.ingest(&session("B", 7), 1.0);
+        assert!(st.take_pending_auto_archive().is_none());
     }
 
     #[test]

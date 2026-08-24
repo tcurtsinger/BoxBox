@@ -307,7 +307,7 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
   const overallS2 = minOver((d) => d.bestS2MS ?? 0);
   const overallS3 = minOver((d) => d.bestS3MS ?? 0);
 
-  return drivers.map((d, i) => {
+  const live = drivers.map((d, i) => {
     const pos = i + 1; // snapshot is pre-sorted into running order
     const leader = pos === 1;
 
@@ -397,6 +397,17 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
       },
     };
   });
+  // A live qualifying segment only carries the surviving field: keep the
+  // earlier segments' knockouts stacked below it (dimmed, tagged with the
+  // segment that eliminated them), so the tower reads as one session across
+  // Q1/Q2/Q3 — same order the report shows.
+  if (snap.sessionCategory === "qualifying" && snap.qualiSegments.length > 0) {
+    const stacked = toQualifyingClassification(snap);
+    if (stacked && stacked.length > live.length) {
+      return [...live, ...stacked.slice(drivers.length).map(stackedRow)];
+    }
+  }
+  return live;
 }
 
 export interface SessionInfo {
