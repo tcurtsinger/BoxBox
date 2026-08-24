@@ -53,6 +53,10 @@ export interface PlayerFrame {
   tyreWear: number[]; // per corner, [RL, RR, FL, FR]
   fiaFlag: number; // -1 unknown, 0 none, 1 green, 2 blue, 3 yellow, 4 red
   intervalAheadSec: number | null; // null when leading or the delta isn't live (pits, off-track, non-race)
+  /** Position callouts only make sense when position IS the race: in quali or
+   *  practice the running order is best-lap resorting, and a driver yet to set
+   *  a time "drops" a place every time someone posts one. */
+  isRace: boolean;
   /** Session-wide events (safety car, red/chequered flag), by incident id.
    *  safetyCarType: 1 = full safety car, 2 = virtual (spec: SafetyCar union). */
   sessionEvents: { id: string; code: string; safetyCarType: number | null }[];
@@ -121,6 +125,7 @@ export function extractPlayerFrame(snap: RaceSnapshot): PlayerFrame | null {
     tyreWear: d.tyreWear ?? [],
     fiaFlag: d.fiaFlags,
     intervalAheadSec: d.position <= 1 || !racing ? null : d.deltaToCarAheadMS / 1000,
+    isRace: snap.sessionCategory === "race",
     sessionEvents: sessionEvents(snap.incidents),
     playerEvents: playerEvents(snap.incidents, idx),
   };
@@ -178,7 +183,7 @@ function fuelTyresCallouts(prev: PlayerFrame, next: PlayerFrame): Callout[] {
 function gapsPositionCallouts(prev: PlayerFrame, next: PlayerFrame): Callout[] {
   const out: Callout[] = [];
 
-  if (next.position !== prev.position && next.position > 0 && prev.position > 0) {
+  if (next.isRace && next.position !== prev.position && next.position > 0 && prev.position > 0) {
     const gained = next.position < prev.position;
     out.push({
       category: "gapsPosition",

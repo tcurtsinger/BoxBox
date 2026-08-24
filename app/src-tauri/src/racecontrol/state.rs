@@ -1323,10 +1323,16 @@ impl SessionState {
                 line.push_str(&format!(" · {} to {}", s, self.car_label(f)));
             }
         }
+        // "damage:" names what the percentages ARE — "front wing +30%" alone
+        // reads as a mystery stat; it's the damage the crash added.
         for d in &inc.damage {
             let parts = damage_parts(d);
             if !parts.is_empty() {
-                line.push_str(&format!(" · {}: {}", self.car_label(d.car_index), parts));
+                line.push_str(&format!(
+                    " · {} damage: {}",
+                    self.car_label(d.car_index),
+                    parts
+                ));
             }
         }
         Some(line)
@@ -2062,7 +2068,7 @@ mod tests {
         assert!(line.contains("13 Mantis hit 7 Vane"), "{line}");
         assert!(line.contains("+10s to 13 Mantis"), "{line}");
         assert!(
-            line.contains("13 Mantis: front wing +45%, floor +12%"),
+            line.contains("13 Mantis damage: front wing +45%, floor +12%"),
             "{line}"
         );
         assert!(posts[0].cars.is_empty(), "the line already names the cars");
