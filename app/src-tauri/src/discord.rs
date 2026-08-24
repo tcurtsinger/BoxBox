@@ -255,6 +255,24 @@ fn out_status(result_status: u8) -> Option<&'static str> {
     }
 }
 
+/// How many cars advance out of an intermediate qualifying segment, or None
+/// when the segment eliminates nobody (final segments, fields of 10 or fewer).
+/// Mirrors the knockout the game applies: qualifying runs down to a 10-car
+/// final segment with the drops split evenly across the two knockouts —
+/// 15/10 for a 20-car field, 16/10 for a 22-car lobby.
+fn quali_survivors(session_type: u8, field: usize) -> Option<usize> {
+    if field <= 10 {
+        return None;
+    }
+    match session_type {
+        // Q1 / Sprint Shootout 1: half the total drops, rounded up, go here.
+        5 | 10 => Some(field - (field - 10).div_ceil(2)),
+        // Q2 / Sprint Shootout 2: down to the final segment's 10.
+        6 | 11 => Some(10),
+        _ => None,
+    }
+}
+
 /// The results embed for a finished session, or None when the snapshot isn't a
 /// completed race/qualifying session (practice and TT never post). A snapshot
 /// with no classification is a session whose packet 8 never arrived (lost at
@@ -297,6 +315,15 @@ pub fn build_results_embed(snap: &SessionSnapshot) -> Option<Value> {
         .filter(|e| e.position > 0)
         .collect();
     rows.sort_by_key(|e| e.position);
+    // Knockout cutoff from the FULL field, before display truncation.
+    let survivors = if quali {
+        quali_survivors(
+            snap.session.as_ref().map(|s| s.session_type).unwrap_or(0),
+            rows.len(),
+        )
+    } else {
+        None
+    };
     rows.truncate(MAX_RESULT_ROWS);
     if rows.is_empty() {
         return None;
@@ -336,6 +363,9 @@ pub fn build_results_embed(snap: &SessionSnapshot) -> Option<Value> {
             }
             if !quali && e.points > 0 {
                 line.push_str(&format!(" · {} pts", e.points));
+            }
+            if survivors.is_some_and(|cut| e.position as usize > cut) {
+                line.push_str(" · **OUT**");
             }
             line
         })
@@ -582,6 +612,37 @@ mod tests {
             v["embeds"][0]["title"].as_str().unwrap(),
             "Q2 result — Suzuka"
         );
+    }
+
+    #[test]
+    fn quali_embed_marks_the_knockouts() {
+        // A 22-car Q1: 16 advance (drops split evenly toward a 10-car Q3).
+        let field: Vec<FinalClassificationEntry> = (0..22)
+            .map(|i| entry(i, (i + 1) as u8, 80_000 + i as u32 * 100))
+            .collect();
+        let v = build_results_embed(&snap(5, field)).expect("embed");
+        let d = description(&v);
+        let lines: Vec<&str> = d.lines().collect();
+        assert!(!lines[15].contains("OUT"), "P16 advances: {}", lines[15]);
+        assert!(lines[16].contains("OUT"), "P17 is out: {}", lines[16]);
+        assert!(lines[21].contains("OUT"));
+
+        // Q2: down to the final segment's ten.
+        let field: Vec<FinalClassificationEntry> = (0..16)
+            .map(|i| entry(i, (i + 1) as u8, 80_000 + i as u32 * 100))
+            .collect();
+        let v = build_results_embed(&snap(6, field)).expect("embed");
+        let d = description(&v);
+        let lines: Vec<&str> = d.lines().collect();
+        assert!(!lines[9].contains("OUT"));
+        assert!(lines[10].contains("OUT"));
+
+        // Q3: nobody is eliminated from the final segment.
+        let field: Vec<FinalClassificationEntry> = (0..10)
+            .map(|i| entry(i, (i + 1) as u8, 80_000 + i as u32 * 100))
+            .collect();
+        let v = build_results_embed(&snap(7, field)).expect("embed");
+        assert!(!description(&v).contains("OUT"));
     }
 
     #[test]

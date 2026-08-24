@@ -74,6 +74,27 @@ describe("qualifying rows", () => {
     expect(rows[2].gapSec).toBeNull();
   });
 
+  it("keeps showing captured segment standings between segments", () => {
+    // The between-segments gap: field wiped, next Session packet not yet seen
+    // ("unknown"), but Q1's standings were captured.
+    const gap: RaceSnapshot = {
+      ...snap("unknown", []),
+      qualiSegments: [
+        {
+          sessionType: 5,
+          standings: [
+            { index: 0, name: "Rossi", nameOverride: null, teamId: 0, raceNumber: 46, position: 1, bestLapMS: 80_000 },
+            { index: 1, name: "Vane", nameOverride: null, teamId: 1, raceNumber: 7, position: 2, bestLapMS: 81_000 },
+          ],
+        },
+      ],
+    };
+    const held = toDriverRows(gap);
+    expect(held).toHaveLength(2);
+    expect(held[0].name).toBe("Rossi");
+    expect(held[1].bestMs).toBe(81_000);
+  });
+
   it("driver status becomes an activity chip; grid delta is suppressed", () => {
     expect(rows[0].qstatus).toBeNull(); // flying lap = just racing
     expect(rows[2].qstatus).toBe("GARAGE");

@@ -318,6 +318,11 @@ pub struct SessionState {
     // weekend's qualifying begins on a different track. P1.3.
     quali_segments: HashMap<u8, Vec<QualiSegmentEntry>>,
     quali_track_id: Option<i8>,
+    // Track of the qualifying session whose incident log was held across a UID
+    // reset (None = nothing held). Resolved by the next Session packet: the log
+    // survives into another qualifying session on the same track, otherwise
+    // it's cleared there.
+    incidents_held_from_quali: Option<i8>,
     // Open damage watches: one per car per recent collision, measuring what the
     // contact cost against the CarDamage packets that follow. Bounded.
     damage_watch: Vec<DamageWatch>,
@@ -461,6 +466,19 @@ impl SessionState {
 
         match &pkt.data {
             Some(Body::Session(s)) => {
+                // An incident log held across a quali-segment boundary (see
+                // reset_for_session) only carries into ANOTHER qualifying
+                // session on the same track — a race, practice, or a new
+                // weekend starts its own log.
+                if let Some(track) = self.incidents_held_from_quali.take() {
+                    let same_quali = session_category_of(Some(s.session_type))
+                        == SessionCategory::Qualifying
+                        && s.track_id == track;
+                    if !same_quali {
+                        self.incidents.clear();
+                        self.next_incident_id = 1;
+                    }
+                }
                 self.session = Some(s.clone());
                 self.is_spectating = s.is_spectating;
                 self.spectator_car_index = s.spectator_car_index;
@@ -673,15 +691,31 @@ impl SessionState {
                 });
             }
         }
+        // Qualifying is ONE event to the user across Q1/Q2/Q3, each arriving as
+        // its own game session: hold the incident log across the boundary (and
+        // keep the id counter running so held and new incidents can't collide),
+        // so the stacked report and the archive still carry Q1's contact when
+        // Q3 saves. Whether the hold sticks is decided by the NEXT session's
+        // identity — see the Session-packet arm in `ingest`.
+        let held_quali_track = if session_category_of(self.session.as_ref().map(|s| s.session_type))
+            == SessionCategory::Qualifying
+        {
+            self.session.as_ref().map(|s| s.track_id)
+        } else {
+            None
+        };
+        self.incidents_held_from_quali = held_quali_track;
+        if held_quali_track.is_none() {
+            self.incidents.clear();
+            self.next_incident_id = 1;
+        }
         self.session_uid = uid;
         self.session = None;
         self.drivers.clear();
-        self.incidents.clear();
         self.damage_watch.clear();
         self.event_tally.clear();
         self.final_classification = None;
         self.num_active_cars = 0;
-        self.next_incident_id = 1;
         self.session_ended_at_ms = None;
         self.provisional_staged = false;
     }
@@ -2147,6 +2181,34 @@ mod tests {
             st.take_pending_auto_archive().is_none(),
             "an unfinished attempt is not a result"
         );
+    }
+
+    #[test]
+    fn quali_incidents_survive_the_segment_boundary() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 5), 0.0); // Q1
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&event_at("A", coll(0, 1, Some(2)), 10.0), 0.0);
+        assert_eq!(st.snapshot().incidents.len(), 1);
+        // Q2 arrives under its own UID, same track: qualifying is one event.
+        st.ingest(&session("B", 6), 1.0);
+        assert_eq!(st.snapshot().incidents.len(), 1, "Q1's contact survives");
+        // New incidents keep unique ids across the boundary.
+        st.ingest(&event_at("B", coll(0, 1, Some(2)), 60.0), 1.0);
+        let snap = st.snapshot();
+        assert_eq!(snap.incidents.len(), 2);
+        assert_ne!(snap.incidents[0].id, snap.incidents[1].id);
+    }
+
+    #[test]
+    fn quali_incidents_do_not_leak_into_the_race() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 5), 0.0); // Q1
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&event_at("A", coll(0, 1, Some(2)), 10.0), 0.0);
+        // The race (same track) starts its own incident log.
+        st.ingest(&session("B", 15), 1.0);
+        assert!(st.snapshot().incidents.is_empty());
     }
 
     #[test]
