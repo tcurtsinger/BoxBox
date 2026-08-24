@@ -25,6 +25,23 @@ describe("CalloutScheduler", () => {
     expect(s.take(0)).toBeNull();
   });
 
+  it("coalesces queued position callouts to the newest", () => {
+    // A launch gaining six places: while "P8" is being spoken, P7..P3 arrive.
+    // Only the latest position should remain queued — never a read-out chain.
+    const s = new CalloutScheduler({ keyCooldownMs: 20_000, categoryCooldownMs: 0, maxQueue: 8 });
+    s.push([c({ key: "pos-8", text: "P8 now — nice work." })], 0);
+    expect(s.take(0)!.key).toBe("pos-8");
+    s.push([c({ key: "pos-7" })], 100);
+    s.push([c({ key: "pos-6" }), c({ key: "pos-5" })], 200);
+    s.push([c({ key: "pos-4" }), c({ key: "pos-3", text: "P3 now — nice work." })], 300);
+    expect(s.take(400)!.key).toBe("pos-3");
+    expect(s.take(500)).toBeNull();
+    // Non-position callouts never coalesce with each other.
+    s.push([c({ key: "drs-range", category: "drs" }), c({ key: "fuel-tight", category: "fuelTyres", priority: PRIORITY.strategy })], 600);
+    expect(s.take(600)).not.toBeNull();
+    expect(s.take(600)).not.toBeNull();
+  });
+
   it("de-dupes a key while it's within cooldown", () => {
     const s = new CalloutScheduler({ keyCooldownMs: 1000, categoryCooldownMs: 0, maxQueue: 8 });
     s.push([c({ key: "k" })], 0);

@@ -28,6 +28,13 @@ function byPriorityDesc(a: Callout, b: Callout): number {
   return b.priority - a.priority;
 }
 
+/** Callouts describing the same EVOLVING fact supersede each other in the
+ *  queue: a launch that gains six places must not read out six speeches, only
+ *  where the driver is NOW. Keys sharing a slot coalesce to the newest. */
+function slotOf(c: Callout): string | null {
+  return c.key.startsWith("pos-") ? "pos" : null;
+}
+
 export class CalloutScheduler {
   private queue: Callout[] = [];
   private lastKeyAt = new Map<string, number>();
@@ -50,6 +57,10 @@ export class CalloutScheduler {
         if (last != null && now - last < this.opts.keyCooldownMs) continue;
       }
       if (this.queue.some((q) => q.key === c.key)) continue;
+      const slot = slotOf(c);
+      if (slot != null) {
+        this.queue = this.queue.filter((q) => slotOf(q) !== slot);
+      }
       this.queue.push(c);
     }
     if (this.queue.length > this.opts.maxQueue) {

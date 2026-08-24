@@ -793,6 +793,10 @@ fn spawn_listener(
 /// made mid-session (no classification yet) does not block the capture. A failed
 /// disk write keeps the record in memory — a later successful write still lands
 /// it — and leaves evidence in the log.
+// A capture superseding a session whose result posted within this window is
+// end-of-race UID churn (the same race re-described), not a new event.
+const RESULT_REPOST_WINDOW_MS: f64 = 120_000.0;
+
 /// Archive a drained session result (official or provisional) and queue its
 /// Discord post. Shared by the packet path, the idle tick and the stop path.
 fn process_staged_result(
@@ -818,6 +822,18 @@ fn process_staged_result(
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .result_posted(&snap.session_uid);
+    // The game churns the session UID right at the flag: a new UID appears
+    // between the chequered flag and the classification (the quirk
+    // pits-n-giggles documents as SESSION_START before FINAL_CLASSIFICATION),
+    // and both halves carry finish evidence — so both would post. A capture
+    // superseding a session whose result went out SECONDS ago is the same
+    // physical race re-described: archive it, don't announce it again. The
+    // window keeps a deliberate immediate re-race postable (it takes minutes).
+    let flag_churn = supersedes.as_deref().is_some_and(|prev| {
+        race.lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .result_posted_within(prev, now_ms(), RESULT_REPOST_WINDOW_MS)
+    });
     // Evidence for "why didn't my race save/post": every drained result leaves
     // a line, official or not.
     log_event(
@@ -828,6 +844,8 @@ fn process_staged_result(
             snap.session_category,
             if already_posted {
                 "official - upgrades posted provisional, not re-posting"
+            } else if flag_churn {
+                "end-of-race uid churn - same race already posted, not re-posting"
             } else if snap.final_classification.is_some() {
                 "official"
             } else if announce {
@@ -841,7 +859,7 @@ fn process_staged_result(
     // A just-in-case boundary capture (no finish evidence) archives silently:
     // it may be an abandoned attempt, and an abandoned attempt must never be
     // announced as a result.
-    if already_posted || !announce {
+    if already_posted || flag_churn || !announce {
         return;
     }
     // Same trigger posts the result to Discord — either the official
@@ -859,7 +877,7 @@ fn process_staged_result(
         if discord_tx.try_send(DiscordJob::Results(snap)).is_ok() {
             race.lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .mark_result_posted(uid);
+                .mark_result_posted(uid, now_ms());
         }
     }
 }

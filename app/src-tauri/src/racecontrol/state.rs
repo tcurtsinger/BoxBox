@@ -391,7 +391,7 @@ pub struct SessionState {
     // UID of the last session whose result the listener actually enqueued to
     // Discord. NOT cleared on reset: the rollover fallback drains (and posts)
     // the OUTGOING session after the reset already ran.
-    last_posted_result_uid: Option<String>,
+    last_posted_result: Option<(String, f64)>,
 }
 
 // Bound the live incident log so an event flood can't grow memory without limit;
@@ -721,17 +721,28 @@ impl SessionState {
     }
 
     /// Remember that a result for `uid` actually went out to Discord (the
-    /// listener enqueued it). Keyed by UID and kept across session resets — the
-    /// rollover fallback posts the OUTGOING session after the reset.
-    pub fn mark_result_posted(&mut self, uid: String) {
-        self.last_posted_result_uid = Some(uid);
+    /// listener enqueued it), and when. Keyed by UID and kept across session
+    /// resets — the rollover fallback posts the OUTGOING session after the
+    /// reset.
+    pub fn mark_result_posted(&mut self, uid: String, at_ms: f64) {
+        self.last_posted_result = Some((uid, at_ms));
     }
 
     /// Whether a result for `uid` was actually enqueued to Discord. Deliberately
     /// NOT "was a provisional staged": a provisional whose post was disabled or
     /// dropped must not suppress the later official post.
     pub fn result_posted(&self, uid: &str) -> bool {
-        self.last_posted_result_uid.as_deref() == Some(uid)
+        self.last_posted_result.as_ref().map(|(u, _)| u.as_str()) == Some(uid)
+    }
+
+    /// Like `result_posted`, but only within `window_ms` of the post. Used to
+    /// spot the game's end-of-race UID churn: a capture superseding a session
+    /// whose result went out SECONDS ago is the same physical race re-described,
+    /// while a deliberate re-race arrives minutes later and posts normally.
+    pub fn result_posted_within(&self, uid: &str, now_ms: f64, window_ms: f64) -> bool {
+        self.last_posted_result
+            .as_ref()
+            .is_some_and(|(u, at)| u == uid && now_ms - at < window_ms)
     }
 
     /// The current game session's UID ("" before the first packet).
@@ -2615,7 +2626,7 @@ mod tests {
             "provisional drained"
         );
         // The listener actually enqueued that provisional to Discord.
-        st.mark_result_posted("A".into());
+        st.mark_result_posted("A".into(), 1_000.0);
         // Packet 8 lands anyway (replayed / very late): the official capture
         // still stages — the archive record upgrade — and the posted marker
         // tells the listener not to send a second Discord result.
@@ -2625,6 +2636,19 @@ mod tests {
             .expect("official upgrade staged");
         assert!(snap.final_classification.is_some());
         assert!(st.result_posted("A"), "repost marker for the listener");
+    }
+
+    #[test]
+    fn posted_result_window_tracks_recency() {
+        let mut st = SessionState::new();
+        st.mark_result_posted("A".into(), 1_000.0);
+        assert!(st.result_posted("A"));
+        assert!(st.result_posted_within("A", 60_000.0, 120_000.0));
+        assert!(
+            !st.result_posted_within("A", 300_000.0, 120_000.0),
+            "a deliberate re-race minutes later posts normally"
+        );
+        assert!(!st.result_posted_within("B", 60_000.0, 120_000.0));
     }
 
     #[test]
