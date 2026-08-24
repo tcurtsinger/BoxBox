@@ -95,6 +95,10 @@ pub struct PlayerFrame {
     pub tyre_wear: Vec<f32>,
     pub fia_flag: i8,
     pub interval_ahead: Option<f32>,
+    /// Position callouts only make sense when position IS the race: in
+    /// qualifying/practice the running order is best-lap resorting, and a
+    /// driver yet to set a time "drops" a place every time someone posts one.
+    pub is_race: bool,
     session_events: Vec<SessionEvent>,
     player_events: Vec<PlayerEvent>,
 }
@@ -170,6 +174,7 @@ pub fn extract_player_frame(snap: &SessionSnapshot) -> Option<PlayerFrame> {
         tyre_wear: d.tyre_wear.clone(),
         fia_flag: d.fia_flags,
         interval_ahead: interval,
+        is_race: snap.session_category == SessionCategory::Race,
         session_events,
         player_events,
     })
@@ -222,7 +227,7 @@ fn fuel_tyres(prev: &PlayerFrame, next: &PlayerFrame, out: &mut Vec<Callout>) {
 }
 
 fn gaps_position(prev: &PlayerFrame, next: &PlayerFrame, out: &mut Vec<Callout>) {
-    if next.position != prev.position && next.position > 0 && prev.position > 0 {
+    if next.is_race && next.position != prev.position && next.position > 0 && prev.position > 0 {
         let gained = next.position < prev.position;
         let text = if gained {
             format!("P{} now — nice work.", next.position)
@@ -481,6 +486,7 @@ mod tests {
             tyre_wear: vec![10.0, 10.0, 10.0, 10.0],
             fia_flag: 0,
             interval_ahead: Some(2.0),
+            is_race: true,
             session_events: vec![],
             player_events: vec![],
         }
@@ -592,6 +598,18 @@ mod tests {
         let (p, mut n) = (frame(), frame());
         n.position = 4;
         assert!(texts(p, n).iter().any(|t| t.contains("P4 now")));
+    }
+
+    #[test]
+    fn position_reshuffles_outside_a_race_are_silent() {
+        // Qualifying: the driver hasn't set a time, everyone else posting one
+        // "drops" them a place — best-lap resorting, not racing.
+        let (mut p, mut n) = (frame(), frame());
+        p.is_race = false;
+        n.is_race = false;
+        p.position = 1;
+        n.position = 3;
+        assert!(!texts(p, n).iter().any(|t| t.contains("Dropped")));
     }
 
     #[test]

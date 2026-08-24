@@ -25,6 +25,7 @@ function frame(over: Partial<PlayerFrame> = {}): PlayerFrame {
     tyreWear: [10, 10, 10, 10],
     fiaFlag: 0,
     intervalAheadSec: 2.0,
+    isRace: true,
     sessionEvents: [],
     playerEvents: [],
     ...over,
@@ -72,6 +73,13 @@ describe("fuel & tyre callouts", () => {
 describe("gap & position callouts", () => {
   it("announces a position gained", () => {
     expect(texts(frame({ position: 5 }), frame({ position: 4 })).some((t) => /P4 now/i.test(t))).toBe(true);
+  });
+
+  it("stays silent on position reshuffles outside a race", () => {
+    // Qualifying: others setting times "drops" a driver who hasn't — resorting,
+    // not racing.
+    const out = texts(frame({ position: 1, isRace: false }), frame({ position: 3, isRace: false }));
+    expect(out.some((t) => /dropped/i.test(t))).toBe(false);
   });
 
   it("announces coming into DRS range", () => {

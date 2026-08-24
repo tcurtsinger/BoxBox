@@ -53,14 +53,22 @@ struct Engine {
 fn spawn_engine(dir: &Path, rate: f32) -> Result<Engine, String> {
     // length_scale stretches phonemes, so it's the inverse of speech rate.
     let length_scale = 1.0 / rate.clamp(0.5, 2.0);
-    let mut child = Command::new(dir.join("piper.exe"))
-        .current_dir(dir)
+    let mut cmd = Command::new(dir.join("piper.exe"));
+    cmd.current_dir(dir)
         .args(["-m", "voice.onnx", "-q", "--output_dir"])
         .arg(std::env::temp_dir())
         .args(["--length_scale", &format!("{length_scale:.3}")])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    // Piper is a console binary: without CREATE_NO_WINDOW, Windows opens a
+    // blank terminal for it that steals focus and pauses the game mid-callout.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("couldn't start piper: {e}"))?;
     let stdin = child.stdin.take().ok_or("no piper stdin")?;
