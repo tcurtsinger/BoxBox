@@ -95,12 +95,11 @@ export interface EngineerCategories {
 }
 
 /** Voice race-engineer settings. The engine reads the live snapshot and speaks
- *  proactive callouts through the OS voice (Web Speech) — entirely local, no AI. */
+ *  proactive callouts through the bundled Piper neural voice (Web Speech in the
+ *  browser preview) — entirely local, no account, no AI. */
 export interface EngineerSettings {
   enabled: boolean;
   categories: EngineerCategories;
-  /** Chosen speechSynthesis voice URI, or null to use the browser default. */
-  voiceURI: string | null;
   rate: number; // 0.5..2 speech rate
   volume: number; // 0..1
 }
@@ -110,7 +109,6 @@ const ENGINEER_STORAGE_KEY = "boxbox.engineer";
 const DEFAULT_ENGINEER: EngineerSettings = {
   enabled: false,
   categories: { fuelTyres: true, gapsPosition: true, drs: true, lapTimes: true, flagsIncidents: true },
-  voiceURI: null,
   rate: 1,
   volume: 1,
 };

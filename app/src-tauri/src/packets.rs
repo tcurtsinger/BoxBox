@@ -384,8 +384,7 @@ fn parse_session(rd: &mut Reader, header: &PacketHeader) -> SessionData {
 
         // 2026 only: skip the REST of the gameplay-settings block (44 bytes from
         // recoveryMode, of which 6 were just consumed), then the zone tail.
-        const AERO_TAIL_REST: usize =
-            38 + 1 + (1 + MAX_AERO_ZONES * 8) * 2 + 1 + MAX_DRS_ZONES * 8;
+        const AERO_TAIL_REST: usize = 38 + 1 + (1 + MAX_AERO_ZONES * 8) * 2 + 1 + MAX_DRS_ZONES * 8;
         if header.packet_format >= 2026 && rd.remaining() >= AERO_TAIL_REST {
             rd.skip(38);
             active_aero_track_status = Some(rd.u8());
@@ -1716,7 +1715,11 @@ mod tests {
             panic!("session body expected")
         };
         assert_eq!(s.pit_stop_window_ideal_lap, None);
-        assert_eq!(s.tyre_temperature_sim, Some(0), "surface-only is a real value");
+        assert_eq!(
+            s.tyre_temperature_sim,
+            Some(0),
+            "surface-only is a real value"
+        );
     }
 
     #[test]
@@ -1726,7 +1729,7 @@ mod tests {
         buf.push(2); // numLaps (1 complete + the current partial)
         buf.push(1); // numTyreStints
         buf.extend_from_slice(&[1, 1, 1, 1]); // best lap / sector lap numbers
-        // Lap 1: 88s = 28 + 31 + 29, everything valid (0x0F).
+                                              // Lap 1: 88s = 28 + 31 + 29, everything valid (0x0F).
         buf.extend_from_slice(&88_000u32.to_le_bytes());
         buf.extend_from_slice(&28_000u16.to_le_bytes());
         buf.push(0);
@@ -1788,7 +1791,10 @@ mod tests {
         buf.resize(231, 0);
         let packet = parse_packet(&buf).expect("exact-size Tyre Sets accepted");
         assert_eq!(packet.id, 12);
-        assert!(packet.data.is_none(), "Tyre Sets not decoded -> header only");
+        assert!(
+            packet.data.is_none(),
+            "Tyre Sets not decoded -> header only"
+        );
     }
 
     #[test]

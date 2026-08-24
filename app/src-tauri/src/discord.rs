@@ -145,7 +145,10 @@ fn short_err(e: ureq::Error) -> String {
             let body = resp.into_string().unwrap_or_default();
             let detail = serde_json::from_str::<Value>(&body)
                 .ok()
-                .and_then(|v| v.get("message").and_then(|m| m.as_str().map(str::to_string)))
+                .and_then(|v| {
+                    v.get("message")
+                        .and_then(|m| m.as_str().map(str::to_string))
+                })
                 .unwrap_or(body);
             let detail: String = detail.chars().take(140).collect();
             if detail.contains("thread_name or thread_id") {
@@ -313,7 +316,9 @@ pub fn build_results_embed(snap: &SessionSnapshot) -> Option<Value> {
                 } else if e.position == 1 {
                     fmt_lap_ms(e.best_lap_time_in_ms)
                 } else {
-                    let gap = e.best_lap_time_in_ms.saturating_sub(winner.best_lap_time_in_ms);
+                    let gap = e
+                        .best_lap_time_in_ms
+                        .saturating_sub(winner.best_lap_time_in_ms);
                     format!("+{}", fmt_gap_ms(gap))
                 }
             } else if e.position == 1 {
@@ -366,7 +371,11 @@ fn build_provisional_results_embed(snap: &SessionSnapshot, quali: bool) -> Optio
     if snap.drivers.is_empty() {
         return None;
     }
-    let pole_ms = snap.drivers.iter().map(|d| d.best_lap_ms).find(|&ms| ms > 0);
+    let pole_ms = snap
+        .drivers
+        .iter()
+        .map(|d| d.best_lap_ms)
+        .find(|&ms| ms > 0);
     let lines: Vec<String> = snap
         .drivers
         .iter()
@@ -426,10 +435,7 @@ pub fn build_incidents_embed(list: &[MajorIncident]) -> Option<Value> {
     let lines: Vec<String> = list
         .iter()
         .map(|m| {
-            let lap = m
-                .lap_num
-                .map(|l| format!("`L{l}` "))
-                .unwrap_or_default();
+            let lap = m.lap_num.map(|l| format!("`L{l}` ")).unwrap_or_default();
             if m.cars.is_empty() {
                 format!("{lap}**{}**", m.label)
             } else {
@@ -572,7 +578,10 @@ mod tests {
         assert!(lines[0].contains("Car 1"), "winner first: {d}");
         assert!(lines[0].contains("1:19.000"));
         assert!(lines[1].contains("+0.350"));
-        assert_eq!(v["embeds"][0]["title"].as_str().unwrap(), "Q2 result — Suzuka");
+        assert_eq!(
+            v["embeds"][0]["title"].as_str().unwrap(),
+            "Q2 result — Suzuka"
+        );
     }
 
     #[test]
@@ -675,15 +684,24 @@ mod tests {
         .expect("test response");
         let msg = short_err(ureq::Error::Status(400, resp));
         assert!(msg.contains("Forum channel"), "{msg}");
-        let resp = ureq::Response::new(400, "Bad Request", r#"{"message": "Cannot send an empty message", "code": 50006}"#)
-            .expect("test response");
+        let resp = ureq::Response::new(
+            400,
+            "Bad Request",
+            r#"{"message": "Cannot send an empty message", "code": 50006}"#,
+        )
+        .expect("test response");
         let msg = short_err(ureq::Error::Status(400, resp));
-        assert_eq!(msg, "Discord returned HTTP 400: Cannot send an empty message");
+        assert_eq!(
+            msg,
+            "Discord returned HTTP 400: Cannot send an empty message"
+        );
     }
 
     #[test]
     fn webhook_url_allowlist() {
-        assert!(valid_webhook_url("https://discord.com/api/webhooks/123/abc"));
+        assert!(valid_webhook_url(
+            "https://discord.com/api/webhooks/123/abc"
+        ));
         assert!(!valid_webhook_url("https://discord.com/api/webhooks/"));
         assert!(!valid_webhook_url("https://evil.example/api/webhooks/123"));
         assert!(!valid_webhook_url("http://discord.com/api/webhooks/123"));

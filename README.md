@@ -31,8 +31,14 @@ Run BoxBox on the same PC you play on so it can see the game's UDP feed.
 ```sh
 cd app
 npm install
+powershell -ExecutionPolicy Bypass -File src-tauri/resources/fetch-voice.ps1
 npm run tauri dev
 ```
+
+The fetch script pulls the Piper TTS engine and the race engineer's voice model
+(~100 MB, gitignored) into `src-tauri/resources/piper/` — required once per
+checkout; without it the engineer falls back to the robotic OS voice and
+`tauri build` fails on the missing bundle resource.
 
 In the F1 game, turn on UDP telemetry (format 2026, default port 20777) and the
 feed is detected automatically. Gates: `npm run typecheck` and `npm run build` in

@@ -236,7 +236,6 @@ fn gaps_position(prev: &PlayerFrame, next: &PlayerFrame, out: &mut Vec<Callout>)
             format!("pos-{}", next.position),
         ));
     }
-
 }
 
 // Into DRS range of the car ahead. Its own category so the webview can mute it

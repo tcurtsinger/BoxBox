@@ -9,9 +9,8 @@ use serde::Serialize;
 
 use crate::packets::{
     Body, CarDamageData, CarStatusData, CarTelemetry2Data, CarTelemetryData, EventData,
-    FinalClassificationData, LapDataData, LapHistoryEntry, LiveryColour,
-    ParsedPacket, ParticipantsData, PowerUnitWear, SessionData, SessionHistoryData,
-    TyreStintEntry,
+    FinalClassificationData, LapDataData, LapHistoryEntry, LiveryColour, ParsedPacket,
+    ParticipantsData, PowerUnitWear, SessionData, SessionHistoryData, TyreStintEntry,
 };
 
 use super::labels::{
@@ -485,8 +484,8 @@ impl SessionState {
                 // entirely — accepting it would archive a garbage "Session (auto)"
                 // record AND burn the first-arrival latch below, so the segment's
                 // real capture would never stage.
-                let real = self.session.is_some()
-                    && self.drivers.values().any(|d| !d.name.is_empty());
+                let real =
+                    self.session.is_some() && self.drivers.values().any(|d| !d.name.is_empty());
                 if !real {
                     return;
                 }
@@ -1167,9 +1166,11 @@ impl SessionState {
         // The penalty only rides the collision's post if that post is still
         // pending; a late verdict (after the post flushed) must announce on its
         // own or it would vanish entirely.
-        let rides_collision_post = linked_id
-            .as_deref()
-            .is_some_and(|id| self.pending_collision_posts.iter().any(|(pid, _)| pid == id));
+        let rides_collision_post = linked_id.as_deref().is_some_and(|id| {
+            self.pending_collision_posts
+                .iter()
+                .any(|(pid, _)| pid == id)
+        });
 
         // Headline incidents worth announcing outside the app: red flags,
         // safety-car deployments (SCAR labels are already deployment-only), and
@@ -1881,7 +1882,11 @@ mod tests {
 
         // Lap 2 completes with a monster time that was deleted: not a best.
         st.ingest(&laps("Q", vec![lap_entry(0, 1, 1, 77_900, 3)]), 3.0);
-        assert_eq!(st.snapshot().drivers[0].best_lap_ms, 0, "deleted lap ignored");
+        assert_eq!(
+            st.snapshot().drivers[0].best_lap_ms,
+            0,
+            "deleted lap ignored"
+        );
 
         // Lap 3 completes clean and slower: that's the real best.
         st.ingest(&laps("Q", vec![lap_entry(0, 1, 1, 78_400, 4)]), 4.0);
@@ -1921,9 +1926,17 @@ mod tests {
         let s = st.snapshot();
         assert_eq!(s.incidents.len(), 1, "one crash, one card");
         assert_eq!(s.incidents[0].label, "Heavy contact");
-        assert_eq!(s.incidents[0].car_indices, vec![3, 7], "canonical pair order");
+        assert_eq!(
+            s.incidents[0].car_indices,
+            vec![3, 7],
+            "canonical pair order"
+        );
         assert_eq!(s.incidents[0].detail.get("severity"), Some(&2.0));
-        assert_eq!(st.event_tally.get("COLL"), Some(&2), "both hits still tallied");
+        assert_eq!(
+            st.event_tally.get("COLL"),
+            Some(&2),
+            "both hits still tallied"
+        );
     }
 
     #[test]
@@ -1931,8 +1944,15 @@ mod tests {
         let mut st = SessionState::new();
         st.ingest(&session("A", 15), 0.0);
         st.ingest(&event_at("A", coll(3, 7, Some(1)), 10.0), 0.0);
-        st.ingest(&event_at("A", coll(3, 7, Some(1)), 10.0 + COLL_MERGE_SECS as f32), 0.0);
-        assert_eq!(st.snapshot().incidents.len(), 2, "later contact is its own card");
+        st.ingest(
+            &event_at("A", coll(3, 7, Some(1)), 10.0 + COLL_MERGE_SECS as f32),
+            0.0,
+        );
+        assert_eq!(
+            st.snapshot().incidents.len(),
+            2,
+            "later contact is its own card"
+        );
     }
 
     #[test]
@@ -1944,7 +1964,11 @@ mod tests {
         st.flag_for_review(&id, 1.0);
         st.ingest(&event_at("A", coll(3, 7, Some(2)), 11.0), 0.0);
         let s = st.snapshot();
-        assert_eq!(s.incidents.len(), 2, "flagged card is frozen; repeat logs anew");
+        assert_eq!(
+            s.incidents.len(),
+            2,
+            "flagged card is frozen; repeat logs anew"
+        );
         assert_eq!(s.incidents[0].label, "Contact", "flagged card unchanged");
         assert_eq!(s.incidents[1].label, "Heavy contact");
     }
@@ -2016,9 +2040,15 @@ mod tests {
             0.0,
         );
         // Pre-crash baseline, then the crash, damage, and the game's verdict.
-        st.ingest(&damage_at("A", vec![dmg_entry(3, 10, 0), dmg_entry(7, 0, 0)], 9.0), 0.0);
+        st.ingest(
+            &damage_at("A", vec![dmg_entry(3, 10, 0), dmg_entry(7, 0, 0)], 9.0),
+            0.0,
+        );
         st.ingest(&event_at("A", coll(3, 7, Some(2)), 10.0), 0.0);
-        st.ingest(&damage_at("A", vec![dmg_entry(3, 55, 12), dmg_entry(7, 0, 0)], 11.0), 0.0);
+        st.ingest(
+            &damage_at("A", vec![dmg_entry(3, 55, 12), dmg_entry(7, 0, 0)], 11.0),
+            0.0,
+        );
         st.ingest(&event_at("A", pena(3, 7, 4, 3, 10), 12.0), 0.0);
         assert!(
             st.take_pending_announcements().is_empty(),
@@ -2031,7 +2061,10 @@ mod tests {
         assert!(line.contains("Heavy contact"), "{line}");
         assert!(line.contains("13 Mantis hit 7 Vane"), "{line}");
         assert!(line.contains("+10s to 13 Mantis"), "{line}");
-        assert!(line.contains("13 Mantis: front wing +45%, floor +12%"), "{line}");
+        assert!(
+            line.contains("13 Mantis: front wing +45%, floor +12%"),
+            "{line}"
+        );
         assert!(posts[0].cars.is_empty(), "the line already names the cars");
     }
 
@@ -2063,7 +2096,11 @@ mod tests {
         st.ingest(&tick("A", 19.0), 0.0);
         let posts = st.take_pending_announcements();
         assert_eq!(posts.len(), 1);
-        assert!(posts[0].label.contains("Drive-through to"), "{}", posts[0].label);
+        assert!(
+            posts[0].label.contains("Drive-through to"),
+            "{}",
+            posts[0].label
+        );
     }
 
     fn chequered() -> EventData {
@@ -2130,7 +2167,10 @@ mod tests {
         assert!(snap.final_classification.is_none(), "provisional by shape");
         // The eventual rollover must not stage the same session again.
         st.ingest(&session("B", 15), 13_000.0);
-        assert!(st.take_pending_auto_archive().is_none(), "no double archive");
+        assert!(
+            st.take_pending_auto_archive().is_none(),
+            "no double archive"
+        );
     }
 
     #[test]
@@ -2141,14 +2181,19 @@ mod tests {
         st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
         st.ingest(&event("A", session_end()), 1_000.0);
         st.ingest(&tick("A", 25.0), 12_000.0);
-        assert!(st.take_pending_auto_archive().is_some(), "provisional drained");
+        assert!(
+            st.take_pending_auto_archive().is_some(),
+            "provisional drained"
+        );
         // The listener actually enqueued that provisional to Discord.
         st.mark_result_posted("A".into());
         // Packet 8 lands anyway (replayed / very late): the official capture
         // still stages — the archive record upgrade — and the posted marker
         // tells the listener not to send a second Discord result.
         st.ingest(&final_classification("A"), 20_000.0);
-        let snap = st.take_pending_auto_archive().expect("official upgrade staged");
+        let snap = st
+            .take_pending_auto_archive()
+            .expect("official upgrade staged");
         assert!(snap.final_classification.is_some());
         assert!(st.result_posted("A"), "repost marker for the listener");
     }
@@ -2163,7 +2208,10 @@ mod tests {
         st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
         st.ingest(&event("A", session_end()), 1_000.0);
         st.ingest(&tick("A", 25.0), 12_000.0);
-        assert!(st.take_pending_auto_archive().is_some(), "provisional drained");
+        assert!(
+            st.take_pending_auto_archive().is_some(),
+            "provisional drained"
+        );
         st.ingest(&final_classification("A"), 20_000.0);
         assert!(st.take_pending_auto_archive().is_some(), "official staged");
         assert!(!st.result_posted("A"), "nothing went out — no suppression");
@@ -2220,7 +2268,10 @@ mod tests {
         st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
         st.ingest(&event("A", chequered()), 0.0);
         st.ingest(&session("B", 15), 0.0);
-        assert!(st.take_pending_auto_archive().is_none(), "practice stays out");
+        assert!(
+            st.take_pending_auto_archive().is_none(),
+            "practice stays out"
+        );
 
         // A race that never got going (no laps driven): nothing to archive.
         let mut st = SessionState::new();
@@ -2228,7 +2279,10 @@ mod tests {
         st.ingest(&participants("C", vec![participant(0, "Rossi", 1)]), 0.0);
         st.ingest(&event("C", chequered()), 0.0);
         st.ingest(&session("D", 15), 0.0);
-        assert!(st.take_pending_auto_archive().is_none(), "no laps, no archive");
+        assert!(
+            st.take_pending_auto_archive().is_none(),
+            "no laps, no archive"
+        );
     }
 
     #[test]
@@ -2242,7 +2296,10 @@ mod tests {
         assert!(st.take_pending_auto_archive().is_some());
         // The UID change must NOT stage the same session again as provisional.
         st.ingest(&session("B", 15), 0.0);
-        assert!(st.take_pending_auto_archive().is_none(), "no double archive");
+        assert!(
+            st.take_pending_auto_archive().is_none(),
+            "no double archive"
+        );
     }
 
     #[test]
@@ -2272,7 +2329,11 @@ mod tests {
         st.ingest(&event_at("A", pena(3, 7, 0, 3, 0), 22.0), 0.0);
         let posts = st.take_pending_announcements();
         assert_eq!(posts.len(), 1, "late drive-through announces on its own");
-        assert!(posts[0].label.starts_with("Drive-through:"), "{}", posts[0].label);
+        assert!(
+            posts[0].label.starts_with("Drive-through:"),
+            "{}",
+            posts[0].label
+        );
         // The card still carries the fault for the app.
         assert_eq!(
             st.snapshot().incidents[0].detail.get("faultCarIdx"),
@@ -2289,8 +2350,15 @@ mod tests {
         st.ingest(&session("B", 15), 0.0);
         let posts = st.take_pending_announcements();
         assert_eq!(posts.len(), 1, "the final-lap crash still posts");
-        assert!(posts[0].label.contains("Heavy contact"), "{}", posts[0].label);
-        assert!(st.snapshot().incidents.is_empty(), "new session starts clean");
+        assert!(
+            posts[0].label.contains("Heavy contact"),
+            "{}",
+            posts[0].label
+        );
+        assert!(
+            st.snapshot().incidents.is_empty(),
+            "new session starts clean"
+        );
     }
 
     #[test]
@@ -2302,7 +2370,10 @@ mod tests {
             0.0,
         );
         // Pre-crash baseline: car 1 already carries 10% front wing.
-        st.ingest(&damage_at("A", vec![dmg_entry(0, 0, 0), dmg_entry(1, 10, 0)], 9.0), 0.0);
+        st.ingest(
+            &damage_at("A", vec![dmg_entry(0, 0, 0), dmg_entry(1, 10, 0)], 9.0),
+            0.0,
+        );
         // The crash, then the next damage packet shows car 1 at 55% FW + 12% floor.
         st.ingest(&event_at("A", coll(1, 0, Some(2)), 10.0), 0.0);
         st.ingest(
@@ -2358,7 +2429,11 @@ mod tests {
             1.0,
         );
         let s = st.snapshot();
-        assert_eq!(s.incidents[0].lap_num, Some(11), "primary involved car's lap");
+        assert_eq!(
+            s.incidents[0].lap_num,
+            Some(11),
+            "primary involved car's lap"
+        );
         assert_eq!(s.incidents[1].lap_num, Some(12), "leader-lap fallback");
     }
 
@@ -2398,7 +2473,7 @@ mod tests {
     fn track_limit_warnings_and_deleted_laps_surface_as_tlim() {
         let mut st = SessionState::new();
         st.ingest(&session("A", 5), 0.0); // qualifying
-        // Corner-cutting warning (type 5, infringement 27 = corner cutting ran wide).
+                                          // Corner-cutting warning (type 5, infringement 27 = corner cutting ran wide).
         st.ingest(
             &event(
                 "A",
@@ -2653,7 +2728,10 @@ mod tests {
         st.ingest(&session("A", 5), 0.0); // Q1
         st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
         st.ingest(&final_classification("A"), 1.0);
-        assert!(st.take_pending_auto_archive().is_some(), "real capture stages");
+        assert!(
+            st.take_pending_auto_archive().is_some(),
+            "real capture stages"
+        );
 
         // A stray classification under the NEXT segment's UID arrives before any
         // Session/Participants packet: the reset just wiped everything, so this
@@ -2795,7 +2873,11 @@ mod tests {
             "log capped, got {}",
             s.incidents.len()
         );
-        assert_eq!(st.event_tally.len(), 1, "only the one known code is tallied");
+        assert_eq!(
+            st.event_tally.len(),
+            1,
+            "only the one known code is tallied"
+        );
     }
 
     #[test]

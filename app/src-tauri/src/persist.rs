@@ -257,10 +257,15 @@ mod tests {
         }
         let loaded: Option<V1> = read_json_versioned(&path, 1);
         assert!(loaded.is_none(), "a newer file must not load leniently");
-        assert!(!path.exists(), "moved aside so the next save can't downgrade it");
+        assert!(
+            !path.exists(),
+            "moved aside so the next save can't downgrade it"
+        );
         let kept = find_with_marker(&dir, ".json.newer-");
         assert!(
-            std::fs::read_to_string(&kept).unwrap().contains("futureField"),
+            std::fs::read_to_string(&kept)
+                .unwrap()
+                .contains("futureField"),
             "the newer build's data is preserved byte-for-byte"
         );
 
@@ -287,7 +292,10 @@ mod tests {
         // The newer snapshot lands first (e.g. a command handler); the older
         // in-flight snapshot from the flush thread must then be dropped.
         assert!(store.commit_save(rev_new, &snap_new));
-        assert!(!store.commit_save(rev_old, &snap_old), "stale write dropped");
+        assert!(
+            !store.commit_save(rev_old, &snap_old),
+            "stale write dropped"
+        );
 
         let mut check = TunerState::new();
         store.load_into(&mut check);
