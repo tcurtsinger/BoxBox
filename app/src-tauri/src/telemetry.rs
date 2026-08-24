@@ -412,6 +412,8 @@ fn spawn_listener(
                             r.take_pending_auto_archive()
                         };
                         if let Some(snap) = staged {
+                            // Stop drains only ever stage provisionals — an
+                            // official capture needs a packet.
                             process_staged_result(
                                 &app,
                                 &history,
@@ -420,6 +422,7 @@ fn spawn_listener(
                                 &discord_tx,
                                 &log_path,
                                 snap,
+                                false,
                             );
                         }
                         return InnerExit::Stopped;
@@ -620,6 +623,7 @@ fn spawn_listener(
                             // the same lock so detection needs no second round-trip.
                             let mut session_changed = None;
                             let auto_archive_snap;
+                            let archive_upgrades_provisional;
                             let announcements;
                             let engineer_snap = {
                                 let mut r = race.lock().unwrap_or_else(|p| {
@@ -638,6 +642,13 @@ fn spawn_listener(
                                     session_changed = Some(r.session_uid().to_string());
                                 }
                                 auto_archive_snap = r.take_pending_auto_archive();
+                                // An official capture landing while the provisional
+                                // latch is set means the provisional was already
+                                // drained (and possibly posted to Discord).
+                                archive_upgrades_provisional = auto_archive_snap
+                                    .as_ref()
+                                    .is_some_and(|s| s.final_classification.is_some())
+                                    && r.provisional_result_staged();
                                 announcements = r.take_pending_announcements();
                                 if engineer_enabled.load(Ordering::Relaxed)
                                     && last_engineer_eval.elapsed() >= ENGINEER_EVAL
@@ -682,6 +693,7 @@ fn spawn_listener(
                                     &discord_tx,
                                     &log_path,
                                     snap,
+                                    archive_upgrades_provisional,
                                 );
                             }
                             // Run the rules + emit OFF the race lock. Each callout is
@@ -707,6 +719,8 @@ fn spawn_listener(
                                 r.take_pending_auto_archive()
                             };
                             if let Some(snap) = staged {
+                                // Idle drains only ever stage provisionals — an
+                                // official capture needs a packet.
                                 process_staged_result(
                                     &app,
                                     &history,
@@ -715,6 +729,7 @@ fn spawn_listener(
                                     &discord_tx,
                                     &log_path,
                                     snap,
+                                    false,
                                 );
                             }
                         }
@@ -793,6 +808,7 @@ fn process_staged_result(
     discord_tx: &std::sync::mpsc::SyncSender<DiscordJob>,
     log_path: &Option<PathBuf>,
     snap: Box<SessionSnapshot>,
+    upgrades_provisional: bool,
 ) {
     // Evidence for "why didn't my race save/post": every drained result leaves
     // a line, official or not.
@@ -802,7 +818,9 @@ fn process_staged_result(
             "session result staged: uid {} {:?} (classification: {})",
             snap.session_uid,
             snap.session_category,
-            if snap.final_classification.is_some() {
+            if upgrades_provisional {
+                "official - upgrades provisional, not re-posting"
+            } else if snap.final_classification.is_some() {
                 "official"
             } else {
                 "missing - provisional"
@@ -811,7 +829,13 @@ fn process_staged_result(
     );
     auto_archive_session(app, history, store, &snap, log_path);
     // Same trigger posts the result to Discord — either the official
-    // classification or the provisional standings.
+    // classification or the provisional standings. An official result that
+    // merely upgrades an already-posted provisional is archived but NOT posted
+    // again: the webhook has no dedup, so a second message would announce the
+    // same session twice.
+    if upgrades_provisional {
+        return;
+    }
     let want = discord_cfg
         .lock()
         .map(|c| match snap.session_category {

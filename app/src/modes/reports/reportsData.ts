@@ -228,9 +228,11 @@ export function reportFromSnapshot(snap: RaceSnapshot): ReportData {
     },
     baseClassification,
     incidents: toUIIncidents(snap),
-    // A saved snapshot is a completed session: Final when packet 8 was captured or
-    // it's a qualifying result; provisional only if neither is present.
-    isFinal: finalC != null || isQualifying,
+    // Final only when the official classification (packet 8) was captured — for
+    // qualifying that's the last segment's packet 8, stored in the same field.
+    // A missing classification means the capture is provisional (the packet was
+    // lost, or the session was saved mid-running), whatever the category.
+    isFinal: finalC != null,
     isQualifying,
   });
 }

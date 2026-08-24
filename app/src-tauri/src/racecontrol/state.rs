@@ -603,6 +603,13 @@ impl SessionState {
         }
     }
 
+    /// True once a provisional capture was staged (and drained) for the current
+    /// session. The listener uses this to keep a late official classification
+    /// from POSTING a second result — the archive upgrade still happens.
+    pub fn provisional_result_staged(&self) -> bool {
+        self.provisional_staged
+    }
+
     /// The current game session's UID ("" before the first packet).
     pub fn session_uid(&self) -> &str {
         &self.session_uid
@@ -2113,6 +2120,24 @@ mod tests {
         // The eventual rollover must not stage the same session again.
         st.ingest(&session("B", 15), 13_000.0);
         assert!(st.take_pending_auto_archive().is_none(), "no double archive");
+    }
+
+    #[test]
+    fn late_official_classification_upgrades_but_flags_the_repost() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&event("A", session_end()), 1_000.0);
+        st.ingest(&tick("A", 25.0), 12_000.0);
+        assert!(st.take_pending_auto_archive().is_some(), "provisional drained");
+        // Packet 8 lands anyway (replayed / very late): the official capture
+        // still stages — the archive record upgrade — but the latch tells the
+        // listener a result for this session already went out.
+        st.ingest(&final_classification("A"), 20_000.0);
+        let snap = st.take_pending_auto_archive().expect("official upgrade staged");
+        assert!(snap.final_classification.is_some());
+        assert!(st.provisional_result_staged(), "repost flag for the listener");
     }
 
     #[test]
