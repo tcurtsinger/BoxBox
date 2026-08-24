@@ -210,7 +210,9 @@ fn forwards_to_self(port: u16, target: &SocketAddr) -> bool {
 
 /// Split forward targets into (kept, dropped-as-self-loop).
 fn sanitize_forwards(port: u16, forwards: Vec<SocketAddr>) -> (Vec<SocketAddr>, Vec<SocketAddr>) {
-    forwards.into_iter().partition(|t| !forwards_to_self(port, t))
+    forwards
+        .into_iter()
+        .partition(|t| !forwards_to_self(port, t))
 }
 
 /// Snapshot any pending profile change under the engine lock (cheap) and write it
@@ -652,8 +654,8 @@ fn spawn_listener(
                             // A new game session began: the frontend re-arms its
                             // "session saved" close guard off this signal.
                             if let Some(session_uid) = session_changed {
-                                let _ =
-                                    app.emit("race:session-changed", &SessionChanged { session_uid });
+                                let _ = app
+                                    .emit("race:session-changed", &SessionChanged { session_uid });
                             }
                             // Newly logged headline incidents -> the Discord poster
                             // thread (never HTTP on this loop). Toggle checked here so
@@ -703,8 +705,7 @@ fn spawn_listener(
                             // has stopped sending (closed from the results screen) —
                             // check it on idle ticks, not just on packets.
                             let staged = {
-                                let mut r =
-                                    race.lock().unwrap_or_else(|p| p.into_inner());
+                                let mut r = race.lock().unwrap_or_else(|p| p.into_inner());
                                 r.stage_provisional_if_due(now_ms());
                                 r.take_pending_auto_archive()
                             };
@@ -860,7 +861,10 @@ fn auto_archive_session(
     let value = match serde_json::to_value(snap) {
         Ok(v) => v,
         Err(e) => {
-            log_event(log_path, &format!("auto-save: couldn't serialize session: {e}"));
+            log_event(
+                log_path,
+                &format!("auto-save: couldn't serialize session: {e}"),
+            );
             return;
         }
     };
@@ -896,8 +900,7 @@ fn auto_archive_session(
         .iter()
         .filter(|r| !r.pinned && r.auto)
         .filter(|r| {
-            r.snapshot.get("sessionUid").and_then(|v| v.as_str())
-                == Some(snap.session_uid.as_str())
+            r.snapshot.get("sessionUid").and_then(|v| v.as_str()) == Some(snap.session_uid.as_str())
         })
         .map(|r| r.id.clone())
         .collect();
@@ -977,9 +980,7 @@ fn stale_quali_auto_records(
             let (rt, rs) = track_and_type(&r.snapshot);
             rt == track && rs <= stype
         })
-        .filter(|r| {
-            r.snapshot.get("sessionUid").and_then(|v| v.as_str()) != Some(incoming_uid)
-        })
+        .filter(|r| r.snapshot.get("sessionUid").and_then(|v| v.as_str()) != Some(incoming_uid))
         .map(|r| r.id.clone())
         .collect()
 }
@@ -1483,7 +1484,11 @@ pub fn set_history_retention(
 /// The current history retention period in days, or None if everything is kept.
 #[tauri::command]
 pub fn history_retention(archive: tauri::State<'_, HistoryState>) -> Result<Option<u32>, String> {
-    Ok(archive.0.lock().unwrap_or_else(|p| p.into_inner()).retention_days)
+    Ok(archive
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .retention_days)
 }
 
 #[cfg(test)]
@@ -1559,11 +1564,11 @@ mod tests {
         let (kept, dropped) = sanitize_forwards(
             port,
             vec![
-                "127.0.0.1:20777".parse().unwrap(),  // loopback on our port: loop
-                "0.0.0.0:20777".parse().unwrap(),    // unspecified on our port: loop
+                "127.0.0.1:20777".parse().unwrap(), // loopback on our port: loop
+                "0.0.0.0:20777".parse().unwrap(),   // unspecified on our port: loop
                 "255.255.255.255:20777".parse().unwrap(), // broadcast on our port: loop
-                "127.0.0.1:20778".parse().unwrap(),  // different port: fine
-                "192.0.2.1:20777".parse().unwrap(),  // some other machine: fine
+                "127.0.0.1:20778".parse().unwrap(), // different port: fine
+                "192.0.2.1:20777".parse().unwrap(), // some other machine: fine
             ],
         );
         assert_eq!(

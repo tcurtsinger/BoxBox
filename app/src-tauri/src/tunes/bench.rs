@@ -198,11 +198,7 @@ const WEAR_LEVERS: [WearLever; 4] = [
 
 /// Build the comparison report. `wear_map` is the profile's learned sensitivities
 /// (`WearEstimator::as_map`); levers absent from it are reported unmeasured.
-pub fn build_report(
-    a: &Tune,
-    b: &Tune,
-    wear_map: &HashMap<WearLever, LearnedWear>,
-) -> BenchReport {
+pub fn build_report(a: &Tune, b: &Tune, wear_map: &HashMap<WearLever, LearnedWear>) -> BenchReport {
     let mut wear = Vec::new();
     let (mut front_sum, mut rear_sum) = (None::<f64>, None::<f64>);
     for lever in WEAR_LEVERS {
@@ -346,8 +342,20 @@ mod tests {
         assert_eq!(r.verdict.gap_ms, 400);
 
         // No overlapping store at all -> no verdict.
-        let c = tune(&mut lib, 13, setup(0.08, 9), &[lap(79_000, None, None)], &[]);
-        let d = tune(&mut lib, 13, setup(0.09, 9), &[], &[lap(83_000, None, None)]);
+        let c = tune(
+            &mut lib,
+            13,
+            setup(0.08, 9),
+            &[lap(79_000, None, None)],
+            &[],
+        );
+        let d = tune(
+            &mut lib,
+            13,
+            setup(0.09, 9),
+            &[],
+            &[lap(83_000, None, None)],
+        );
         let r2 = build_report(&c, &d, &HashMap::new());
         assert_eq!(r2.verdict.basis, None);
         assert_eq!(r2.verdict.faster_id, None);
@@ -356,8 +364,20 @@ mod tests {
     #[test]
     fn exact_tie_gives_no_faster_tune_but_keeps_the_basis() {
         let mut lib = TuneLibrary::new();
-        let a = tune(&mut lib, 13, setup(0.06, 9), &[lap(80_000, None, None)], &[]);
-        let b = tune(&mut lib, 13, setup(0.07, 9), &[lap(80_000, None, None)], &[]);
+        let a = tune(
+            &mut lib,
+            13,
+            setup(0.06, 9),
+            &[lap(80_000, None, None)],
+            &[],
+        );
+        let b = tune(
+            &mut lib,
+            13,
+            setup(0.07, 9),
+            &[lap(80_000, None, None)],
+            &[],
+        );
         let r = build_report(&a, &b, &HashMap::new());
         assert_eq!(r.verdict.basis, Some(TuneSession::TimeTrial));
         assert_eq!(r.verdict.faster_id, None);
@@ -380,7 +400,10 @@ mod tests {
         );
         let r = build_report(&a, &a.clone(), &HashMap::new());
         assert_eq!(r.a.median_tt_ms, 80_600, "odd count: middle value");
-        assert_eq!(r.a.median_practice_ms, 82_500, "even count: mean of middles");
+        assert_eq!(
+            r.a.median_practice_ms, 82_500,
+            "even count: mean of middles"
+        );
     }
 
     #[test]
@@ -405,7 +428,11 @@ mod tests {
         let r = build_report(&a, &b, &wear_map);
         assert_eq!(r.wear.len(), 2, "both differing levers reported");
 
-        let toe = r.wear.iter().find(|w| w.lever == WearLever::FrontToe).unwrap();
+        let toe = r
+            .wear
+            .iter()
+            .find(|w| w.lever == WearLever::FrontToe)
+            .unwrap();
         assert!((toe.delta - 0.02).abs() < 1e-6);
         assert!((toe.projected_d_rate.unwrap() - 0.5).abs() < 1e-6);
         assert!(toe.front_axle);
@@ -415,7 +442,10 @@ mod tests {
             .iter()
             .find(|w| w.lever == WearLever::RearAntiRollBar)
             .unwrap();
-        assert_eq!(arb.projected_d_rate, None, "unmeasured lever projects nothing");
+        assert_eq!(
+            arb.projected_d_rate, None,
+            "unmeasured lever projects nothing"
+        );
         assert_eq!(arb.observations, 0);
 
         assert!((r.projected_front_d_rate.unwrap() - 0.5).abs() < 1e-6);
@@ -446,8 +476,16 @@ mod tests {
         );
 
         let r = build_report(&a, &b, &wear_map);
-        let toe = r.wear.iter().find(|w| w.lever == WearLever::FrontToe).unwrap();
-        assert_eq!(toe.confidence, Confidence::Forming, "tier surfaces to the UI");
+        let toe = r
+            .wear
+            .iter()
+            .find(|w| w.lever == WearLever::FrontToe)
+            .unwrap();
+        assert_eq!(
+            toe.confidence,
+            Confidence::Forming,
+            "tier surfaces to the UI"
+        );
         assert_eq!(toe.observations, 2);
         assert_eq!(
             toe.projected_d_rate, None,
@@ -459,7 +497,13 @@ mod tests {
     #[test]
     fn cross_track_report_is_flagged() {
         let mut lib = TuneLibrary::new();
-        let a = tune(&mut lib, 13, setup(0.06, 9), &[lap(80_000, None, None)], &[]);
+        let a = tune(
+            &mut lib,
+            13,
+            setup(0.06, 9),
+            &[lap(80_000, None, None)],
+            &[],
+        );
         let b = tune(&mut lib, 7, setup(0.06, 9), &[lap(79_000, None, None)], &[]);
         let r = build_report(&a, &b, &HashMap::new());
         assert!(!r.same_track);

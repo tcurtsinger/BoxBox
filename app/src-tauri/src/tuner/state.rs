@@ -655,9 +655,7 @@ impl TunerState {
         let compound_changed = self
             .actual_compound
             .is_some_and(|c| c != mine.actual_tyre_compound);
-        let age_dropped = self
-            .tyre_age_laps
-            .is_some_and(|a| mine.tyres_age_laps < a);
+        let age_dropped = self.tyre_age_laps.is_some_and(|a| mine.tyres_age_laps < a);
         if compound_changed || age_dropped {
             self.wear_baseline = self.wear;
             self.wear_laps = 0;
@@ -2360,8 +2358,14 @@ mod tests {
                 ..Default::default()
             }),
         ));
-        assert_eq!(st.wear_laps, 0, "the stint restarts from the rewound values");
-        assert!(st.lap_invalidated, "the re-driven lap must not shape advice");
+        assert_eq!(
+            st.wear_laps, 0,
+            "the stint restarts from the rewound values"
+        );
+        assert!(
+            st.lap_invalidated,
+            "the re-driven lap must not shape advice"
+        );
         assert!(
             st.wear_pending.is_none(),
             "an A/B spanning a rewind would learn a garbage sensitivity"
@@ -2452,8 +2456,8 @@ mod tests {
         st.ingest(&session(13, 18, 3000)); // Suzuka
         st.ingest(&setups());
         st.ingest(&session(2, 18, 3500)); // new track, new session
-        // First setups packet at the new track: a different saved setup, not a
-        // garage change the driver made here.
+                                          // First setups packet at the new track: a different saved setup, not a
+                                          // garage change the driver made here.
         let mut other = setups();
         if let Some(Body::CarSetups(d)) = other.data.as_mut() {
             d.cars[0].rear_wing += 2;
