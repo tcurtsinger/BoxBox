@@ -365,6 +365,10 @@ pub struct SessionState {
     // The current session replaced this earlier session (restart observed in
     // this run). Carried onto whichever capture this session eventually stages.
     replaces_session_uid: Option<String>,
+    // The session clock (header sessionTime) on this session's FIRST packet:
+    // ~0 for a genuinely new session; mid-race values when the game merely
+    // swapped UIDs at the flag. One half of the flag-churn evidence.
+    first_session_time: f64,
     // Open damage watches: one per car per recent collision, measuring what the
     // contact cost against the CarDamage packets that follow. Bounded.
     damage_watch: Vec<DamageWatch>,
@@ -391,7 +395,7 @@ pub struct SessionState {
     // UID of the last session whose result the listener actually enqueued to
     // Discord. NOT cleared on reset: the rollover fallback drains (and posts)
     // the OUTGOING session after the reset already ran.
-    last_posted_result_uid: Option<String>,
+    last_posted_result: Option<(String, f64)>,
 }
 
 // Bound the live incident log so an event flood can't grow memory without limit;
@@ -402,6 +406,13 @@ const MAX_INCIDENTS: usize = 1000;
 // normally lands within a second of SEND, and it's a single datagram — well
 // past this, it isn't coming.
 const CLASSIFICATION_GRACE_MS: f64 = 10_000.0;
+// A capture superseding a session whose result posted within this window MAY be
+// the game's end-of-race UID churn (same race, new UID at the flag) — confirmed
+// by the session clock not starting near zero. Both signals required.
+const RESULT_REPOST_WINDOW_MS: f64 = 120_000.0;
+// A genuinely new session's clock starts near zero; the churn successor
+// inherits a mid-race clock well past this.
+const CONTINUED_CLOCK_MIN_SECS: f64 = 30.0;
 // Exact-duplicate auto incidents within this window (seconds) are suppressed.
 const INCIDENT_DEDUPE_SECS: f64 = 2.0;
 // Collisions between the same pair within this window fold into one card: the
@@ -495,7 +506,7 @@ impl SessionState {
     pub fn ingest(&mut self, pkt: &ParsedPacket, at_ms: f64) {
         let h = &pkt.header;
         if h.session_uid != self.session_uid {
-            self.reset_for_session(h.session_uid.clone());
+            self.reset_for_session(h.session_uid.clone(), f64::from(h.session_time), at_ms);
         }
 
         self.format = h.packet_format;
@@ -586,7 +597,9 @@ impl SessionState {
                 // nothing left to wait for.
                 self.session_ended_at_ms = None;
                 if first {
-                    self.pending_archive_announce = true;
+                    // Even an official classification stays quiet when it lands
+                    // under the flag-churn UID — the race already posted.
+                    self.pending_archive_announce = !self.is_flag_churn_repost(at_ms);
                     self.pending_archive_supersedes = self.replaces_session_uid.clone();
                     self.pending_auto_archive = Some(Box::new(self.snapshot()));
                 }
@@ -668,13 +681,14 @@ impl SessionState {
     /// `announce` says whether the capture may post to Discord: true only with
     /// finish evidence behind it — a just-in-case boundary capture archives
     /// silently.
-    fn stage_provisional_capture(&mut self, announce: bool) {
+    fn stage_provisional_capture(&mut self, announce: bool, now_ms: f64) {
         if self.provisional_staged
             || self.pending_auto_archive.is_some()
             || self.final_classification.is_some()
         {
             return;
         }
+        let announce = announce && !self.is_flag_churn_repost(now_ms);
         let category = session_category_of(self.session.as_ref().map(|s| s.session_type));
         let raced = self
             .drivers
@@ -708,30 +722,56 @@ impl SessionState {
         }
         self.session_ended_at_ms = None;
         // SEND itself is the finish evidence — this capture may announce.
-        self.stage_provisional_capture(true);
+        self.stage_provisional_capture(true, now_ms);
     }
 
     /// The listener is stopping: no further packet can arrive, so the grace has
     /// nothing left to wait for — stage a finished-but-unclassified session now.
-    pub fn stage_provisional_on_stop(&mut self) {
+    pub fn stage_provisional_on_stop(&mut self, now_ms: f64) {
         if self.session_ended_at_ms.take().is_some() {
             // Gated on the SEND latch above, so finish evidence exists.
-            self.stage_provisional_capture(true);
+            self.stage_provisional_capture(true, now_ms);
         }
     }
 
+    /// True when announcing THIS session's result would re-describe a race the
+    /// webhook already carried: the game swaps the session UID right at the
+    /// flag (the SESSION_START-before-classification quirk), so the successor
+    /// "session" would post the same physical race again. Two signals are
+    /// required — the replaced session's result went out only seconds ago, AND
+    /// this session's clock did not start near zero (a genuinely new session's
+    /// does; the churn successor inherits a mid-race clock). Failing open means
+    /// worst case a double post, never a suppressed real result.
+    fn is_flag_churn_repost(&self, now_ms: f64) -> bool {
+        self.replaces_session_uid
+            .as_deref()
+            .is_some_and(|prev| self.result_posted_within(prev, now_ms, RESULT_REPOST_WINDOW_MS))
+            && self.first_session_time > CONTINUED_CLOCK_MIN_SECS
+    }
+
     /// Remember that a result for `uid` actually went out to Discord (the
-    /// listener enqueued it). Keyed by UID and kept across session resets — the
-    /// rollover fallback posts the OUTGOING session after the reset.
-    pub fn mark_result_posted(&mut self, uid: String) {
-        self.last_posted_result_uid = Some(uid);
+    /// listener enqueued it), and when. Keyed by UID and kept across session
+    /// resets — the rollover fallback posts the OUTGOING session after the
+    /// reset.
+    pub fn mark_result_posted(&mut self, uid: String, at_ms: f64) {
+        self.last_posted_result = Some((uid, at_ms));
     }
 
     /// Whether a result for `uid` was actually enqueued to Discord. Deliberately
     /// NOT "was a provisional staged": a provisional whose post was disabled or
     /// dropped must not suppress the later official post.
     pub fn result_posted(&self, uid: &str) -> bool {
-        self.last_posted_result_uid.as_deref() == Some(uid)
+        self.last_posted_result.as_ref().map(|(u, _)| u.as_str()) == Some(uid)
+    }
+
+    /// Like `result_posted`, but only within `window_ms` of the post. Used to
+    /// spot the game's end-of-race UID churn: a capture superseding a session
+    /// whose result went out SECONDS ago is the same physical race re-described,
+    /// while a deliberate re-race arrives minutes later and posts normally.
+    pub fn result_posted_within(&self, uid: &str, now_ms: f64, window_ms: f64) -> bool {
+        self.last_posted_result
+            .as_ref()
+            .is_some_and(|(u, at)| u == uid && now_ms - at < window_ms)
     }
 
     /// The current game session's UID ("" before the first packet).
@@ -739,7 +779,7 @@ impl SessionState {
         &self.session_uid
     }
 
-    fn reset_for_session(&mut self, uid: String) {
+    fn reset_for_session(&mut self, uid: String, first_clock: f64, at_ms: f64) {
         // Preserve the outgoing qualifying segment's final standings before the wipe:
         // the next segment's packets contain only the survivors, so this is the only
         // chance to keep knocked-out drivers' times for the stacked qualifying
@@ -759,7 +799,7 @@ impl SessionState {
         // the re-run's capture (see auto_archive_session).
         let finished =
             self.event_tally.contains_key("CHQF") || self.event_tally.contains_key("SEND");
-        self.stage_provisional_capture(finished);
+        self.stage_provisional_capture(finished, at_ms);
         // A crash inside the final hold-back window must still announce: compose
         // its line from the OUTGOING session's incidents and drivers before the
         // wipe erases them. The queued announcements survive the reset — the
@@ -837,6 +877,7 @@ impl SessionState {
             .map(|s| (chain_uid, s.track_id, s.session_type));
         self.replaces_session_uid = None;
         self.session_uid = uid;
+        self.first_session_time = first_clock;
         self.session = None;
         self.drivers.clear();
         self.damage_watch.clear();
@@ -2615,7 +2656,7 @@ mod tests {
             "provisional drained"
         );
         // The listener actually enqueued that provisional to Discord.
-        st.mark_result_posted("A".into());
+        st.mark_result_posted("A".into(), 1_000.0);
         // Packet 8 lands anyway (replayed / very late): the official capture
         // still stages — the archive record upgrade — and the posted marker
         // tells the listener not to send a second Discord result.
@@ -2625,6 +2666,81 @@ mod tests {
             .expect("official upgrade staged");
         assert!(snap.final_classification.is_some());
         assert!(st.result_posted("A"), "repost marker for the listener");
+    }
+
+    #[test]
+    fn flag_churn_successor_archives_but_never_reposts() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 3)]), 0.0);
+        st.ingest(&event("A", chequered()), 0.0);
+        // The flag churn: the UID flips mid-race — the successor's first packet
+        // carries a MID-RACE clock, not a fresh one.
+        st.ingest(&tick("B", 400.0), 1_000.0);
+        let (snap, announce, _) = st
+            .take_pending_auto_archive_with_announce()
+            .expect("A staged at the churn boundary");
+        assert_eq!(snap.session_uid, "A");
+        assert!(announce, "the flagged race posts once");
+        st.mark_result_posted("A".into(), 1_000.0);
+        // The tail runs to the line and ends with its own SEND.
+        st.ingest(
+            &participants("B", vec![participant(0, "Rossi", 1)]),
+            1_000.0,
+        );
+        st.ingest(&laps("B", vec![lap_entry(0, 1, 1, 79_500, 3)]), 1_000.0);
+        st.ingest(&event("B", session_end()), 2_000.0);
+        st.ingest(&session("C", 1), 5_000.0);
+        let (snap, announce, supersedes) = st
+            .take_pending_auto_archive_with_announce()
+            .expect("the tail still archives");
+        assert_eq!(snap.session_uid, "B");
+        assert!(!announce, "same physical race - never posted twice");
+        assert_eq!(supersedes.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn a_quick_legitimate_rerun_still_posts() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 3)]), 0.0);
+        st.ingest(&event("A", chequered()), 0.0);
+        // A genuinely NEW session at the same track+type: its first packet's
+        // clock starts at zero, unlike the churn successor's mid-race clock.
+        st.ingest(&laps("B", vec![]), 1_000.0);
+        assert!(st.take_pending_auto_archive_with_announce().is_some());
+        st.mark_result_posted("A".into(), 1_000.0);
+        st.ingest(&session("B", 15), 1_000.0);
+        st.ingest(
+            &participants("B", vec![participant(0, "Rossi", 1)]),
+            1_000.0,
+        );
+        st.ingest(&laps("B", vec![lap_entry(0, 1, 1, 79_500, 3)]), 1_000.0);
+        st.ingest(&event("B", session_end()), 60_000.0);
+        st.ingest(&session("C", 1), 65_000.0);
+        let (snap, announce, _) = st
+            .take_pending_auto_archive_with_announce()
+            .expect("the rerun archives");
+        assert_eq!(snap.session_uid, "B");
+        assert!(
+            announce,
+            "a real rerun posts even inside the repost window - its clock started fresh"
+        );
+    }
+
+    #[test]
+    fn posted_result_window_tracks_recency() {
+        let mut st = SessionState::new();
+        st.mark_result_posted("A".into(), 1_000.0);
+        assert!(st.result_posted("A"));
+        assert!(st.result_posted_within("A", 60_000.0, 120_000.0));
+        assert!(
+            !st.result_posted_within("A", 300_000.0, 120_000.0),
+            "a deliberate re-race minutes later posts normally"
+        );
+        assert!(!st.result_posted_within("B", 60_000.0, 120_000.0));
     }
 
     #[test]
@@ -2673,7 +2789,7 @@ mod tests {
         st.ingest(&event("A", session_end()), 1_000.0);
         // The listener stops before the grace elapses: no more packets can
         // arrive, so waiting is pointless.
-        st.stage_provisional_on_stop();
+        st.stage_provisional_on_stop(2_000.0);
         assert!(st.take_pending_auto_archive().is_some(), "staged on stop");
 
         // Without the session-end evidence (a mid-race stop), nothing stages.
@@ -2681,7 +2797,7 @@ mod tests {
         st.ingest(&session("C", 15), 0.0);
         st.ingest(&participants("C", vec![participant(0, "Rossi", 1)]), 0.0);
         st.ingest(&laps("C", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
-        st.stage_provisional_on_stop();
+        st.stage_provisional_on_stop(2_000.0);
         assert!(
             st.take_pending_auto_archive().is_none(),
             "a mid-race stop is not a finished session"

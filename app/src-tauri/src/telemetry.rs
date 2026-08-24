@@ -410,7 +410,7 @@ fn spawn_listener(
                         // and archive it now, or it's lost.
                         let staged = {
                             let mut r = race.lock().unwrap_or_else(|p| p.into_inner());
-                            r.stage_provisional_on_stop();
+                            r.stage_provisional_on_stop(now_ms());
                             r.take_pending_auto_archive_with_announce()
                         };
                         if let Some((snap, announce, supersedes)) = staged {
@@ -819,7 +819,8 @@ fn process_staged_result(
             .unwrap_or_else(|p| p.into_inner())
             .result_posted(&snap.session_uid);
     // Evidence for "why didn't my race save/post": every drained result leaves
-    // a line, official or not.
+    // a line, official or not. (Flag-churn reposts arrive with announce=false —
+    // the state folds that evidence in at staging time.)
     log_event(
         log_path,
         &format!(
@@ -828,6 +829,8 @@ fn process_staged_result(
             snap.session_category,
             if already_posted {
                 "official - upgrades posted provisional, not re-posting"
+            } else if snap.final_classification.is_some() && !announce {
+                "official - end-of-race uid churn, not re-posting"
             } else if snap.final_classification.is_some() {
                 "official"
             } else if announce {
@@ -859,7 +862,7 @@ fn process_staged_result(
         if discord_tx.try_send(DiscordJob::Results(snap)).is_ok() {
             race.lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .mark_result_posted(uid);
+                .mark_result_posted(uid, now_ms());
         }
     }
 }

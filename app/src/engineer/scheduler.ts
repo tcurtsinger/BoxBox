@@ -28,6 +28,13 @@ function byPriorityDesc(a: Callout, b: Callout): number {
   return b.priority - a.priority;
 }
 
+/** Callouts describing the same EVOLVING fact supersede each other in the
+ *  queue: a launch that gains six places must not read out six speeches, only
+ *  where the driver is NOW. Keys sharing a slot coalesce to the newest. */
+function slotOf(c: Callout): string | null {
+  return c.key.startsWith("pos-") ? "pos" : null;
+}
+
 export class CalloutScheduler {
   private queue: Callout[] = [];
   private lastKeyAt = new Map<string, number>();
@@ -45,6 +52,13 @@ export class CalloutScheduler {
    *  genuine hazard — the cooldown exists to stop chatter, not safety calls. */
   push(callouts: Callout[], now: number): void {
     for (const c of callouts) {
+      // The newest fact invalidates queued slot-mates BEFORE its own cooldown
+      // check: the driver being back in P8 makes a queued "P7" wrong even when
+      // "P8" itself is still cooling down and won't be re-spoken.
+      const slot = slotOf(c);
+      if (slot != null) {
+        this.queue = this.queue.filter((q) => slotOf(q) !== slot);
+      }
       if (c.priority < PRIORITY.safety) {
         const last = this.lastKeyAt.get(c.key);
         if (last != null && now - last < this.opts.keyCooldownMs) continue;
