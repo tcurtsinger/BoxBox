@@ -14,6 +14,10 @@ import {
 } from "../timing/liveGrid";
 import { toUIIncidents } from "../incidents/liveIncidents";
 
+// Q1, Q2, Sprint Shootout 1, Sprint Shootout 2 — knockout segments with more
+// qualifying still to run.
+const INTERMEDIATE_QUALI_TYPES = new Set([5, 6, 10, 11]);
+
 /** Session-category code → report header label. */
 export const CATEGORY_LABEL: Record<string, string> = {
   race: "Race",
@@ -229,10 +233,14 @@ export function reportFromSnapshot(snap: RaceSnapshot): ReportData {
     baseClassification,
     incidents: toUIIncidents(snap),
     // Final only when the official classification (packet 8) was captured — for
-    // qualifying that's the last segment's packet 8, stored in the same field.
-    // A missing classification means the capture is provisional (the packet was
-    // lost, or the session was saved mid-running), whatever the category.
-    isFinal: finalC != null,
+    // qualifying that's the LAST segment's packet 8: Q1/Q2 (and Sprint Shootout
+    // 1/2) classify officially too, but more qualifying follows, so the event's
+    // result isn't final yet. A missing classification means the capture is
+    // provisional (the packet was lost, or the session was saved mid-running),
+    // whatever the category.
+    isFinal:
+      finalC != null &&
+      !(isQualifying && INTERMEDIATE_QUALI_TYPES.has(snap.session?.sessionType ?? 0)),
     isQualifying,
   });
 }

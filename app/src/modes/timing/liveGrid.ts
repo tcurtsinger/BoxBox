@@ -246,9 +246,56 @@ function isTimedSession(category: string): boolean {
   return category === "qualifying" || category === "practice" || category === "timeTrial";
 }
 
+/** A display-only tower row built from a stacked qualifying entry — the
+ *  live-only columns (sectors, ERS, fuel, tyre) render as unavailable. */
+function stackedRow(c: ClassRow): DriverRow {
+  return {
+    pos: c.pos,
+    // Knocked-out rows can't be linked to a live car (the game re-packs car
+    // indices per segment); a negative pseudo-index keys the row without
+    // colliding with real indices.
+    index: c.index ?? -c.pos,
+    no: c.no,
+    name: c.name,
+    teamName: c.teamName,
+    teamColor: c.teamColor,
+    change: 0,
+    intervalSec: null,
+    gapSec: c.gapSec,
+    qstatus: null,
+    pit: false,
+    lastMs: 0,
+    bestMs: c.bestMs,
+    lastClass: "none",
+    bestClass: "none",
+    sectors: ["none", "none", "none"],
+    status: c.status,
+    batt: 0,
+    boost: false,
+    fuel: 0,
+    tyre: "?",
+    age: 0,
+    pits: c.pits,
+    pitLap: 0,
+    pen: 0,
+    flag: null,
+    restricted: true,
+    namePrivate: false,
+  };
+}
+
 /** Map one snapshot into ordered timing rows. */
 export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
   const drivers = snap.drivers;
+  // Between qualifying segments the game empties the field (results screen,
+  // loading) — but the weekend isn't over. Keep the tower showing the stacked
+  // standings from the captured segments instead of "waiting for the grid".
+  // In that gap the session identity is briefly unknown (state reset, next
+  // Session packet not yet seen), so "unknown" qualifies too.
+  if (drivers.length === 0 && snap.qualiSegments.length > 0) {
+    const stacked = toQualifyingClassification(snap);
+    if (stacked) return stacked.map(stackedRow);
+  }
   const timed = isTimedSession(snap.sessionCategory);
   const bestTimes = drivers.map((d) => d.bestLapMS).filter((t) => t > 0);
   const overallBest = bestTimes.length ? Math.min(...bestTimes) : 0;
@@ -501,9 +548,11 @@ const QUALI_SEGMENT_LABEL: Record<number, string> = { 5: "Q1", 6: "Q2", 7: "Q3" 
  * driver was eliminated in (e.g. "Q1"); null for those who reached the top group.
  */
 export function toQualifyingClassification(snap: RaceSnapshot): ClassRow[] | null {
-  // Only meaningful while qualifying is the live session; once the race starts the
-  // report shows the race result, even though the segments stay available (P1.3).
-  if (snap.sessionCategory !== "qualifying") return null;
+  // Only meaningful while qualifying is the live session — plus the brief
+  // between-segments gap where the reset state hasn't seen the next Session
+  // packet yet ("unknown"). Once the race starts the report shows the race
+  // result, even though the segments stay available (P1.3).
+  if (snap.sessionCategory !== "qualifying" && snap.sessionCategory !== "unknown") return null;
   // Each group is one segment's standings, oldest first; the live grid is the
   // current (newest) segment when qualifying is in progress.
   const groups: { type: number | null; standings: QualiSegmentEntry[] }[] = snap.qualiSegments.map(
