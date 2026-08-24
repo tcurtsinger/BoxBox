@@ -354,6 +354,17 @@ pub struct SessionState {
     // for official classifications and evidence-backed provisionals, false for
     // just-in-case boundary captures whose session may not have finished.
     pending_archive_announce: bool,
+    // UID of the archived session this staged capture supersedes, if any — set
+    // when THIS session was observed to replace it (a restart: same track and
+    // session type, back to back). The listener deletes exactly that record.
+    pending_archive_supersedes: Option<String>,
+    // The outgoing session's identity at the last reset (uid, track, type),
+    // pending the next Session packet's verdict on whether the new session is
+    // a restart of it.
+    prior_session: Option<(String, i8, u8)>,
+    // The current session replaced this earlier session (restart observed in
+    // this run). Carried onto whichever capture this session eventually stages.
+    replaces_session_uid: Option<String>,
     // Open damage watches: one per car per recent collision, measuring what the
     // contact cost against the CarDamage packets that follow. Bounded.
     damage_watch: Vec<DamageWatch>,
@@ -527,6 +538,16 @@ impl SessionState {
                         self.incidents.drain(..held.count.min(self.incidents.len()));
                     }
                 }
+                // Same track and session type as the session that just left =
+                // a RESTART of it: this run replaces that attempt, and its
+                // eventual capture supersedes the abandoned attempt's silent
+                // record. Observed restarts are the ONLY supersession trigger —
+                // replaying an event in a later run must never delete history.
+                if let Some((prev_uid, track, stype)) = self.prior_session.take() {
+                    if s.track_id == track && s.session_type == stype {
+                        self.replaces_session_uid = Some(prev_uid);
+                    }
+                }
                 self.session = Some(s.clone());
                 self.is_spectating = s.is_spectating;
                 self.spectator_car_index = s.spectator_car_index;
@@ -566,6 +587,7 @@ impl SessionState {
                 self.session_ended_at_ms = None;
                 if first {
                     self.pending_archive_announce = true;
+                    self.pending_archive_supersedes = self.replaces_session_uid.clone();
                     self.pending_auto_archive = Some(Box::new(self.snapshot()));
                 }
             }
@@ -621,17 +643,22 @@ impl SessionState {
     /// since the last drain. Taken by the listener, which persists it to history.
     pub fn take_pending_auto_archive(&mut self) -> Option<Box<SessionSnapshot>> {
         self.take_pending_auto_archive_with_announce()
-            .map(|(s, _)| s)
+            .map(|(s, _, _)| s)
     }
 
-    /// The staged capture plus whether it may be ANNOUNCED (Discord). Archiving
-    /// always proceeds; announcing requires finish evidence — a just-in-case
-    /// boundary capture returns false here and stays out of the webhook.
+    /// The staged capture plus whether it may be ANNOUNCED (Discord) and the
+    /// UID of the archived record it supersedes (an observed restart of that
+    /// session). Archiving always proceeds; announcing requires finish
+    /// evidence — a just-in-case boundary capture returns false and stays out
+    /// of the webhook.
     pub fn take_pending_auto_archive_with_announce(
         &mut self,
-    ) -> Option<(Box<SessionSnapshot>, bool)> {
+    ) -> Option<(Box<SessionSnapshot>, bool, Option<String>)> {
         let announce = self.pending_archive_announce;
-        self.pending_auto_archive.take().map(|s| (s, announce))
+        let supersedes = self.pending_archive_supersedes.clone();
+        self.pending_auto_archive
+            .take()
+            .map(|s| (s, announce, supersedes))
     }
 
     /// Stage the current session as a provisional capture — the shape packet 8
@@ -662,6 +689,7 @@ impl SessionState {
         {
             self.provisional_staged = true;
             self.pending_archive_announce = announce;
+            self.pending_archive_supersedes = self.replaces_session_uid.clone();
             self.pending_auto_archive = Some(Box::new(self.snapshot()));
         }
     }
@@ -784,6 +812,30 @@ impl SessionState {
         // A remap the previous segment never applied (its Participants packet
         // never came) is meaningless against yet another new grid.
         self.pending_incident_remap = None;
+        // Remember who just left, so the next Session packet can tell whether
+        // the new session is a RESTART of it (same track + type) — the only
+        // situation allowed to supersede that session's just-in-case record.
+        // Set AFTER the staging above, which consumed the outgoing session's
+        // own replaces_session_uid.
+        //
+        // An attempt that never archived anything (restarted before racing)
+        // has no record to supersede — naming IT would orphan the last
+        // archived attempt's record forever. Point the chain at the last
+        // attempt that DID archive instead, so rapid restart chains still
+        // clean up.
+        let archived_something = self.provisional_staged || self.final_classification.is_some();
+        let chain_uid = if archived_something {
+            self.session_uid.clone()
+        } else {
+            self.replaces_session_uid
+                .take()
+                .unwrap_or_else(|| self.session_uid.clone())
+        };
+        self.prior_session = self
+            .session
+            .as_ref()
+            .map(|s| (chain_uid, s.track_id, s.session_type));
+        self.replaces_session_uid = None;
         self.session_uid = uid;
         self.session = None;
         self.drivers.clear();
@@ -2305,7 +2357,7 @@ mod tests {
         st.ingest(&event("A", chequered()), 0.0);
         // The lobby cuts over; packet 8 (single datagram) never arrived.
         st.ingest(&session("B", 15), 0.0);
-        let (snap, announce) = st
+        let (snap, announce, _) = st
             .take_pending_auto_archive_with_announce()
             .expect("provisional staged");
         assert_eq!(snap.session_uid, "A", "the FINISHED session is archived");
@@ -2326,7 +2378,7 @@ mod tests {
         st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
         st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
         st.ingest(&session("B", 15), 0.0);
-        let (snap, announce) = st
+        let (snap, announce, _) = st
             .take_pending_auto_archive_with_announce()
             .expect("just-in-case archive staged");
         assert_eq!(snap.session_uid, "A");
@@ -2431,7 +2483,7 @@ mod tests {
         // simulated the rest off-feed. The boundary itself archives the data
         // (just-in-case), silently.
         st.ingest(&laps("B", vec![]), 1.0);
-        let (snap, announce) = st
+        let (snap, announce, _) = st
             .take_pending_auto_archive_with_announce()
             .expect("quali archived");
         assert_eq!(snap.session_uid, "A");
@@ -2441,6 +2493,60 @@ mod tests {
             snap.quali_segments.len(),
             1,
             "the stacked segments travel with the archive"
+        );
+    }
+
+    #[test]
+    fn a_restart_chain_names_the_attempt_it_replaces() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 7), 0.0); // Q3
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        // Q3 again: A's just-in-case capture replaces nothing.
+        st.ingest(&session("B", 7), 1.0);
+        let (snap, _, supersedes) = st
+            .take_pending_auto_archive_with_announce()
+            .expect("A archived");
+        assert_eq!(snap.session_uid, "A");
+        assert_eq!(supersedes, None, "A replaced nothing");
+        // B races and is restarted too: its capture names A — the attempt this
+        // run was OBSERVED to replace — so the archive can drop A's record.
+        st.ingest(&participants("B", vec![participant(0, "Rossi", 1)]), 1.0);
+        st.ingest(&laps("B", vec![lap_entry(0, 1, 1, 79_000, 5)]), 1.0);
+        st.ingest(&session("C", 7), 2.0);
+        let (snap, _, supersedes) = st
+            .take_pending_auto_archive_with_announce()
+            .expect("B archived");
+        assert_eq!(snap.session_uid, "B");
+        assert_eq!(supersedes.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn the_chain_skips_attempts_that_never_archived() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0); // a race, raced
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&session("B", 15), 1.0);
+        assert!(st.take_pending_auto_archive_with_announce().is_some());
+        // B is restarted before anyone races: it archives nothing, and must
+        // not swallow the chain link to A's record.
+        st.ingest(&session("C", 15), 2.0);
+        assert!(
+            st.take_pending_auto_archive_with_announce().is_none(),
+            "an empty attempt stages nothing"
+        );
+        st.ingest(&participants("C", vec![participant(0, "Rossi", 1)]), 2.0);
+        st.ingest(&laps("C", vec![lap_entry(0, 1, 1, 79_000, 5)]), 2.0);
+        st.ingest(&session("D", 15), 3.0);
+        let (snap, _, supersedes) = st
+            .take_pending_auto_archive_with_announce()
+            .expect("C archived");
+        assert_eq!(snap.session_uid, "C");
+        assert_eq!(
+            supersedes.as_deref(),
+            Some("A"),
+            "the chain names the last ARCHIVED attempt, skipping empty B"
         );
     }
 

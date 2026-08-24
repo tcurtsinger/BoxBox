@@ -413,7 +413,7 @@ fn spawn_listener(
                             r.stage_provisional_on_stop();
                             r.take_pending_auto_archive_with_announce()
                         };
-                        if let Some((snap, announce)) = staged {
+                        if let Some((snap, announce, supersedes)) = staged {
                             process_staged_result(
                                 &app,
                                 &race,
@@ -424,6 +424,7 @@ fn spawn_listener(
                                 &log_path,
                                 snap,
                                 announce,
+                                supersedes,
                             );
                         }
                         return InnerExit::Stopped;
@@ -677,7 +678,7 @@ fn spawn_listener(
                             // A result was staged (official classification, or the
                             // provisional fallback): archive it (off the race lock) so
                             // the next session's wipe or an app close can't destroy it.
-                            if let Some((snap, announce)) = auto_archive_snap {
+                            if let Some((snap, announce, supersedes)) = auto_archive_snap {
                                 process_staged_result(
                                     &app,
                                     &race,
@@ -688,6 +689,7 @@ fn spawn_listener(
                                     &log_path,
                                     snap,
                                     announce,
+                                    supersedes,
                                 );
                             }
                             // Run the rules + emit OFF the race lock. Each callout is
@@ -711,7 +713,7 @@ fn spawn_listener(
                                 r.stage_provisional_if_due(now_ms());
                                 r.take_pending_auto_archive_with_announce()
                             };
-                            if let Some((snap, announce)) = staged {
+                            if let Some((snap, announce, supersedes)) = staged {
                                 process_staged_result(
                                     &app,
                                     &race,
@@ -722,6 +724,7 @@ fn spawn_listener(
                                     &log_path,
                                     snap,
                                     announce,
+                                    supersedes,
                                 );
                             }
                         }
@@ -802,6 +805,7 @@ fn process_staged_result(
     log_path: &Option<PathBuf>,
     snap: Box<SessionSnapshot>,
     announce: bool,
+    supersedes: Option<String>,
 ) {
     // An official classification landing after this session's provisional
     // result already went out (late or replayed packet 8) upgrades the archive
@@ -833,7 +837,7 @@ fn process_staged_result(
             }
         ),
     );
-    auto_archive_session(app, history, store, &snap, announce, log_path);
+    auto_archive_session(app, history, store, &snap, announce, supersedes, log_path);
     // A just-in-case boundary capture (no finish evidence) archives silently:
     // it may be an abandoned attempt, and an abandoned attempt must never be
     // announced as a result.
@@ -866,6 +870,7 @@ fn auto_archive_session(
     store: &Arc<HistoryStore>,
     snap: &SessionSnapshot,
     announce: bool,
+    supersedes: Option<String>,
     log_path: &Option<PathBuf>,
 ) {
     let value = match serde_json::to_value(snap) {
@@ -900,7 +905,7 @@ fn auto_archive_session(
     for id in stale_quali_auto_records(a.list(), &value, &snap.session_uid) {
         a.delete(&id);
     }
-    for id in superseded_auto_records(a.list(), &value, &snap.session_uid) {
+    for id in superseded_auto_records(a.list(), &snap.session_uid, supersedes.as_deref()) {
         a.delete(&id);
     }
     // Unconfirmed = saved with neither a classification nor finish evidence: a
@@ -946,39 +951,25 @@ fn auto_session_name(snap: &SessionSnapshot) -> String {
 /// flag, never its display name (the user can rename). Two cases:
 ///  - the same session re-captured (same UID): a late/replayed official
 ///    classification upgrades an already-archived provisional;
-///  - an abandoned attempt's just-in-case capture (same track and sessionType,
-///    UNCONFIRMED — saved with no finish evidence, different UID): the re-run's
-///    capture replaces it, so restarts don't accumulate silent duplicates.
-/// An evidence-backed provisional (lost classification packet after a
-/// chequered flag / SEND) is a REAL result: it is never unconfirmed and a
-/// later event at the same track must not delete it. Pinned records and
-/// manual saves are never candidates.
+///  - `supersedes` names the UID of an attempt this session was OBSERVED to
+///    restart (same track and type, back to back, in this run) — its
+///    just-in-case record is replaced, so restarts don't accumulate silent
+///    duplicates. Observation is the only trigger: no shape-based guessing, so
+///    replaying an event in a later run can never delete valid history. Even
+///    the named record is only deleted while still UNCONFIRMED (saved with no
+///    finish evidence) — a confirmed result is never a candidate, nor are
+///    pinned records and manual saves.
 fn superseded_auto_records(
     records: &[SessionRecord],
-    incoming: &serde_json::Value,
     incoming_uid: &str,
+    supersedes: Option<&str>,
 ) -> Vec<String> {
-    let session_of = |v: &serde_json::Value, key: &str| -> Option<i64> {
-        v.get("session")
-            .and_then(|s| s.get(key))
-            .and_then(|t| t.as_i64())
-    };
-    let (track, stype) = (
-        session_of(incoming, "trackId"),
-        session_of(incoming, "sessionType"),
-    );
     records
         .iter()
         .filter(|r| !r.pinned && r.auto)
         .filter(|r| {
-            let same_uid =
-                r.snapshot.get("sessionUid").and_then(|v| v.as_str()) == Some(incoming_uid);
-            let abandoned_attempt = !same_uid
-                && r.unconfirmed
-                && track.is_some()
-                && session_of(&r.snapshot, "trackId") == track
-                && session_of(&r.snapshot, "sessionType") == stype;
-            same_uid || abandoned_attempt
+            let uid = r.snapshot.get("sessionUid").and_then(|v| v.as_str());
+            uid == Some(incoming_uid) || (r.unconfirmed && uid.is_some() && uid == supersedes)
         })
         .map(|r| r.id.clone())
         .collect()
@@ -1561,45 +1552,31 @@ mod tests {
     }
 
     #[test]
-    fn abandoned_attempt_records_are_superseded_by_the_rerun() {
-        let snap_json = |uid: &str, track: i64, stype: i64, official: bool| {
-            let mut v = serde_json::json!({
-                "sessionUid": uid,
-                "sessionCategory": "race",
-                "session": { "trackId": track, "sessionType": stype },
-            });
-            if official {
-                v["finalClassification"] = serde_json::json!({ "numCars": 1 });
-            }
-            v
-        };
+    fn only_the_observed_restart_supersedes_and_only_while_unconfirmed() {
+        let snap_json = |uid: &str| serde_json::json!({ "sessionUid": uid });
         let unconfirmed = |mut r: SessionRecord| {
             r.unconfirmed = true;
             r
         };
         let records = vec![
-            // The abandoned first attempt: unconfirmed, same track + type.
-            unconfirmed(record(
-                "aborted",
-                true,
-                false,
-                snap_json("A", 13, 15, false),
-            )),
-            // An evidence-backed provisional (lost packet 8 after the flag):
-            // a REAL result — same track + type, but confirmed, so it stays.
-            record("provisional", true, false, snap_json("B", 13, 15, false)),
-            // An OFFICIAL record at the same track + type: kept.
-            record("official", true, false, snap_json("E", 13, 15, true)),
-            // A manual save: never touched, whatever it contains.
-            record("manual", false, false, snap_json("A", 13, 15, false)),
-            // Different track: unrelated weekend.
-            unconfirmed(record("other", true, false, snap_json("C", 21, 15, false))),
+            // The abandoned attempt this run was observed to restart.
+            unconfirmed(record("aborted", true, false, snap_json("A"))),
+            // An evidence-backed provisional: confirmed — a real result.
+            record("confirmed", true, false, snap_json("B")),
+            // Unconfirmed, but from another weekend the chain never named: kept.
+            unconfirmed(record("otherweekend", true, false, snap_json("C"))),
+            // A manual save of the named attempt: never touched.
+            record("manual", false, false, snap_json("A")),
         ];
-        let incoming = snap_json("D", 13, 15, true);
+        // The rerun D was observed to replace A.
         assert_eq!(
-            superseded_auto_records(&records, &incoming, "D"),
+            superseded_auto_records(&records, "D", Some("A")),
             vec!["aborted".to_string()]
         );
+        // Even a named record survives once confirmed.
+        assert!(superseded_auto_records(&records, "D", Some("B")).is_empty());
+        // No observed restart: only same-uid upgrades apply.
+        assert!(superseded_auto_records(&records, "D", None).is_empty());
     }
 
     #[test]
