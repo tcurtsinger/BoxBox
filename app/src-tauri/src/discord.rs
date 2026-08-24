@@ -136,11 +136,30 @@ fn send(url: &str, body: &Value) -> Result<ureq::Response, ureq::Error> {
         .send_json(body.clone())
 }
 
-// Error strings can embed the URL (which contains the webhook token) — keep
-// only the status/kind so a failure surfaced to the UI can't leak it.
+// Error strings must never embed the URL (it contains the webhook token), but
+// Discord's response BODY is safe and says exactly what's wrong — surface it,
+// with a plain-words hint for the one 400 users actually hit (forum channels).
 fn short_err(e: ureq::Error) -> String {
     match e {
-        ureq::Error::Status(code, _) => format!("Discord returned HTTP {code}"),
+        ureq::Error::Status(code, resp) => {
+            let body = resp.into_string().unwrap_or_default();
+            let detail = serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|v| v.get("message").and_then(|m| m.as_str().map(str::to_string)))
+                .unwrap_or(body);
+            let detail: String = detail.chars().take(140).collect();
+            if detail.contains("thread_name or thread_id") {
+                return "This webhook points at a Forum channel. Create the webhook on a \
+                        regular text channel instead, or append ?thread_id=<id> of an \
+                        existing forum post to the URL."
+                    .to_string();
+            }
+            if detail.trim().is_empty() {
+                format!("Discord returned HTTP {code}")
+            } else {
+                format!("Discord returned HTTP {code}: {detail}")
+            }
+        }
         ureq::Error::Transport(_) => "could not reach Discord".to_string(),
     }
 }
@@ -540,6 +559,22 @@ mod tests {
         let d = description(&v);
         assert!(d.contains("`L18` **Heavy contact** — 13 Mantis vs 2 penguin2780"));
         assert!(d.contains("`L19` **Safety Car**"));
+    }
+
+    #[test]
+    fn short_err_surfaces_discords_message_without_the_url() {
+        let resp = ureq::Response::new(
+            400,
+            "Bad Request",
+            r#"{"message": "Webhooks posted to forum channels must have a thread_name or thread_id", "code": 220001}"#,
+        )
+        .expect("test response");
+        let msg = short_err(ureq::Error::Status(400, resp));
+        assert!(msg.contains("Forum channel"), "{msg}");
+        let resp = ureq::Response::new(400, "Bad Request", r#"{"message": "Cannot send an empty message", "code": 50006}"#)
+            .expect("test response");
+        let msg = short_err(ureq::Error::Status(400, resp));
+        assert_eq!(msg, "Discord returned HTTP 400: Cannot send an empty message");
     }
 
     #[test]
