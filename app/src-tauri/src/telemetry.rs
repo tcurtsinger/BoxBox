@@ -403,6 +403,25 @@ fn spawn_listener(
             let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| -> InnerExit {
                 loop {
                     if stop_worker.load(Ordering::Relaxed) {
+                        // Stopping: a finished session still waiting out its
+                        // classification grace gets no further packets — stage
+                        // and archive it now, or it's lost.
+                        let staged = {
+                            let mut r = race.lock().unwrap_or_else(|p| p.into_inner());
+                            r.stage_provisional_on_stop();
+                            r.take_pending_auto_archive()
+                        };
+                        if let Some(snap) = staged {
+                            process_staged_result(
+                                &app,
+                                &history,
+                                &history_store,
+                                &discord_cfg,
+                                &discord_tx,
+                                &log_path,
+                                snap,
+                            );
+                        }
                         return InnerExit::Stopped;
                     }
                     // A reset request re-opens source selection (e.g. after moving
@@ -651,43 +670,19 @@ fn spawn_listener(
                                         discord_tx.try_send(DiscordJob::Incidents(announcements));
                                 }
                             }
-                            // The official classification arrived: archive the finished
-                            // session automatically (off the race lock) so the next
-                            // session's wipe or an app close can't destroy it.
+                            // A result was staged (official classification, or the
+                            // provisional fallback): archive it (off the race lock) so
+                            // the next session's wipe or an app close can't destroy it.
                             if let Some(snap) = auto_archive_snap {
-                                // Evidence for "why didn't my race save/post": every
-                                // drained result leaves a line, official or not.
-                                log_event(
+                                process_staged_result(
+                                    &app,
+                                    &history,
+                                    &history_store,
+                                    &discord_cfg,
+                                    &discord_tx,
                                     &log_path,
-                                    &format!(
-                                        "session result staged: uid {} {:?} (classification: {})",
-                                        snap.session_uid,
-                                        snap.session_category,
-                                        if snap.final_classification.is_some() {
-                                            "official"
-                                        } else {
-                                            "missing - provisional"
-                                        }
-                                    ),
+                                    snap,
                                 );
-                                auto_archive_session(&app, &history, &history_store, &snap, &log_path);
-                                // Same trigger posts the result to Discord — either the
-                                // official classification or the provisional standings.
-                                let want = discord_cfg
-                                    .lock()
-                                    .map(|c| match snap.session_category {
-                                        crate::racecontrol::state::SessionCategory::Race => {
-                                            c.post_race
-                                        }
-                                        crate::racecontrol::state::SessionCategory::Qualifying => {
-                                            c.post_quali
-                                        }
-                                        _ => false,
-                                    })
-                                    .unwrap_or(false);
-                                if want {
-                                    let _ = discord_tx.try_send(DiscordJob::Results(snap));
-                                }
                             }
                             // Run the rules + emit OFF the race lock. Each callout is
                             // filtered by enabled category and spoken in the webview.
@@ -700,7 +695,29 @@ fn spawn_listener(
                         // Read timeout: idle tick, loop back to re-check the flags.
                         Err(ref e)
                             if e.kind() == std::io::ErrorKind::WouldBlock
-                                || e.kind() == std::io::ErrorKind::TimedOut => {}
+                                || e.kind() == std::io::ErrorKind::TimedOut =>
+                        {
+                            // The classification grace must elapse even when the game
+                            // has stopped sending (closed from the results screen) —
+                            // check it on idle ticks, not just on packets.
+                            let staged = {
+                                let mut r =
+                                    race.lock().unwrap_or_else(|p| p.into_inner());
+                                r.stage_provisional_if_due(now_ms());
+                                r.take_pending_auto_archive()
+                            };
+                            if let Some(snap) = staged {
+                                process_staged_result(
+                                    &app,
+                                    &history,
+                                    &history_store,
+                                    &discord_cfg,
+                                    &discord_tx,
+                                    &log_path,
+                                    snap,
+                                );
+                            }
+                        }
                         // Windows WSAEMSGSIZE (10040): a datagram bigger than the
                         // buffer was truncated-and-dropped. Can't be F1 traffic
                         // (max 1470 B, and the buffer holds any legal UDP size) —
@@ -766,6 +783,48 @@ fn spawn_listener(
 /// made mid-session (no classification yet) does not block the capture. A failed
 /// disk write keeps the record in memory — a later successful write still lands
 /// it — and leaves evidence in the log.
+/// Archive a drained session result (official or provisional) and queue its
+/// Discord post. Shared by the packet path, the idle tick and the stop path.
+fn process_staged_result(
+    app: &AppHandle,
+    history: &Arc<Mutex<HistoryArchive>>,
+    store: &Arc<HistoryStore>,
+    discord_cfg: &Arc<Mutex<DiscordConfig>>,
+    discord_tx: &std::sync::mpsc::SyncSender<DiscordJob>,
+    log_path: &Option<PathBuf>,
+    snap: Box<SessionSnapshot>,
+) {
+    // Evidence for "why didn't my race save/post": every drained result leaves
+    // a line, official or not.
+    log_event(
+        log_path,
+        &format!(
+            "session result staged: uid {} {:?} (classification: {})",
+            snap.session_uid,
+            snap.session_category,
+            if snap.final_classification.is_some() {
+                "official"
+            } else {
+                "missing - provisional"
+            }
+        ),
+    );
+    auto_archive_session(app, history, store, &snap, log_path);
+    // Same trigger posts the result to Discord — either the official
+    // classification or the provisional standings.
+    let want = discord_cfg
+        .lock()
+        .map(|c| match snap.session_category {
+            crate::racecontrol::state::SessionCategory::Race => c.post_race,
+            crate::racecontrol::state::SessionCategory::Qualifying => c.post_quali,
+            _ => false,
+        })
+        .unwrap_or(false);
+    if want {
+        let _ = discord_tx.try_send(DiscordJob::Results(snap));
+    }
+}
+
 fn auto_archive_session(
     app: &AppHandle,
     archive: &Arc<Mutex<HistoryArchive>>,
@@ -800,6 +859,23 @@ fn auto_archive_session(
     // stacked report loses nothing. Manual saves and pinned records are never
     // touched.
     for id in stale_quali_auto_records(a.list(), &value, &snap.session_uid) {
+        a.delete(&id);
+    }
+    // A provisional capture of this same session may already be on disk (grace
+    // fallback); an official classification arriving after it (late or replayed
+    // packet 8) supersedes it — replace, never duplicate. Manual saves and
+    // pinned records stay.
+    let superseded: Vec<String> = a
+        .list()
+        .iter()
+        .filter(|r| !r.pinned && r.name.ends_with("(auto)"))
+        .filter(|r| {
+            r.snapshot.get("sessionUid").and_then(|v| v.as_str())
+                == Some(snap.session_uid.as_str())
+        })
+        .map(|r| r.id.clone())
+        .collect();
+    for id in superseded {
         a.delete(&id);
     }
     let id = a.save(&auto_session_name(snap), value, now_ms());
