@@ -127,8 +127,8 @@ fn worker(
             // audio device (the supported Web Speech fallback path) must not
             // leave a file in temp per callout.
             let play = (|| -> Result<(), String> {
-                // Cancelled during synthesis: the sink never existed, so the
-                // sink-stop in voice_cancel couldn't catch this line.
+                // Cancelled during synthesis: cheap early-out before claiming
+                // the audio device (the race-free gate is at publication below).
                 if generation.load(Ordering::SeqCst) != job.generation {
                     return Ok(());
                 }
@@ -141,7 +141,19 @@ fn worker(
                     Arc::new(rodio::Sink::try_new(&handle).map_err(|e| format!("sink: {e}"))?);
                 sink.set_volume(job.volume.clamp(0.0, 1.0));
                 sink.append(source);
-                *current.lock().unwrap_or_else(|p| p.into_inner()) = Some(sink.clone());
+                {
+                    let mut cur = current.lock().unwrap_or_else(|p| p.into_inner());
+                    // The authoritative cancellation gate, INSIDE the
+                    // publication lock: voice_cancel bumps the generation
+                    // before taking this lock to stop the sink, so a cancel
+                    // lands either before this check (stale generation — the
+                    // sink is never published) or after publication (it finds
+                    // the sink and stops it). No gap between check and publish.
+                    if generation.load(Ordering::SeqCst) != job.generation {
+                        return Ok(());
+                    }
+                    *cur = Some(sink.clone());
+                }
                 // Blocks until the line finishes — or returns early if
                 // voice_cancel stopped the sink (the lock is NOT held here).
                 sink.sleep_until_end();
