@@ -275,12 +275,15 @@ fn lap_times(prev: &PlayerFrame, next: &PlayerFrame, out: &mut Vec<Callout>) {
             key,
         ));
     } else if prev.best_lap_ms == 0 || lap < prev.best_lap_ms {
-        out.push(Callout::new(
-            Category::LapTimes,
-            P_INFO,
-            "Personal best — well done.",
-            key,
-        ));
+        // In a timed session position IS the lap's result, and praising a lap
+        // that left you P8 rings false — report where it put you instead.
+        // Races keep the plain call: position there has its own callouts.
+        let text = if !next.is_race && next.position > 0 {
+            format!("That puts you P{}.", next.position)
+        } else {
+            "Personal best — well done.".to_string()
+        };
+        out.push(Callout::new(Category::LapTimes, P_INFO, text, key));
     } else if next.best_lap_ms > 0
         && lap > next.best_lap_ms
         && lap - next.best_lap_ms <= LAP_DELTA_SPEAK_MS
@@ -509,6 +512,22 @@ mod tests {
         assert!(texts(frame(), n)
             .iter()
             .any(|t| t.contains("Personal best")));
+    }
+
+    #[test]
+    fn a_quali_personal_best_reports_the_position_it_earned() {
+        let (mut p, mut n) = (frame(), frame());
+        p.is_race = false;
+        p.position = 12;
+        n.is_race = false;
+        n.position = 8;
+        n.lap = 6;
+        n.last_lap_ms = 80_200;
+        n.best_lap_ms = 80_200;
+        n.session_best_ms = 79_000;
+        let out = texts(p, n);
+        assert!(out.iter().any(|t| t.contains("puts you P8")));
+        assert!(!out.iter().any(|t| t.contains("well done")));
     }
 
     #[test]
