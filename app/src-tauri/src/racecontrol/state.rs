@@ -56,6 +56,20 @@ pub enum IncidentSource {
     Manual,
 }
 
+/// Incident log held across a qualifying UID reset, waiting for the next
+/// Session packet to rule on continuation (see `reset_for_session`).
+#[derive(Debug, Clone, Copy)]
+struct HeldQualiIncidents {
+    track_id: i8,
+    /// The OUTGOING segment's session type — a continuation must progress past
+    /// it (Q1 → Q2 → Q3); a restart or a fresh quali event repeats or rewinds.
+    session_type: u8,
+    /// How many incidents were held. A clear drops only this prefix, so an
+    /// incident of the NEW session that arrived before its first Session
+    /// packet (event packets can precede it) survives.
+    count: usize,
+}
+
 /// A steward's decision. `outcome` is free text, set when an incident is approved.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -318,11 +332,10 @@ pub struct SessionState {
     // weekend's qualifying begins on a different track. P1.3.
     quali_segments: HashMap<u8, Vec<QualiSegmentEntry>>,
     quali_track_id: Option<i8>,
-    // Track of the qualifying session whose incident log was held across a UID
-    // reset (None = nothing held). Resolved by the next Session packet: the log
-    // survives into another qualifying session on the same track, otherwise
-    // it's cleared there.
-    incidents_held_from_quali: Option<i8>,
+    // Incident log held across a qualifying UID reset (None = nothing held),
+    // waiting for the next Session packet to rule on continuation — see
+    // reset_for_session and the Session-packet arm.
+    incidents_held_from_quali: Option<HeldQualiIncidents>,
     // Open damage watches: one per car per recent collision, measuring what the
     // contact cost against the CarDamage packets that follow. Bounded.
     damage_watch: Vec<DamageWatch>,
@@ -467,16 +480,21 @@ impl SessionState {
         match &pkt.data {
             Some(Body::Session(s)) => {
                 // An incident log held across a quali-segment boundary (see
-                // reset_for_session) only carries into ANOTHER qualifying
-                // session on the same track — a race, practice, or a new
-                // weekend starts its own log.
-                if let Some(track) = self.incidents_held_from_quali.take() {
-                    let same_quali = session_category_of(Some(s.session_type))
+                // reset_for_session) only carries into this weekend's NEXT
+                // knockout segment. A restarted segment or a fresh quali event
+                // at the same track repeats/rewinds the segment type, and a
+                // race, practice, or new weekend changes it entirely — all of
+                // those start their own log. Only the held prefix is dropped:
+                // a new-session incident that arrived before this Session
+                // packet survives (its id is already unique — the counter was
+                // never rewound).
+                if let Some(held) = self.incidents_held_from_quali.take() {
+                    let continues = session_category_of(Some(s.session_type))
                         == SessionCategory::Qualifying
-                        && s.track_id == track;
-                    if !same_quali {
-                        self.incidents.clear();
-                        self.next_incident_id = 1;
+                        && s.track_id == held.track_id
+                        && s.session_type > held.session_type;
+                    if !continues {
+                        self.incidents.drain(..held.count.min(self.incidents.len()));
                     }
                 }
                 self.session = Some(s.clone());
@@ -697,15 +715,17 @@ impl SessionState {
         // so the stacked report and the archive still carry Q1's contact when
         // Q3 saves. Whether the hold sticks is decided by the NEXT session's
         // identity — see the Session-packet arm in `ingest`.
-        let held_quali_track = if session_category_of(self.session.as_ref().map(|s| s.session_type))
-            == SessionCategory::Qualifying
-        {
-            self.session.as_ref().map(|s| s.track_id)
-        } else {
-            None
+        self.incidents_held_from_quali = match self.session.as_ref() {
+            Some(s) if session_category_of(Some(s.session_type)) == SessionCategory::Qualifying => {
+                Some(HeldQualiIncidents {
+                    track_id: s.track_id,
+                    session_type: s.session_type,
+                    count: self.incidents.len(),
+                })
+            }
+            _ => None,
         };
-        self.incidents_held_from_quali = held_quali_track;
-        if held_quali_track.is_none() {
+        if self.incidents_held_from_quali.is_none() {
             self.incidents.clear();
             self.next_incident_id = 1;
         }
@@ -757,9 +777,14 @@ impl SessionState {
 
     // Captured qualifying segments for the CURRENT track only (so a previous
     // weekend's segments can't leak into this weekend's report), sorted Q1 -> Q3.
+    // While the session is unresolved (a reset just ran; the next Session packet
+    // hasn't arrived) the segments stay exposed — that between-segments gap is
+    // exactly where the tower needs them to keep showing the standings.
     fn quali_segments_view(&self) -> Vec<QualiSegment> {
         let current_track = self.session.as_ref().map(|s| s.track_id);
-        if current_track.is_none() || current_track != self.quali_track_id {
+        if (current_track.is_some() && current_track != self.quali_track_id)
+            || self.quali_track_id.is_none()
+        {
             return Vec::new();
         }
         let mut segs: Vec<QualiSegment> = self
@@ -2206,9 +2231,41 @@ mod tests {
         st.ingest(&session("A", 5), 0.0); // Q1
         st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
         st.ingest(&event_at("A", coll(0, 1, Some(2)), 10.0), 0.0);
-        // The race (same track) starts its own incident log.
+        // A race event lands BEFORE the race's first Session packet — the clear
+        // of the held quali log must not take the race's own incident with it.
+        st.ingest(&event_at("B", coll(2, 3, Some(2)), 5.0), 1.0);
         st.ingest(&session("B", 15), 1.0);
+        let snap = st.snapshot();
+        assert_eq!(snap.incidents.len(), 1, "only the quali log was dropped");
+        assert_eq!(snap.incidents[0].car_indices, vec![2, 3]);
+    }
+
+    #[test]
+    fn quali_restart_starts_a_fresh_incident_log() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 5), 0.0); // Q1
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&event_at("A", coll(0, 1, Some(2)), 10.0), 0.0);
+        // Q1 again (restart / a later quali event at the same track): the
+        // segment type didn't progress, so the previous attempt's incidents
+        // must not colour this one's report.
+        st.ingest(&session("B", 5), 1.0);
         assert!(st.snapshot().incidents.is_empty());
+    }
+
+    #[test]
+    fn quali_segments_stay_exposed_during_the_segment_gap() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 5), 0.0); // Q1
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        // The next segment's first packet isn't a Session packet: the reset
+        // leaves the session unresolved, and the tower needs the captured
+        // standings exactly then.
+        st.ingest(&laps("B", vec![]), 1.0);
+        let snap = st.snapshot();
+        assert!(snap.session.is_none(), "identity unresolved in the gap");
+        assert_eq!(snap.quali_segments.len(), 1, "Q1 standings stay exposed");
     }
 
     #[test]
