@@ -412,17 +412,15 @@ fn spawn_listener(
                             r.take_pending_auto_archive()
                         };
                         if let Some(snap) = staged {
-                            // Stop drains only ever stage provisionals — an
-                            // official capture needs a packet.
                             process_staged_result(
                                 &app,
+                                &race,
                                 &history,
                                 &history_store,
                                 &discord_cfg,
                                 &discord_tx,
                                 &log_path,
                                 snap,
-                                false,
                             );
                         }
                         return InnerExit::Stopped;
@@ -623,7 +621,6 @@ fn spawn_listener(
                             // the same lock so detection needs no second round-trip.
                             let mut session_changed = None;
                             let auto_archive_snap;
-                            let archive_upgrades_provisional;
                             let announcements;
                             let engineer_snap = {
                                 let mut r = race.lock().unwrap_or_else(|p| {
@@ -642,13 +639,6 @@ fn spawn_listener(
                                     session_changed = Some(r.session_uid().to_string());
                                 }
                                 auto_archive_snap = r.take_pending_auto_archive();
-                                // An official capture landing while the provisional
-                                // latch is set means the provisional was already
-                                // drained (and possibly posted to Discord).
-                                archive_upgrades_provisional = auto_archive_snap
-                                    .as_ref()
-                                    .is_some_and(|s| s.final_classification.is_some())
-                                    && r.provisional_result_staged();
                                 announcements = r.take_pending_announcements();
                                 if engineer_enabled.load(Ordering::Relaxed)
                                     && last_engineer_eval.elapsed() >= ENGINEER_EVAL
@@ -687,13 +677,13 @@ fn spawn_listener(
                             if let Some(snap) = auto_archive_snap {
                                 process_staged_result(
                                     &app,
+                                    &race,
                                     &history,
                                     &history_store,
                                     &discord_cfg,
                                     &discord_tx,
                                     &log_path,
                                     snap,
-                                    archive_upgrades_provisional,
                                 );
                             }
                             // Run the rules + emit OFF the race lock. Each callout is
@@ -719,17 +709,15 @@ fn spawn_listener(
                                 r.take_pending_auto_archive()
                             };
                             if let Some(snap) = staged {
-                                // Idle drains only ever stage provisionals — an
-                                // official capture needs a packet.
                                 process_staged_result(
                                     &app,
+                                    &race,
                                     &history,
                                     &history_store,
                                     &discord_cfg,
                                     &discord_tx,
                                     &log_path,
                                     snap,
-                                    false,
                                 );
                             }
                         }
@@ -802,14 +790,25 @@ fn spawn_listener(
 /// Discord post. Shared by the packet path, the idle tick and the stop path.
 fn process_staged_result(
     app: &AppHandle,
+    race: &Arc<Mutex<SessionState>>,
     history: &Arc<Mutex<HistoryArchive>>,
     store: &Arc<HistoryStore>,
     discord_cfg: &Arc<Mutex<DiscordConfig>>,
     discord_tx: &std::sync::mpsc::SyncSender<DiscordJob>,
     log_path: &Option<PathBuf>,
     snap: Box<SessionSnapshot>,
-    upgrades_provisional: bool,
 ) {
+    // An official classification landing after this session's provisional
+    // result already went out (late or replayed packet 8) upgrades the archive
+    // record but must not post again: the webhook has no dedup, so a second
+    // message would announce the same session twice. Keyed on what was actually
+    // ENQUEUED — a provisional whose post was disabled or dropped leaves the
+    // door open for the official one.
+    let already_posted = snap.final_classification.is_some()
+        && race
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .result_posted(&snap.session_uid);
     // Evidence for "why didn't my race save/post": every drained result leaves
     // a line, official or not.
     log_event(
@@ -818,8 +817,8 @@ fn process_staged_result(
             "session result staged: uid {} {:?} (classification: {})",
             snap.session_uid,
             snap.session_category,
-            if upgrades_provisional {
-                "official - upgrades provisional, not re-posting"
+            if already_posted {
+                "official - upgrades posted provisional, not re-posting"
             } else if snap.final_classification.is_some() {
                 "official"
             } else {
@@ -828,14 +827,11 @@ fn process_staged_result(
         ),
     );
     auto_archive_session(app, history, store, &snap, log_path);
-    // Same trigger posts the result to Discord — either the official
-    // classification or the provisional standings. An official result that
-    // merely upgrades an already-posted provisional is archived but NOT posted
-    // again: the webhook has no dedup, so a second message would announce the
-    // same session twice.
-    if upgrades_provisional {
+    if already_posted {
         return;
     }
+    // Same trigger posts the result to Discord — either the official
+    // classification or the provisional standings.
     let want = discord_cfg
         .lock()
         .map(|c| match snap.session_category {
@@ -845,7 +841,12 @@ fn process_staged_result(
         })
         .unwrap_or(false);
     if want {
-        let _ = discord_tx.try_send(DiscordJob::Results(snap));
+        let uid = snap.session_uid.clone();
+        if discord_tx.try_send(DiscordJob::Results(snap)).is_ok() {
+            race.lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .mark_result_posted(uid);
+        }
     }
 }
 
@@ -887,12 +888,13 @@ fn auto_archive_session(
     }
     // A provisional capture of this same session may already be on disk (grace
     // fallback); an official classification arriving after it (late or replayed
-    // packet 8) supersedes it — replace, never duplicate. Manual saves and
+    // packet 8) supersedes it — replace, never duplicate. Keyed on the record's
+    // auto flag, never its display name (the user can rename); manual saves and
     // pinned records stay.
     let superseded: Vec<String> = a
         .list()
         .iter()
-        .filter(|r| !r.pinned && r.name.ends_with("(auto)"))
+        .filter(|r| !r.pinned && r.auto)
         .filter(|r| {
             r.snapshot.get("sessionUid").and_then(|v| v.as_str())
                 == Some(snap.session_uid.as_str())
@@ -902,7 +904,7 @@ fn auto_archive_session(
     for id in superseded {
         a.delete(&id);
     }
-    let id = a.save(&auto_session_name(snap), value, now_ms());
+    let id = a.save_auto(&auto_session_name(snap), value, now_ms());
     if !store.save_if_changed(&a) {
         log_event(
             log_path,
@@ -969,7 +971,7 @@ fn stale_quali_auto_records(
     }
     records
         .iter()
-        .filter(|r| !r.pinned && r.name.ends_with("(auto)"))
+        .filter(|r| !r.pinned && r.auto)
         .filter(|r| category(&r.snapshot) == Some("qualifying"))
         .filter(|r| {
             let (rt, rs) = track_and_type(&r.snapshot);
@@ -1500,12 +1502,13 @@ mod tests {
         })
     }
 
-    fn record(id: &str, name: &str, pinned: bool, snapshot: serde_json::Value) -> SessionRecord {
+    fn record(id: &str, auto: bool, pinned: bool, snapshot: serde_json::Value) -> SessionRecord {
         SessionRecord {
             id: id.into(),
-            name: name.into(),
+            name: format!("Record {id}"),
             saved_at_ms: 0.0,
             pinned,
+            auto,
             snapshot,
         }
     }
@@ -1514,17 +1517,17 @@ mod tests {
     fn quali_segment_capture_replaces_the_previous_segments_auto_record() {
         let records = vec![
             // Q1's auto capture for the same weekend: superseded.
-            record("q1", "Mexico — Qualifying (auto)", false, quali_snap("A", 13, 5)),
+            record("q1", true, false, quali_snap("A", 13, 5)),
             // Pinned auto capture: never touched.
-            record("pin", "Mexico — Qualifying (auto)", true, quali_snap("B", 13, 5)),
-            // Manual save (no "(auto)" suffix): never touched.
-            record("man", "My Q1", false, quali_snap("C", 13, 5)),
+            record("pin", true, true, quali_snap("B", 13, 5)),
+            // Manual save: never touched, whatever it's named.
+            record("man", false, false, quali_snap("C", 13, 5)),
             // Different track: a different weekend.
-            record("other", "Suzuka — Qualifying (auto)", false, quali_snap("D", 21, 5)),
+            record("other", true, false, quali_snap("D", 21, 5)),
             // A race auto record: not qualifying.
             record(
                 "race",
-                "Mexico — Race (auto)",
+                true,
                 false,
                 serde_json::json!({
                     "sessionUid": "E",

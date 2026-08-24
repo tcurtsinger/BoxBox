@@ -342,6 +342,10 @@ pub struct SessionState {
     // A provisional capture was already staged for this session, so the two
     // fallback paths (grace timeout, UID rollover) can't stage it twice.
     provisional_staged: bool,
+    // UID of the last session whose result the listener actually enqueued to
+    // Discord. NOT cleared on reset: the rollover fallback drains (and posts)
+    // the OUTGOING session after the reset already ran.
+    last_posted_result_uid: Option<String>,
 }
 
 // Bound the live incident log so an event flood can't grow memory without limit;
@@ -603,11 +607,18 @@ impl SessionState {
         }
     }
 
-    /// True once a provisional capture was staged (and drained) for the current
-    /// session. The listener uses this to keep a late official classification
-    /// from POSTING a second result — the archive upgrade still happens.
-    pub fn provisional_result_staged(&self) -> bool {
-        self.provisional_staged
+    /// Remember that a result for `uid` actually went out to Discord (the
+    /// listener enqueued it). Keyed by UID and kept across session resets — the
+    /// rollover fallback posts the OUTGOING session after the reset.
+    pub fn mark_result_posted(&mut self, uid: String) {
+        self.last_posted_result_uid = Some(uid);
+    }
+
+    /// Whether a result for `uid` was actually enqueued to Discord. Deliberately
+    /// NOT "was a provisional staged": a provisional whose post was disabled or
+    /// dropped must not suppress the later official post.
+    pub fn result_posted(&self, uid: &str) -> bool {
+        self.last_posted_result_uid.as_deref() == Some(uid)
     }
 
     /// The current game session's UID ("" before the first packet).
@@ -2131,13 +2142,31 @@ mod tests {
         st.ingest(&event("A", session_end()), 1_000.0);
         st.ingest(&tick("A", 25.0), 12_000.0);
         assert!(st.take_pending_auto_archive().is_some(), "provisional drained");
+        // The listener actually enqueued that provisional to Discord.
+        st.mark_result_posted("A".into());
         // Packet 8 lands anyway (replayed / very late): the official capture
-        // still stages — the archive record upgrade — but the latch tells the
-        // listener a result for this session already went out.
+        // still stages — the archive record upgrade — and the posted marker
+        // tells the listener not to send a second Discord result.
         st.ingest(&final_classification("A"), 20_000.0);
         let snap = st.take_pending_auto_archive().expect("official upgrade staged");
         assert!(snap.final_classification.is_some());
-        assert!(st.provisional_result_staged(), "repost flag for the listener");
+        assert!(st.result_posted("A"), "repost marker for the listener");
+    }
+
+    #[test]
+    fn unposted_provisional_does_not_suppress_the_official_post() {
+        // The provisional drained but never went out (Discord toggle off, or
+        // the queue was full) — the later official result must still post.
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&event("A", session_end()), 1_000.0);
+        st.ingest(&tick("A", 25.0), 12_000.0);
+        assert!(st.take_pending_auto_archive().is_some(), "provisional drained");
+        st.ingest(&final_classification("A"), 20_000.0);
+        assert!(st.take_pending_auto_archive().is_some(), "official staged");
+        assert!(!st.result_posted("A"), "nothing went out — no suppression");
     }
 
     #[test]
