@@ -1,6 +1,6 @@
 [package]
 name = "boxbox"
-version = "0.7.3"
+version = "0.8.0"
 description = "BoxBox — F1 telemetry desktop app (Tuner + Race Control)"
 authors = ["BoxBox"]
 edition = "2021"
