@@ -282,14 +282,21 @@ export function raceControlEvent(snap: RaceSnapshot, driverIndex: number): DashE
   if (d?.fiaFlags === 3) return { text: "YELLOW FLAG", tone: "flag" };
 
   // A penalty the stewards just handed the player (PENA events carry the
-  // penalised car in detail.vehicleIdx).
-  const pen = snap.incidents.find(
-    (i) =>
+  // penalised car in detail.vehicleIdx). Scan newest-first: with two fresh
+  // penalties the banner must show the latest, not the oldest.
+  let pen = null;
+  for (let k = snap.incidents.length - 1; k >= 0; k--) {
+    const i = snap.incidents[k];
+    if (
       i.code === "PENA" &&
       i.detail["vehicleIdx"] === snap.playerCarIndex &&
       driverIndex === snap.playerCarIndex &&
-      freshFor(i.sessionTime, PENALTY_BANNER_SECS),
-  );
+      freshFor(i.sessionTime, PENALTY_BANNER_SECS)
+    ) {
+      pen = i;
+      break;
+    }
+  }
   if (pen) {
     const detail = PENALTY_DETAIL[pen.detail["penaltyType"] ?? -1];
     return { text: detail ? `PENALTY · ${detail}` : "PENALTY", tone: "caution" };
@@ -521,8 +528,11 @@ export function toStintPanel(
   const window = idealLap != null && latestLap != null && latestLap > idealLap;
   const windowLabel = window ? `${idealLap}–${latestLap}` : null;
 
-  // BOX IN: the game's ideal lap when it gives one, else the projected cliff.
-  const target = window && idealLap! >= lap ? idealLap! : cliffLap;
+  // BOX IN: the game's window while it's still open — counting down to the
+  // ideal lap, then holding at 0 ("box now") through the latest lap — else the
+  // projected cliff.
+  const target =
+    window && lap <= latestLap! ? Math.max(idealLap!, lap) : cliffLap;
   const boxInLaps = target != null && target >= lap ? target - lap : null;
 
   // Lap axis: from now to just past the furthest marker (min 10 laps of road).

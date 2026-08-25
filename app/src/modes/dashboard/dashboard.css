@@ -1008,9 +1008,51 @@
   }
 }
 
-/* ---- Narrow fallback (small window, not a small device). Below this the
-   middle column starves (the rail alone can eat 200px), so stack instead. */
+/* ---- Compact three-column step: BoxBox's DEFAULT window is 1280×832, and the
+   pit board must stay one glance there — narrow the side columns instead of
+   stacking. (The ≤1440 step above already shrinks the big readouts.) */
 @media (max-width: 1320px) {
+  .dash {
+    grid-template-columns: 300px minmax(0, 1fr) 372px;
+    padding: 12px 14px 14px;
+    gap: 10px;
+  }
+
+  .dash-trow {
+    grid-template-columns: 24px minmax(0, 1fr) 30px 38px 54px;
+    gap: 5px;
+    padding: 0 10px;
+  }
+
+  .dash-wslot {
+    width: 62px;
+  }
+
+  .dash-batt-num {
+    font-size: 38px;
+  }
+
+  .dash-batt-num small {
+    font-size: 16px;
+  }
+
+  .dash-battery {
+    gap: 16px;
+  }
+
+  .dash-boxin {
+    font-size: 42px;
+  }
+
+  .dash-temp-val,
+  .dash-stat-val {
+    font-size: 28px;
+  }
+}
+
+/* ---- Narrow fallback (genuinely small window). Below this the middle column
+   starves (the rail alone can eat 200px expanded), so stack instead. */
+@media (max-width: 1140px) {
   .dash {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto;

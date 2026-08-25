@@ -214,6 +214,26 @@ describe("raceControlEvent priority", () => {
     expect(raceControlEvent(old, 0)).toBeNull();
   });
 
+  it("two fresh penalties show the newest, not the oldest", () => {
+    const pen = (id: string, t: number, penaltyType: number) => ({
+      id,
+      source: "auto",
+      sessionTime: t,
+      lapNum: 20,
+      code: "PENA",
+      label: "Penalty",
+      carIndices: [0],
+      detail: { vehicleIdx: 0, penaltyType },
+      status: "open",
+      note: "",
+      ruling: null,
+    });
+    const s = snap({
+      incidents: [pen("p1", 993, 0), pen("p2", 998, 4)], // drive-through, then time
+    } as unknown as Partial<RaceSnapshot>);
+    expect(raceControlEvent(s, 0)!.text).toBe("PENALTY · TIME");
+  });
+
   it("rain incoming fires from this session's forecast within 20 minutes", () => {
     const s = snap({
       session: {
@@ -404,6 +424,17 @@ describe("toStintPanel", () => {
     expect(p.windowLabel).toBe("26–31");
     expect(p.boxInLaps).toBe(6); // lap 20 → ideal 26
     expect(p.windowStartPct).toBeGreaterThan(0);
+  });
+
+  it("holds BOX IN at 0 through the open window once the ideal lap passes", () => {
+    const mk = (lapNum: number) =>
+      snap({
+        session: { totalLaps: 53, sessionType: 1, pitStopWindowIdealLap: 26, pitStopWindowLatestLap: 31 },
+        drivers: [driver({ currentLapNum: lapNum, tyreWear: [], tyreAgeLaps: 0 })],
+      });
+    expect(toStintPanel(mk(28), 0).boxInLaps).toBe(0); // inside the window: box now
+    expect(toStintPanel(mk(31), 0).boxInLaps).toBe(0); // last window lap still says now
+    expect(toStintPanel(mk(33), 0).boxInLaps).toBeNull(); // window gone, no cliff data
   });
 
   it("renders honest nulls with no stint data and no window", () => {
