@@ -114,7 +114,14 @@ describe("toDashboardData", () => {
   });
 
   it("flags restricted telemetry instead of showing fake zeros", () => {
-    expect(dash({ telemetryPublic: false }).restricted).toBe(true);
+    // Index 0 IS the player — restrict a different car to see the flag.
+    const s = snap();
+    s.drivers.push(driver({ index: 1, telemetryPublic: false }));
+    expect(toDashboardData(s, 1)!.restricted).toBe(true);
+  });
+
+  it("never restricts the player's own car (privacy hides it from others only)", () => {
+    expect(dash({ telemetryPublic: false }).restricted).toBe(false);
   });
 
   it("returns null for an unknown car index", () => {
@@ -241,9 +248,12 @@ describe("priority", () => {
   });
 
   it("restricted telemetry raises no alerts at all", () => {
-    const { alert } = run([
-      [{ telemetryPublic: false, batteryPct: 5, overtakeAvailable: true }, 0],
-    ]);
-    expect(alert).toBeNull();
+    // Restriction only applies to non-player cars, so watch car 1.
+    const s = snap();
+    s.drivers.push(
+      driver({ index: 1, telemetryPublic: false, batteryPct: 5, overtakeAvailable: true }),
+    );
+    const r = advanceAlerts(initialAlertState(), toDashboardData(s, 1)!, false, 0);
+    expect(r.alert).toBeNull();
   });
 });

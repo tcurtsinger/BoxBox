@@ -147,10 +147,14 @@ export function toDashboardData(snap: RaceSnapshot, driverIndex: number): Dashbo
   const d = snap.drivers.find((x) => x.index === driverIndex);
   if (!d) return null;
   const is26 = (snap.format ?? 0) >= 2026;
+  const isPlayer = d.index === snap.playerCarIndex;
   return {
     name: d.nameOverride ?? d.name,
-    isPlayer: d.index === snap.playerCarIndex,
-    restricted: !d.telemetryPublic,
+    isPlayer,
+    // The restricted-telemetry setting hides a car's data from OTHER viewers;
+    // the player's own feed still carries their real numbers, so their own
+    // dashboard must never blank itself over their own privacy choice.
+    restricted: !d.telemetryPublic && !isPlayer,
     is26,
     corners: CORNERS.map(([pos, w]) => {
       const wear = Math.round(d.tyreWear[w] ?? 0);
