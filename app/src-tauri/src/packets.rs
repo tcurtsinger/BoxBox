@@ -837,6 +837,9 @@ fn parse_car_telemetry(rd: &mut Reader, header: &PacketHeader) -> CarTelemetryDa
 #[serde(rename_all = "camelCase")]
 pub struct CarStatusEntry {
     pub index: usize,
+    /// 0 off, 1 medium, 2 full. Weak input-device prior (assists lean pad).
+    pub traction_control: u8,
+    pub anti_lock_brakes: bool,
     pub fuel_mix: u8,
     pub fuel_in_tank: f32,
     pub fuel_capacity: f32,
@@ -866,8 +869,8 @@ fn parse_car_status(rd: &mut Reader, header: &PacketHeader) -> CarStatusData {
     let mut cars = Vec::with_capacity(max_cars);
 
     for i in 0..max_cars {
-        rd.u8(); // tractionControl
-        rd.u8(); // antiLockBrakes
+        let traction_control = rd.u8();
+        let anti_lock_brakes = rd.u8();
         let fuel_mix = rd.u8();
         rd.u8(); // frontBrakeBias
         rd.u8(); // pitLimiterStatus
@@ -899,6 +902,8 @@ fn parse_car_status(rd: &mut Reader, header: &PacketHeader) -> CarStatusData {
 
         cars.push(CarStatusEntry {
             index: i,
+            traction_control,
+            anti_lock_brakes: anti_lock_brakes == 1,
             fuel_mix,
             fuel_in_tank,
             fuel_capacity,

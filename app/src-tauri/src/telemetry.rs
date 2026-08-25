@@ -265,6 +265,22 @@ fn bind_listen(port: u16) -> std::io::Result<UdpSocket> {
 
 /// Append one timestamped line to the diagnostic log (best-effort; never panics
 /// or blocks the caller meaningfully). `None` path disables logging.
+/// Append input-signature JSONL rows beside the diagnostic log. Best-effort:
+/// a failed write must never disturb the UDP loop.
+fn append_inputsig(path: &Option<PathBuf>, lines: &[String]) {
+    let Some(p) = path else { return };
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(p)
+    {
+        for line in lines {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+}
+
 fn log_event(path: &Option<PathBuf>, msg: &str) {
     let Some(p) = path else { return };
     use std::io::Write;
@@ -325,6 +341,11 @@ fn spawn_listener(
             None
         }
     };
+    // Steering-signature evidence log (input detection Phase 0), beside the
+    // diagnostic log so a league admin can grab both from one folder.
+    let inputsig_path = log_path
+        .as_ref()
+        .map(|p| p.with_file_name("inputsig.jsonl"));
     let forwards = Arc::new(Mutex::new(forwards));
     let forwards_worker = forwards.clone();
 
@@ -626,6 +647,7 @@ fn spawn_listener(
                             let mut session_changed = None;
                             let auto_archive_snap;
                             let announcements;
+                            let inputsig_lines;
                             let engineer_snap = {
                                 let mut r = race.lock().unwrap_or_else(|p| {
                                     if !race_poison_logged {
@@ -644,6 +666,7 @@ fn spawn_listener(
                                 }
                                 auto_archive_snap = r.take_pending_auto_archive_with_announce();
                                 announcements = r.take_pending_announcements();
+                                inputsig_lines = r.take_inputsig_lines();
                                 if engineer_enabled.load(Ordering::Relaxed)
                                     && last_engineer_eval.elapsed() >= ENGINEER_EVAL
                                 {
@@ -674,6 +697,12 @@ fn spawn_listener(
                                     let _ =
                                         discord_tx.try_send(DiscordJob::Incidents(announcements));
                                 }
+                            }
+                            // Completed steering-signature epochs -> the JSONL
+                            // evidence log (input-device detection Phase 0), appended
+                            // off the race lock. A line a minute per car — negligible.
+                            if !inputsig_lines.is_empty() {
+                                append_inputsig(&inputsig_path, &inputsig_lines);
                             }
                             // A result was staged (official classification, or the
                             // provisional fallback): archive it (off the race lock) so
