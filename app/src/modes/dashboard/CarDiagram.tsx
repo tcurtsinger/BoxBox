@@ -18,7 +18,15 @@ interface Props {
  *  front tires start at y≈92 and the nose column runs x≈180–220, so the front
  *  wing is two side bands; the rear tires end at y≈516 ahead of the rear wing. */
 const REGIONS: { key: string; rects: [x: number, y: number, w: number, h: number][] }[] = [
-  { key: "floor", rects: [[110, 210, 180, 225]] },
+  // The floor's visible presence top-down is its two outer edge strips — a
+  // whole-body wash read as "the car is totalled", not "the floor is hurt".
+  {
+    key: "floor",
+    rects: [
+      [110, 245, 26, 195],
+      [264, 245, 26, 195],
+    ],
+  },
   {
     key: "sidepod",
     rects: [
