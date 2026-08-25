@@ -19,6 +19,7 @@ import {
   raceControlEvent,
   fmtLapTime,
   fmtDeltaToBest,
+  systemAvailabilityState,
   DEPLOY_MODES,
   type CornerCell,
   type TowerRow,
@@ -49,6 +50,21 @@ const GLYPHS: Record<WeatherGlyph, ComponentType<{ size?: number }>> = {
   storm: WeatherThunderstormIcon,
 };
 
+const WEATHER_LABEL: Record<WeatherGlyph, string> = {
+  sunny: "Sunny",
+  cloudy: "Cloudy",
+  rainLight: "Light rain",
+  rainHeavy: "Heavy rain",
+  storm: "Thunderstorm",
+};
+
+const SYSTEM_STATE_LABEL = {
+  "no-data": "NO DATA",
+  unavailable: "UNAVAILABLE",
+  ready: "READY",
+  active: "ACTIVE",
+} as const;
+
 function Corner({ c, side, end }: { c: CornerCell; side: "left" | "right"; end: "front" | "rear" }) {
   return (
     <div className={`dash-corner is-${side} is-${end}`}>
@@ -58,7 +74,10 @@ function Corner({ c, side, end }: { c: CornerCell; side: "left" | "right"; end: 
         <small>%</small>
       </span>
       <span className="dash-corner-bar" aria-hidden="true">
-        <span className={`dash-corner-fill is-${c.wearState}`} style={{ width: `${c.wear}%` }} />
+        <span
+          className={`dash-corner-fill is-${c.wearState}`}
+          style={{ transform: `scaleX(${c.wear / 100})` }}
+        />
       </span>
       <span className={`dash-corner-temp is-${c.tempState}`}>
         {c.temp > 0 ? `${c.temp}°C${c.tempState === "hot" ? " HOT" : ""}` : "—"}
@@ -69,23 +88,28 @@ function Corner({ c, side, end }: { c: CornerCell; side: "left" | "right"; end: 
 
 function TowerRowView({ r }: { r: TowerRow }) {
   return (
-    <div className={`dash-trow${r.isPlayer ? " is-player" : ""}${r.out ? " is-out" : ""}`}>
-      <span className="dash-tpos">{r.pos}</span>
-      <span className="dash-tname" title={r.name}>
+    <div
+      className={`dash-trow${r.isPlayer ? " is-player" : ""}${r.out ? " is-out" : ""}`}
+      role="row"
+    >
+      <span className="dash-tpos" role="cell">{r.pos}</span>
+      <span className="dash-tname" title={r.name} role="cell">
+        {r.isPlayer && <span className="sr-only">You, </span>}
         {r.name}
       </span>
-      <span className="dash-ttyre">
+      <span className="dash-ttyre" role="cell">
         <span
           className={`dash-compound is-${r.compound}`}
           title={`${r.compoundLabel} compound, ${r.ageLaps} laps`}
+          aria-label={`${r.compoundLabel} compound, ${r.ageLaps} laps`}
         >
           {r.ageLaps}
         </span>
       </span>
-      <span className={`dash-twear is-${r.wearState}`}>
+      <span className={`dash-twear is-${r.wearState}`} role="cell">
         {r.worstWear != null ? `${r.worstWear}%` : "—"}
       </span>
-      <span className="dash-tgap">{r.gap}</span>
+      <span className="dash-tgap" role="cell">{r.gap}</span>
     </div>
   );
 }
@@ -160,6 +184,21 @@ export function DashboardView() {
   // Battery/deploy/fuel are honest only once Car Status has arrived, and never
   // for a restricted (non-player) car — until then the register reads quiet.
   const energyReady = data != null && !data.restricted && data.statusSeen;
+  const boostState = systemAvailabilityState(
+    energyReady,
+    e?.boostAvailable ?? false,
+    e?.boostActive ?? false,
+  );
+  const aeroState = systemAvailabilityState(
+    energyReady,
+    e?.aeroAvailable ?? false,
+    e?.aeroStraight ?? false,
+  );
+  const drsState = systemAvailabilityState(
+    energyReady,
+    e?.drsAllowed ?? false,
+    e?.drsOpen ?? false,
+  );
   const damageByKey = Object.fromEntries((data?.damage ?? []).map((c) => [c.key, c]));
   const strip = toDamageStrip(data?.damage ?? []);
   const lastDelta = data ? fmtDeltaToBest(data.lastLapMS, data.bestLapMS) : null;
@@ -167,7 +206,7 @@ export function DashboardView() {
   return (
     <div className="rc-content">
       {feed.state === "standby" && <StandbyBanner />}
-      <div className="dash" aria-label="Race dashboard">
+      <div className="dash" aria-label="Race dashboard" role="region">
         {/* Row 1 — session + event banner */}
         <section className="dash-session" aria-label="Session">
           <span className="dash-session-track">{snap?.trackName ?? "—"}</span>
@@ -198,15 +237,21 @@ export function DashboardView() {
         ) : (
           <>
             {/* Row 2 — tower | car | weather & stint */}
-            <section className="dash-tower" aria-label="Timing">
-              <div className="dash-trow dash-thead" aria-hidden="true">
-                <span className="dash-tpos">Pos</span>
-                <span className="dash-tname">Driver</span>
-                <span className="dash-ttyre">Tyre</span>
-                <span className="dash-twear">Wear</span>
-                <span className="dash-tgap">To ldr</span>
+            <section
+              className="dash-tower"
+              aria-label="Timing"
+              role="table"
+              aria-colcount={5}
+              aria-rowcount={tower.length + 1}
+            >
+              <div className="dash-trow dash-thead" role="row">
+                <span className="dash-tpos" role="columnheader">Pos</span>
+                <span className="dash-tname" role="columnheader">Driver</span>
+                <span className="dash-ttyre" role="columnheader">Tyre</span>
+                <span className="dash-twear" role="columnheader">Wear</span>
+                <span className="dash-tgap" role="columnheader" aria-label="Gap to leader">GTL</span>
               </div>
-              <div className="dash-tbody" ref={towerBodyRef}>
+              <div className="dash-tbody" ref={towerBodyRef} role="rowgroup">
                 {tower.map((r) => (
                   <TowerRowView key={r.index} r={r} />
                 ))}
@@ -265,7 +310,12 @@ export function DashboardView() {
                   {(weather?.slots ?? []).map((s) => {
                     const Glyph = GLYPHS[s.glyph];
                     return (
-                      <div key={s.label} className="dash-wslot">
+                      <div
+                        key={s.label}
+                        className="dash-wslot"
+                        role="img"
+                        aria-label={`${s.label}: ${WEATHER_LABEL[s.glyph]}, ${Math.round(s.rainPct)} percent chance of rain`}
+                      >
                         <span className="dash-wslot-time">{s.label}</span>
                         <Glyph size={24} />
                         <span className="dash-wslot-rain">
@@ -305,6 +355,13 @@ export function DashboardView() {
                       {stint?.boxInLaps != null ? stint.boxInLaps : "—"}
                       <small> laps</small>
                     </span>
+                    <span className={`dash-boxin-basis${stint?.boxInBasis === "tyre-limit" ? " is-limit" : ""}`}>
+                      {stint?.boxInBasis === "tyre-limit"
+                        ? "Tyre limit"
+                        : stint?.boxInBasis === "game-window"
+                          ? "Game window"
+                          : "No projection"}
+                    </span>
                   </div>
                   <div className="dash-window">
                     <span className="dash-label">Window</span>
@@ -329,7 +386,10 @@ export function DashboardView() {
                 <div className="dash-lapbar-caps" aria-hidden="true">
                   <span className="dash-cap-now">Lap {stint?.axisFrom ?? "—"}</span>
                   {stint?.cliffPct != null && (
-                    <span className="dash-cap-cliff" style={{ left: `${stint.cliffPct}%` }}>
+                    <span
+                      className={`dash-cap-cliff${stint.cliffPct < 25 ? " is-near" : ""}`}
+                      style={{ left: `${stint.cliffPct}%` }}
+                    >
                       Cliff {stint.cliffLap}
                     </span>
                   )}
@@ -380,33 +440,22 @@ export function DashboardView() {
               {data.is26 ? (
                 <>
                   <div
-                    className={`dash-tile is-boost${
-                      energyReady && e?.boostActive
-                        ? " is-active"
-                        : energyReady && e?.boostAvailable
-                          ? " is-avail"
-                          : ""
-                    }`}
+                    className={`dash-tile is-boost is-${boostState}`}
                   >
-                    BOOST
+                    <span className="dash-tile-name">BOOST</span>
+                    <span className="dash-tile-state">{SYSTEM_STATE_LABEL[boostState]}</span>
                   </div>
                   <div
-                    className={`dash-tile is-smode${energyReady && e?.aeroStraight ? " is-active" : ""}`}
+                    className={`dash-tile is-smode is-${aeroState}`}
                   >
-                    S MODE
+                    <span className="dash-tile-name">S MODE</span>
+                    <span className="dash-tile-state">{SYSTEM_STATE_LABEL[aeroState]}</span>
                   </div>
                 </>
               ) : (
-                <div
-                  className={`dash-tile is-drs${
-                    energyReady && e?.drsOpen
-                      ? " is-active"
-                      : energyReady && e?.drsAllowed
-                        ? " is-avail"
-                        : ""
-                  }`}
-                >
-                  DRS
+                <div className={`dash-tile is-drs is-${drsState}`}>
+                  <span className="dash-tile-name">DRS</span>
+                  <span className="dash-tile-state">{SYSTEM_STATE_LABEL[drsState]}</span>
                 </div>
               )}
             </section>
@@ -429,7 +478,9 @@ export function DashboardView() {
                 >
                   <span
                     className="dash-batt-fill"
-                    style={{ width: `${energyReady ? (e?.batteryPct ?? 0) : 0}%` }}
+                    style={{
+                      transform: `scaleX(${energyReady ? (e?.batteryPct ?? 0) / 100 : 0})`,
+                    }}
                   />
                   {[25, 50, 75].map((t) => (
                     <span
@@ -450,10 +501,12 @@ export function DashboardView() {
 
             <section className="dash-deploy-panel" aria-label="Deployment">
               <span className="dash-label">Deploy</span>
-              <div className="dash-deploy" role="group" aria-label="ERS deploy mode">
+              <div className="dash-deploy" role="list" aria-label="ERS deploy mode">
                 {DEPLOY_MODES.map((m, i) => (
                   <span
                     key={m}
+                    role="listitem"
+                    aria-current={energyReady && i === e?.deployMode ? "true" : undefined}
                     className={`dash-deploy-seg${
                       energyReady && i === e?.deployMode ? " is-active" : ""
                     }${energyReady && i === 3 && i === e?.deployMode ? " is-ot" : ""}`}
