@@ -1,0 +1,477 @@
+/* Dashboard — the second-monitor pit board. Pit-board scale: everything sized to
+   be read in a sub-second glance from racing distance. Colour states only, no
+   motion (the voice engineer does the yelling); game states use the official
+   2026 HUD colours (--hud-boost / --hud-smode), BoxBox judgements use the
+   semantic data layer. */
+
+.dash {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  height: 100%;
+  min-height: 0;
+  padding: var(--space-lg) var(--space-xl) var(--space-xl);
+}
+
+/* ---- Header: track + car picker ---------------------------------------- */
+.dash-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+}
+
+.dash-track {
+  font-size: var(--text-headline);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+
+.dash-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.dash-pick-label {
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.dash-pick select {
+  background: var(--inset);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  font: inherit;
+  font-size: var(--text-body);
+}
+
+.dash-pick select:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* ---- Alert band --------------------------------------------------------- */
+.dash-alert {
+  display: grid;
+  place-items: center;
+  min-height: 92px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  background: var(--inset);
+  font-size: 2.5rem;
+  font-weight: 700;
+  letter-spacing: var(--tracking-tight);
+  text-align: center;
+  padding: var(--space-sm) var(--space-lg);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.dash-alert-clear {
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.dash-alert.is-boost {
+  background: var(--hud-boost-tint);
+  border-color: var(--hud-boost);
+  color: var(--hud-boost);
+}
+
+.dash-alert.is-smode {
+  background: var(--hud-smode-tint);
+  border-color: var(--hud-smode);
+  color: var(--hud-smode);
+}
+
+.dash-alert.is-drs {
+  background: var(--data-good-tint);
+  border-color: var(--data-good);
+  color: var(--data-good);
+}
+
+.dash-alert.is-caution {
+  background: var(--data-caution-tint);
+  border-color: var(--data-caution);
+  color: var(--data-caution);
+}
+
+.dash-alert.is-danger {
+  background: var(--data-danger-tint);
+  border-color: var(--data-danger);
+  color: var(--data-danger);
+}
+
+/* ---- Two-column body ----------------------------------------------------- */
+.dash-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: var(--space-lg);
+  flex: 1;
+  min-height: 0;
+}
+
+.dash-carzone,
+.dash-energy {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-lg) 18px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.dash-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--text-title);
+  line-height: 1.5;
+  max-width: 52ch;
+  margin: 0 auto;
+  padding: var(--space-2xl);
+}
+
+/* ---- Car zone: corners frame the silhouette ------------------------------ */
+.dash-cargrid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-areas:
+    "fl car fr"
+    "rl car rr";
+  grid-template-columns: 1fr auto 1fr;
+  grid-template-rows: 1fr 1fr;
+  align-items: center;
+  justify-items: center;
+  column-gap: var(--space-md);
+}
+
+.dash-cargrid > .dash-corner:nth-of-type(1) { grid-area: fl; }
+.dash-cargrid > .dash-corner:nth-of-type(2) { grid-area: fr; }
+.dash-cargrid > .dash-corner:nth-of-type(3) { grid-area: rl; }
+.dash-cargrid > .dash-corner:nth-of-type(4) { grid-area: rr; }
+
+.car-diagram {
+  grid-area: car;
+  height: 100%;
+  max-height: 420px;
+  width: auto;
+}
+
+.car-wheel rect {
+  fill: var(--surface-raised);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.car-body {
+  fill: var(--surface-raised);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.car-cockpit {
+  fill: var(--inset);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.car-part {
+  fill: var(--inset);
+  stroke: var(--border);
+  stroke-width: 1.5;
+  transition: fill var(--dur-fast) var(--ease-out), stroke var(--dur-fast) var(--ease-out);
+}
+
+.car-part.is-warn {
+  fill: var(--data-caution-tint);
+  stroke: var(--data-caution);
+}
+
+.car-part.is-bad {
+  fill: var(--data-danger-tint);
+  stroke: var(--data-danger);
+}
+
+.car-part-pct {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  fill: var(--muted);
+}
+
+.car-part-pct.is-warn { fill: var(--data-caution); }
+.car-part-pct.is-bad { fill: var(--data-danger); }
+
+/* Corner cell: wear big, temp under it, label on top. */
+.dash-corner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 88px;
+}
+
+.dash-corner-pos {
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.dash-corner-wear {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 2.25rem;
+  font-weight: 600;
+  line-height: 1.05;
+  color: var(--ink);
+}
+
+.dash-corner-wear small {
+  font-size: 1.1rem;
+  color: var(--muted);
+}
+
+.dash-corner.is-warn .dash-corner-wear { color: var(--data-caution); }
+.dash-corner.is-bad .dash-corner-wear { color: var(--data-danger); }
+
+.dash-corner-temp {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-data);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.dash-corner-temp.is-cold { color: var(--data-info); }
+.dash-corner-temp.is-hot { color: var(--data-caution); }
+
+.dash-carfoot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  justify-content: center;
+}
+
+/* ---- Chips (compound, engine/gearbox, boost states) ---------------------- */
+.dash-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.dash-chip.is-warn {
+  background: var(--data-caution-tint);
+  border-color: var(--data-caution);
+  color: var(--data-caution);
+}
+
+.dash-chip.is-bad {
+  background: var(--data-danger-tint);
+  border-color: var(--data-danger);
+  color: var(--data-danger);
+}
+
+.dash-chip-big {
+  font-size: var(--text-title);
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+}
+
+.dash-chip.is-boost-avail {
+  background: var(--hud-boost-tint);
+  border-color: var(--hud-boost);
+  color: var(--hud-boost);
+}
+
+.dash-chip.is-boost-active {
+  background: var(--hud-boost);
+  border-color: var(--hud-boost);
+  color: var(--on-primary);
+}
+
+.dash-chip.is-smode {
+  background: var(--hud-smode-tint);
+  border-color: var(--hud-smode);
+  color: var(--hud-smode);
+}
+
+.dash-chip.is-drs-avail {
+  background: var(--data-good-tint);
+  border-color: var(--data-good);
+  color: var(--data-good);
+}
+
+.dash-chip.is-drs-open {
+  background: var(--data-good);
+  border-color: var(--data-good);
+  color: var(--on-primary);
+}
+
+/* ---- Energy zone --------------------------------------------------------- */
+.dash-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.dash-label {
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.dash-batt-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+}
+
+.dash-batt-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 3.25rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ink);
+  min-width: 3.2ch;
+}
+
+.dash-batt-num small {
+  font-size: 1.4rem;
+  color: var(--muted);
+}
+
+.dash-batt-num.is-warn { color: var(--data-caution); }
+.dash-batt-num.is-bad { color: var(--data-danger); }
+
+.dash-batt-track {
+  flex: 1;
+  height: 22px;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.dash-batt-fill {
+  height: 100%;
+  background: var(--hud-boost);
+  transition: width var(--dur-base) var(--ease-out);
+}
+
+.dash-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+/* ---- ERS deploy strip (25-style modes; 26 keeps them too) ---------------- */
+.dash-deploy {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 2px;
+}
+
+.dash-deploy-seg {
+  text-align: center;
+  padding: 8px 4px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  color: var(--faint);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.dash-deploy-seg.is-active {
+  background: var(--surface-raised);
+  color: var(--ink);
+}
+
+/* OVERTAKE active reads in the game's deploy-mode yellow. */
+.dash-deploy-seg.is-ot {
+  background: var(--data-flag);
+  color: var(--on-primary);
+}
+
+/* ---- Fuel ----------------------------------------------------------------- */
+.dash-fuel {
+  flex-direction: row;
+  gap: var(--space-2xl);
+  margin-top: auto;
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border-soft);
+}
+
+.dash-fuel > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.dash-fuel-val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.375rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.dash-fuel-val.is-warn { color: var(--data-caution); }
+.dash-fuel-val.is-bad { color: var(--data-danger); }
+
+/* ---- Narrow fallback (small window, not a small device) ------------------- */
+@media (max-width: 1080px) {
+  .dash-cols {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  .dash-alert {
+    font-size: 1.75rem;
+    min-height: 72px;
+  }
+}

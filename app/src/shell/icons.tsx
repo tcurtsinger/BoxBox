@@ -72,6 +72,17 @@ export function CloseIcon({ size = 16, className }: IconProps) {
 }
 
 /* ---- Section rails (Race + Tunes) --------------------------------------- */
+/** Half-gauge with a needle: the in-race glance dashboard. */
+export function DashboardIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M4.5 16.5a7.5 7.5 0 1 1 15 0" />
+      <path d="M12 16.5l3.2-4.2" />
+      <path d="M5.5 20h13" />
+    </svg>
+  );
+}
+
 export function StopwatchIcon({ size = 16, className }: IconProps) {
   return (
     <svg {...base(size)} className={className}>

@@ -7,6 +7,7 @@ import { SettingsView } from "./SettingsView";
 import { RaceEngineer } from "../engineer/RaceEngineer";
 import { TunesView } from "../modes/TunesView";
 import { RaceControlView } from "../modes/RaceControlView";
+import { DashboardView } from "../modes/dashboard/DashboardView";
 
 /** The unified app shell: frameless titlebar over the rail + content frame.
  *  The rail lives HERE, above the mode conditional, so switching groups swaps
@@ -21,7 +22,9 @@ export function Shell() {
       <main className="stage">
         <div className="view-rc">
           <AppRail />
-          {mode === "tunes" ? (
+          {mode === "dashboard" ? (
+            <DashboardView />
+          ) : mode === "tunes" ? (
             <TunesView />
           ) : mode === "race" ? (
             <RaceControlView />

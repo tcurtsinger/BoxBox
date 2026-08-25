@@ -11,7 +11,7 @@ import { type UIIncident } from "../modes/incidents/incident";
 import { SEED_INCIDENTS } from "../modes/incidents/sampleIncidents";
 import type { Tune } from "../modes/tunes/tunesData";
 
-export type Mode = "tunes" | "race" | "settings";
+export type Mode = "dashboard" | "tunes" | "race" | "settings";
 
 /** The sections inside the Tunes mode (left section rail). */
 export type TunesSection = "setups" | "tuner" | "bench";
