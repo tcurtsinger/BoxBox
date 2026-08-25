@@ -13,19 +13,28 @@ interface Props {
   damage: Record<string, DamageCell | undefined>;
 }
 
-/** Clip regions in the artwork's 400×600 viewBox, measured off the trace. */
+/** Clip regions in the artwork's 400×600 viewBox, measured off the trace's
+ *  per-path bounding boxes so a highlight never bleeds into a neighbour: the
+ *  front tires start at y≈92 and the nose column runs x≈180–220, so the front
+ *  wing is two side bands; the rear tires end at y≈516 ahead of the rear wing. */
 const REGIONS: { key: string; rects: [x: number, y: number, w: number, h: number][] }[] = [
-  { key: "floor", rects: [[72, 210, 256, 250]] },
+  { key: "floor", rects: [[110, 210, 180, 225]] },
   {
     key: "sidepod",
     rects: [
-      [80, 228, 74, 110],
-      [246, 228, 74, 110],
+      [118, 200, 62, 130],
+      [220, 200, 62, 130],
     ],
   },
-  { key: "frontWing", rects: [[68, 10, 264, 84]] },
-  { key: "diffuser", rects: [[152, 496, 96, 50]] },
-  { key: "rearWing", rects: [[106, 540, 188, 50]] },
+  {
+    key: "frontWing",
+    rects: [
+      [64, 10, 116, 80],
+      [220, 10, 116, 80],
+    ],
+  },
+  { key: "diffuser", rects: [[150, 470, 100, 70]] },
+  { key: "rearWing", rects: [[100, 518, 200, 74]] },
 ];
 
 export function CarDiagram({ damage }: Props) {
