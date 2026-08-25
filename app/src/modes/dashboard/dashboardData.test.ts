@@ -12,6 +12,7 @@ import {
   tempState,
   damageState,
   batteryState,
+  systemAvailabilityState,
 } from "./dashboardData";
 import type { RaceSnapshot, LiveDriver } from "../timing/liveGrid";
 
@@ -97,6 +98,13 @@ describe("severity helpers", () => {
     expect(tempState(60)).toBe("cold");
     expect(tempState(95)).toBe("ok");
     expect(tempState(115)).toBe("hot");
+  });
+
+  it("names racing-system availability without relying on colour", () => {
+    expect(systemAvailabilityState(false, false, false)).toBe("no-data");
+    expect(systemAvailabilityState(true, false, false)).toBe("unavailable");
+    expect(systemAvailabilityState(true, true, false)).toBe("ready");
+    expect(systemAvailabilityState(true, false, true)).toBe("active");
   });
 });
 
@@ -413,6 +421,7 @@ describe("toStintPanel", () => {
     expect(p.wearRate).toBeCloseTo(6.78, 1);
     expect(p.wearCorner).toBe("FR");
     expect(p.cliffLap).toBe(22);
+    expect(p.boxInBasis).toBe("tyre-limit");
     expect(p.wearRateState).toBe("warn");
   });
 
@@ -423,7 +432,21 @@ describe("toStintPanel", () => {
     const p = toStintPanel(s, 0);
     expect(p.windowLabel).toBe("26–31");
     expect(p.boxInLaps).toBe(6); // lap 20 → ideal 26
+    expect(p.boxInBasis).toBe("game-window");
     expect(p.windowStartPct).toBeGreaterThan(0);
+  });
+
+  it("uses an earlier measured tyre limit instead of recommending past the cliff", () => {
+    const s = snap({
+      session: { totalLaps: 53, sessionType: 1, pitStopWindowIdealLap: 26, pitStopWindowLatestLap: 31 },
+      drivers: [
+        driver({ currentLapNum: 23, tyreWear: [34, 38, 52, 61], tyreAgeLaps: 8 }),
+      ],
+    });
+    const p = toStintPanel(s, 0);
+    expect(p.cliffLap).toBe(25);
+    expect(p.boxInLaps).toBe(2);
+    expect(p.boxInBasis).toBe("tyre-limit");
   });
 
   it("holds BOX IN at 0 through the open window once the ideal lap passes", () => {
@@ -443,6 +466,7 @@ describe("toStintPanel", () => {
     expect(p.wearRate).toBeNull();
     expect(p.cliffLap).toBeNull();
     expect(p.boxInLaps).toBeNull();
+    expect(p.boxInBasis).toBeNull();
     expect(p.windowLabel).toBeNull();
   });
 

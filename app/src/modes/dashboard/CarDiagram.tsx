@@ -13,38 +13,35 @@ interface Props {
   damage: Record<string, DamageCell | undefined>;
 }
 
-/** Clip regions in the artwork's 400×600 viewBox, measured off the trace's
- *  per-path bounding boxes so a highlight never bleeds into a neighbour: the
- *  front tires start at y≈92 and the nose column runs x≈180–220, so the front
- *  wing is two side bands; the rear tires end at y≈516 ahead of the rear wing. */
-const REGIONS: { key: string; rects: [x: number, y: number, w: number, h: number][] }[] = [
-  // The floor's visible presence top-down is its two outer edge strips — a
-  // whole-body wash read as "the car is totalled", not "the floor is hurt".
+/**
+ * Component masks in the artwork's 400×600 viewBox. These follow the traced
+ * part boundaries instead of using rectangular bands: the tapered front-wing
+ * masks clear the nose, the sidepod masks clear the monocoque, the diffuser
+ * stops before the rear wing, and the rear-wing mask starts below the tyres.
+ */
+const REGIONS: { key: string; path: string }[] = [
   {
     key: "floor",
-    rects: [
-      [110, 245, 26, 195],
-      [264, 245, 26, 195],
-    ],
+    // The floor is only exposed as the two long outer edge strips top-down.
+    path: "M108 246H137C134 300 134 382 138 441H108Z M263 246H292V441H262C266 382 266 300 263 246Z",
   },
   {
     key: "sidepod",
-    rects: [
-      [118, 200, 62, 130],
-      [220, 200, 62, 130],
-    ],
+    path: "M116 236C122 216 145 202 174 198L170 240C166 270 166 302 172 330H146C134 304 124 279 116 260Z M226 198C255 202 278 216 284 236V260C276 279 266 304 254 330H228C234 302 234 270 230 240Z",
   },
   {
     key: "frontWing",
-    rects: [
-      // Bottom edge at y=82: every wing flap/endplate line ends by ~80, while
-      // the tire shoulders' outline rises above 90 — 82 clears them entirely.
-      [64, 10, 116, 72],
-      [220, 10, 116, 72],
-    ],
+    // Follow the nose taper inward without painting the nose itself.
+    path: "M62 8H187L184 32L180 84H62Z M213 8H338V84H220L216 32Z",
   },
-  { key: "diffuser", rects: [[150, 470, 100, 70]] },
-  { key: "rearWing", rects: [[100, 518, 200, 74]] },
+  {
+    key: "diffuser",
+    path: "M146 482H254L262 518H138Z",
+  },
+  {
+    key: "rearWing",
+    path: "M80 522H320V598H80Z",
+  },
 ];
 
 export function CarDiagram({ damage }: Props) {
@@ -67,11 +64,9 @@ export function CarDiagram({ damage }: Props) {
           // Static, build-time artwork from carArt.ts — never user input.
           dangerouslySetInnerHTML={{ __html: CAR_ART_PATHS }}
         />
-        {damaged.map(({ key, rects }) => (
+        {damaged.map(({ key, path }) => (
           <clipPath key={key} id={`car-clip-${key}`}>
-            {rects.map(([x, y, w, h], i) => (
-              <rect key={i} x={x} y={y} width={w} height={h} />
-            ))}
+            <path d={path} />
           </clipPath>
         ))}
       </defs>

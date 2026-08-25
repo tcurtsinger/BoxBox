@@ -16,6 +16,19 @@ export type Severity = "ok" | "warn" | "bad";
 /** How a temperature reads against the tyre's working window. */
 export type TempState = "cold" | "ok" | "hot";
 
+/** Explicit state for a read-only racing system tile. */
+export type SystemAvailabilityState = "no-data" | "unavailable" | "ready" | "active";
+
+export function systemAvailabilityState(
+  dataReady: boolean,
+  available: boolean,
+  active: boolean,
+): SystemAvailabilityState {
+  if (!dataReady) return "no-data";
+  if (active) return "active";
+  return available ? "ready" : "unavailable";
+}
+
 export interface CornerCell {
   /** Display label, e.g. "FL". */
   pos: string;
@@ -476,6 +489,8 @@ export const CLIFF_WEAR_PCT = 80;
 export interface StintPanel {
   /** Laps until the recommended stop, or null (no basis to project). */
   boxInLaps: number | null;
+  /** Which evidence produced the primary recommendation. */
+  boxInBasis: "game-window" | "tyre-limit" | null;
   /** "26–31" from the game's pit window, or null. */
   windowLabel: string | null;
   /** Lap-axis geometry, percentages 0–100 across [axisFrom, axisTo]. */
@@ -528,11 +543,24 @@ export function toStintPanel(
   const window = idealLap != null && latestLap != null && latestLap > idealLap;
   const windowLabel = window ? `${idealLap}–${latestLap}` : null;
 
-  // BOX IN: the game's window while it's still open — counting down to the
-  // ideal lap, then holding at 0 ("box now") through the latest lap — else the
-  // projected cliff.
-  const target =
-    window && lap <= latestLap! ? Math.max(idealLap!, lap) : cliffLap;
+  // BOX IN: never recommend running past the earlier evidence. The game's
+  // target remains authoritative when it is earlier; the measured tyre limit
+  // takes over when wear says the car cannot safely reach that target.
+  const windowTarget = window && lap <= latestLap! ? Math.max(idealLap!, lap) : null;
+  const tyreTarget = cliffLap != null && cliffLap >= lap ? cliffLap : null;
+  let target: number | null = null;
+  let boxInBasis: StintPanel["boxInBasis"] = null;
+  if (windowTarget != null && tyreTarget != null) {
+    const tyreFirst = tyreTarget < windowTarget;
+    target = tyreFirst ? tyreTarget : windowTarget;
+    boxInBasis = tyreFirst ? "tyre-limit" : "game-window";
+  } else if (windowTarget != null) {
+    target = windowTarget;
+    boxInBasis = "game-window";
+  } else if (tyreTarget != null) {
+    target = tyreTarget;
+    boxInBasis = "tyre-limit";
+  }
   const boxInLaps = target != null && target >= lap ? target - lap : null;
 
   // Lap axis: from now to just past the furthest marker (min 10 laps of road).
@@ -543,6 +571,7 @@ export function toStintPanel(
 
   return {
     boxInLaps,
+    boxInBasis,
     windowLabel,
     axisFrom: lap,
     axisTo,

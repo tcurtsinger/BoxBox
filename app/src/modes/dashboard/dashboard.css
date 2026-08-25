@@ -183,6 +183,21 @@
   color: var(--faint);
 }
 
+/* Body column classes carry their own data typography. Reset them inside the
+   header so all five labels read as one consistent label row. */
+.dash-thead .dash-tpos,
+.dash-thead .dash-tname,
+.dash-thead .dash-ttyre,
+.dash-thead .dash-twear,
+.dash-thead .dash-tgap {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
 .dash-thead .dash-ttyre {
   text-align: center;
 }
@@ -440,9 +455,11 @@
 
 .dash-corner-fill {
   display: block;
+  width: 100%;
   height: 100%;
   background: var(--muted);
-  transition: width var(--dur-base) var(--ease-out);
+  transform-origin: left center;
+  transition: transform var(--dur-base) var(--ease-out);
 }
 
 .dash-corner-fill.is-warn {
@@ -474,7 +491,7 @@
 .dash-dmgstrip {
   display: flex;
   align-items: stretch;
-  height: 38px;
+  height: 44px;
   background: var(--inset);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
@@ -484,9 +501,10 @@
 .dash-dmgcell {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 0;
   border-right: 1px solid var(--border-soft);
   min-width: 0;
 }
@@ -501,9 +519,12 @@
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--faint);
+  /* nowrap + hidden + ellipsis: in a ~225px middle column each of the four
+     cells gets ~56px, and "FRONT WING" must truncate, not spill next door. */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .dash-dmgcell-val {
@@ -656,6 +677,20 @@
   color: var(--muted);
 }
 
+.dash-boxin-basis {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dash-boxin-basis.is-limit {
+  color: var(--data-caution);
+}
+
 .dash-window {
   text-align: right;
 }
@@ -723,6 +758,10 @@
   color: var(--data-caution);
 }
 
+.dash-cap-cliff.is-near {
+  transform: none;
+}
+
 .dash-cap-end {
   position: absolute;
   right: 0;
@@ -783,14 +822,18 @@
 }
 
 .dash-tile {
+  --dash-tile-color: var(--muted);
+  --dash-tile-tint: transparent;
   flex: 1;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  background: var(--inset);
+  color: var(--faint);
   border-radius: var(--radius-md);
-  font-size: 26px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  line-height: 1.05;
   white-space: nowrap;
   transition:
     background-color var(--dur-fast) var(--ease-out),
@@ -798,44 +841,52 @@
     color var(--dur-fast) var(--ease-out);
 }
 
+.dash-tile-name {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+}
+
+.dash-tile-state {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
 .dash-tile.is-boost {
-  border: 1px solid var(--hud-boost);
-  background: var(--inset);
-  color: var(--hud-boost);
-}
-
-.dash-tile.is-boost.is-avail {
-  background: var(--hud-boost-tint);
-}
-
-.dash-tile.is-boost.is-active {
-  background: var(--hud-boost);
-  color: var(--on-primary);
+  --dash-tile-color: var(--hud-boost);
+  --dash-tile-tint: var(--hud-boost-tint);
 }
 
 .dash-tile.is-smode {
-  border: 1px solid var(--hud-smode);
-  background: var(--inset);
-  color: var(--hud-smode);
-}
-
-.dash-tile.is-smode.is-active {
-  background: var(--hud-smode-tint);
+  --dash-tile-color: var(--hud-smode);
+  --dash-tile-tint: var(--hud-smode-tint);
 }
 
 .dash-tile.is-drs {
-  border: 1px solid var(--data-good);
-  background: var(--inset);
-  color: var(--data-good);
+  --dash-tile-color: var(--data-good);
+  --dash-tile-tint: var(--data-good-tint);
 }
 
-.dash-tile.is-drs.is-avail {
-  background: var(--data-good-tint);
+.dash-tile.is-ready {
+  border-color: var(--dash-tile-color);
+  background: var(--dash-tile-tint);
+  color: var(--dash-tile-color);
 }
 
-.dash-tile.is-drs.is-active {
-  background: var(--data-good);
+.dash-tile.is-active {
+  border-color: var(--dash-tile-color);
+  background: var(--dash-tile-color);
   color: var(--on-primary);
+}
+
+.dash-tile.is-unavailable,
+.dash-tile.is-no-data {
+  border-color: var(--border);
+  background: var(--inset);
+  color: var(--faint);
 }
 
 /* ---- Row 3: battery register ---------------------------------------------- */
@@ -891,8 +942,10 @@
 .dash-batt-fill {
   position: absolute;
   inset: 0 auto 0 0;
+  width: 100%;
   background: var(--hud-boost);
-  transition: width var(--dur-base) var(--ease-out);
+  transform-origin: left center;
+  transition: transform var(--dur-base) var(--ease-out);
 }
 
 /* Scale ticks: low alpha under the fill so they scribe the scale without
@@ -1003,7 +1056,7 @@
     font-size: 24px;
   }
 
-  .dash-tile {
+  .dash-tile-name {
     font-size: 20px;
   }
 }
@@ -1050,27 +1103,127 @@
   }
 }
 
+/* Short desktop windows keep the driver's own stint/fuel/lap values visible
+   without changing the normal 1280×832 composition. */
+@media (max-height: 780px) and (min-width: 1141px) {
+  .dash-side {
+    justify-content: flex-start;
+  }
+
+  .dash-weather {
+    padding: 0 14px 8px;
+  }
+
+  .dash-wslots {
+    margin-top: 2px;
+  }
+
+  .dash-wslot {
+    gap: 0;
+  }
+
+  .dash-temp {
+    gap: 0;
+    padding: 8px 14px;
+  }
+
+  .dash-temp-val,
+  .dash-stat-val {
+    font-size: 26px;
+  }
+
+  .dash-temp-val small {
+    font-size: 14px;
+  }
+
+  .dash-stint {
+    padding: 9px 14px;
+  }
+
+  .dash-stint-top {
+    margin-bottom: 5px;
+  }
+
+  .dash-boxin {
+    font-size: 36px;
+  }
+
+  .dash-boxin small {
+    font-size: 15px;
+  }
+
+  .dash-boxin-basis {
+    margin-top: 1px;
+    font-size: 10px;
+  }
+
+  .dash-window-val {
+    font-size: 16px;
+  }
+
+  .dash-lapbar {
+    height: 16px;
+  }
+
+  .dash-lapbar-caps {
+    height: 14px;
+    margin-top: 3px;
+    font-size: 10px;
+  }
+
+  .dash-stat {
+    gap: 0;
+    padding: 6px 12px;
+  }
+
+  .dash-stat-cap {
+    font-size: 11px;
+  }
+}
+
 /* ---- Narrow fallback (genuinely small window). Below this the middle column
    starves (the rail alone can eat 200px expanded), so stack instead. */
 @media (max-width: 1140px) {
   .dash {
+    flex: 1 1 0;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto;
+    grid-template-rows: none;
+    grid-auto-rows: max-content;
+    align-content: start;
     overflow-y: auto;
-    height: auto;
+    height: 100%;
   }
 
-  .dash-banner {
+  .dash > .dash-session {
+    min-height: 52px;
+  }
+
+  .dash > .dash-banner {
     grid-column: 1;
     min-height: 52px;
   }
 
-  .dash-tower {
-    max-height: 380px;
+  .dash > .dash-tower {
+    height: 380px;
+    max-height: none;
+  }
+
+  .dash > .dash-carzone {
+    min-height: 510px;
   }
 
   .dash-carstage {
     min-height: 420px;
+  }
+
+  .dash > .dash-side {
+    min-height: 576px;
+  }
+
+  .dash > .dash-tiles,
+  .dash > .dash-battery,
+  .dash > .dash-deploy-panel {
+    min-height: 106px;
   }
 
   .dash-empty {
