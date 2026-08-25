@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;450;500;600;700&family=Geist+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; background: oklch(0.155 0.006 235); }
+  body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  a { color: oklch(0.800 0.115 192); text-decoration: none; }
+  a:hover { color: oklch(0.720 0.130 193); }
+  * { box-sizing: border-box; }
+</style>
+</helmet>
+
+<div data-screen-label="Dashboard" style="position: relative; width: 1600px; height: 1000px; display: flex; flex-direction: column; background: oklch(0.155 0.006 235); font-family: Geist, Inter, system-ui, sans-serif; color: oklch(0.965 0.004 230); font-size: 14px; line-height: 1.5; overflow: hidden;">
+
+  <header style="display: flex; align-items: stretch; height: 52px; flex: none; padding-left: 16px; background: oklch(0.195 0.008 235); border-bottom: 1px solid oklch(0.300 0.012 235);">
+    <span style="display: flex; align-items: center; font-size: 15px; font-weight: 600; letter-spacing: -0.02em;">BoxBox</span>
+    <div style="flex: 1; min-width: 16px;"></div>
+    <div style="display: flex; align-items: center; padding: 0 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.800 0.160 152);">Live</div>
+    <div style="display: flex; align-items: stretch;">
+      <button type="button" aria-label="Minimize" style="display: grid; place-items: center; width: 46px; border: none; background: none; color: oklch(0.720 0.010 232); cursor: pointer;" style-hover="background: oklch(0.235 0.010 235); color: oklch(0.965 0.004 230);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M7 12h10"></path></svg></button>
+      <button type="button" aria-label="Restore" style="display: grid; place-items: center; width: 46px; border: none; background: none; color: oklch(0.720 0.010 232); cursor: pointer;" style-hover="background: oklch(0.235 0.010 235); color: oklch(0.965 0.004 230);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8.5" y="8.5" width="8" height="8" rx="1.5"></rect><path d="M8.5 11V8a1.5 1.5 0 0 1 1.5-1.5h3"></path></svg></button>
+      <button type="button" aria-label="Close" style="display: grid; place-items: center; width: 46px; border: none; background: none; color: oklch(0.720 0.010 232); cursor: pointer;" style-hover="background: oklch(0.640 0.205 27); color: oklch(0.98 0 0);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"></path></svg></button>
+    </div>
+  </header>
+
+  <main style="flex: 1; min-height: 0; display: flex;">
+    <nav aria-label="App sections" style="flex: none; width: 56px; display: flex; flex-direction: column; gap: 2px; padding: 12px 8px; border-right: 1px solid oklch(0.300 0.012 235);">
+      <button type="button" aria-current="page" aria-label="Dashboard" style="position: relative; display: flex; align-items: center; justify-content: center; padding: 9px 0; border: none; border-radius: 6px; background: none; color: oklch(0.800 0.115 192); cursor: pointer;"><span aria-hidden="true" style="position: absolute; left: 2px; top: 50%; width: 3px; height: 18px; border-radius: 0 2px 2px 0; background: oklch(0.800 0.115 192); transform: translateY(-50%);"></span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 16.5a7.5 7.5 0 1 1 15 0"></path><path d="M12 16.5l3.2-4.2"></path><path d="M5.5 20h13"></path></svg></button>
+      <div aria-hidden="true" style="flex: none; height: 1px; margin: 6px 10px; background: oklch(0.300 0.012 235);"></div>
+      <button type="button" aria-label="Setups" style="display: flex; align-items: center; justify-content: center; padding: 9px 0; border: none; border-radius: 6px; background: none; color: oklch(0.720 0.010 232); cursor: pointer;" style-hover="background: oklch(0.195 0.008 235); color: oklch(0.965 0.004 230);"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"></path><path d="M9 12h6M9 16h3"></path><path d="M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2H9V5Z"></path></svg></button>
+      <button type="button" aria-label="Tuner" style="display: flex; align-items: center; justify-content: center; padding: 9px 0; border: none; border-radius: 6px; background: none; color: oklch(0.720 0.010 232); cursor: pointer;" style-hover="background: oklch(0.195 0.008 235); color: oklch(0.965 0.004 230);"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path fill-rule="evenodd" d="M8,12 L8,22 L6,22 L6,12 L5,12 C3.8954305,12 3,11.1045695 3,10 L3,9 C3,7.8954305 3.8954305,7 5,7 L9,7 C10.1045695,7 11,7.8954305 11,9 L11,10 C11,11.1045695 10.1045695,12 9,12 L8,12 Z M18,17 L18,22 L16,22 L16,17 L15,17 C13.8954305,17 13,16.1045695 13,15 L13,14 C13,12.8954305 13.8954305,12 15,12 L19,12 C20.1045695,12 21,12.8954305 21,14 L21,15 C21,16.1045695 20.1045695,17 19,17 L18,17 Z M8,6 L6,6 L6,2 L8,2 L8,6 Z M18,11 L16,11 L16,2 L18,2 L18,11 Z M5,9 L5,10 L9,10 L9,9 L5,9 Z M15,14 L15,15 L19,15 L19,14 L15,14 Z"></path></svg></button>
+      <button type="button" aria-label="Bench" style="display: flex; align-items: center; justify-content: center; padding: 9px 0; border: none; border-radius: 6px; background: none; color: oklch(0.720 0.010 232); cursor: pointer;" style-hover="background: oklch(0.195 0.008 235); color: oklch(0.965 0.004 230);"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M0,18h7V6H0V18z M2,8h3v8H2V8z"></path><path d="M17,6v12h7V6H17z M22,16h-3V8h3V16z"></path><path d="M12,3l4,4l-4,4V8H9V6h3V3z"></path><path d="M12,16h3v2h-3v3l-4-4l4-4V16z"></path></svg></button>
+      <div aria-hidden="true" style="flex: none; height: 1px; margin: 6px 10px; background: oklch(0.300 0.012 235);"></div>
+      <button type="button" aria-label="Timing" style="display: flex; align-items: center; justify-content: center; padding: 9px 0; border: none; border-radius: 6px; background: none; color: oklch(0.720 0.010 232); cursor: pointer;" style-hover="background: oklch(0.195 0.008 235); color: oklch(0.965 0.004 230);"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13.5" r="6.5"></circle><path d="M12 13.5V10M10 2.5h4M18.5 7l1.3-1.3"></path></svg></button>
+      <button type="button" aria-label="Incidents" style="display: flex; align-items: center; justify-content: center; padding: 9px 0; border: none; border-radius: 6px; background: none; color: oklch(0.720 0.010 232); cursor: pointer;" style-hover="background: oklch(0.195 0.008 235); color: oklch(0.965 0.004 230);"><svg width="18" height="18" viewBox="0 0 32 32" fill="currentColor" stroke="none" aria-hidden="true"><path d="M21.25 2.979c-5 0-6.333-3-12.666-3-4.084 0-6.584 3.084-6.584 3.084v27.958c0 0.552 0.448 1 1 1s1-0.448 1-1v-12.746c1.055-0.68 2.511-1.296 4.334-1.296 6.333 0 8.166 3 13.166 3s8.5-3 8.5-3v-17s-3.75 3-8.75 3zM28 15.96c-1.13 0.737-3.524 2.019-6.5 2.019-1.966 0-3.308-0.54-5.007-1.223-2.071-0.832-4.419-1.777-8.159-1.777-1.709 0-3.159 0.43-4.334 1.005v-12.108c0.753-0.685 2.394-1.897 4.584-1.897 2.941 0 4.597 0.714 6.35 1.469 1.746 0.752 3.552 1.531 6.316 1.531 2.664 0 5.004-0.737 6.75-1.529v12.509z"></path></svg></button>
+      <button type="button" aria-label="Review" style="display: flex; align-items: center; justify-content: center; padding: 9px 0; border: none; border-radius: 6px; background: none; color: oklch(0.720 0.010 232); cursor: pointer;" style-hover="background: oklch(0.195 0.008 235); color: oklch(0.965 0.004 230);"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M15 14.25C13.3431 14.25 12 15.5931 12 17.25C12 18.9069 13.3431 20.25 15 20.25C16.6569 20.25 18 18.9069 18 17.25C18 15.5931 16.6569 14.25 15 14.25ZM10.5 17.25C10.5 14.7647 12.5147 12.75 15 12.75C17.4853 12.75 19.5 14.7647 19.5 17.25C19.5 19.7353 17.4853 21.75 15 21.75C12.5147 21.75 10.5 19.7353 10.5 17.25Z"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M15.75 8.25H8.25V6.75H15.75V8.25Z"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M15.75 11.25H8.25V9.75H15.75V11.25Z"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M5.25 3H16.0607L18.75 5.68934V12H17.25V6.31066L15.4393 4.5H6.75V19.5H9.75V21H5.25V3Z"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M9.75 14.25H8.25V12.75H9.75V14.25Z"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M13.5791 16.0854L14.9207 15.4146L15.4634 16.5H16.4999V18H14.5364L13.5791 16.0854Z"></path></svg></button>
+      <button type="button" aria-label="History" style="display: flex; align-items: center; justify-content: center; padding: 9px 0; border: none; border-radius: 6px; background: none; color: oklch(0.720 0.010 232); cursor: pointer;" style-hover="background: oklch(0.195 0.008 235); color: oklch(0.965 0.004 230);"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l4 2"></path></svg></button>
+      <div aria-hidden="true" style="flex: none; height: 1px; margin: 6px 10px; background: oklch(0.300 0.012 235);"></div>
+      <button type="button" aria-label="Settings" style="display: flex; align-items: center; justify-content: center; padding: 9px 0; border: none; border-radius: 6px; background: none; color: oklch(0.720 0.010 232); cursor: pointer;" style-hover="background: oklch(0.195 0.008 235); color: oklch(0.965 0.004 230);"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.03 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01A1.7 1.7 0 0 0 10 4.09V4a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56h.01a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.03z"></path></svg></button>
+      <button type="button" aria-label="Expand navigation" style="margin-top: auto; display: flex; align-items: center; justify-content: center; padding: 8px 0; border: none; border-radius: 6px; background: none; color: oklch(0.635 0.013 234); cursor: pointer;" style-hover="background: oklch(0.195 0.008 235); color: oklch(0.965 0.004 230);"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform: rotate(180deg);"><path d="M11 17l-5-5 5-5"></path><path d="M18 17l-5-5 5-5"></path></svg></button>
+    </nav>
+
+    <div style="flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 14px 18px 18px; gap: 12px;">
+
+      <div style="flex: none; display: grid; grid-template-columns: 352px minmax(0, 1fr); gap: 12px; height: 52px;">
+
+        <section aria-label="Session" style="display: flex; align-items: center; justify-content: center; gap: 14px; padding: 0 16px; background: oklch(0.195 0.008 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 10px;">
+          <span style="font-size: 15px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap;">Suzuka</span>
+          <span aria-hidden="true" style="width: 1px; align-self: stretch; margin: 10px 0; background: oklch(0.245 0.010 235);"></span>
+          <sc-if value="{{ sessionLabel }}" hint-placeholder-val="RACE">
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.720 0.010 232);">{{ sessionLabel }}</span>
+          </sc-if>
+          <span aria-hidden="true" style="width: 1px; align-self: stretch; margin: 10px 0; background: oklch(0.245 0.010 235);"></span>
+          <div style="display: flex; align-items: baseline; gap: 8px;">
+            <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Lap</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; line-height: 1;">23<span style="color: oklch(0.635 0.013 234);">/53</span></span>
+          </div>
+        </section>
+
+        <section aria-label="Event banner" style="position: relative; display: flex; align-items: center; justify-content: flex-end; padding: 0 16px; background: oklch(0.195 0.008 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 10px;">
+          </sc-if>
+          <sc-if value="{{ evPenalty }}" hint-placeholder-val="{{ false }}">
+            <div style="position: absolute; inset: -1px; display: flex; align-items: center; justify-content: center; padding: 0 22px; background: oklch(0.820 0.150 80 / 0.14); border: 2px solid oklch(0.820 0.150 80); border-radius: 10px;">
+              <span style="font-size: 30px; font-weight: 700; letter-spacing: -0.01em; line-height: 1; white-space: nowrap; text-transform: uppercase; color: oklch(0.820 0.150 80);">PENALTY · 3S</span>
+            </div>
+          </sc-if>
+          <sc-if value="{{ evYellow }}" hint-placeholder-val="{{ false }}">
+            <div style="position: absolute; inset: -1px; display: flex; align-items: center; justify-content: center; padding: 0 22px; background: oklch(0.860 0.155 98 / 0.14); border: 2px solid oklch(0.860 0.155 98); border-radius: 10px;">
+              <span style="font-size: 30px; font-weight: 700; letter-spacing: -0.01em; line-height: 1; white-space: nowrap; text-transform: uppercase; color: oklch(0.860 0.155 98);">YELLOW FLAG · SECTOR 2</span>
+            </div>
+          </sc-if>
+          <sc-if value="{{ evSafety }}" hint-placeholder-val="{{ false }}">
+            <div style="position: absolute; inset: -1px; display: flex; align-items: center; justify-content: center; padding: 0 22px; background: oklch(0.820 0.150 80 / 0.14); border: 2px solid oklch(0.820 0.150 80); border-radius: 10px;">
+              <span style="font-size: 30px; font-weight: 700; letter-spacing: -0.01em; line-height: 1; white-space: nowrap; text-transform: uppercase; color: oklch(0.820 0.150 80);">SAFETY CAR</span>
+            </div>
+          </sc-if>
+          <sc-if value="{{ evVsc }}" hint-placeholder-val="{{ false }}">
+            <div style="position: absolute; inset: -1px; display: flex; align-items: center; justify-content: center; padding: 0 22px; background: oklch(0.820 0.150 80 / 0.14); border: 2px solid oklch(0.820 0.150 80); border-radius: 10px;">
+              <span style="font-size: 30px; font-weight: 700; letter-spacing: -0.01em; line-height: 1; white-space: nowrap; text-transform: uppercase; color: oklch(0.820 0.150 80);">VIRTUAL SAFETY CAR</span>
+            </div>
+          </sc-if>
+          <sc-if value="{{ evRed }}" hint-placeholder-val="{{ false }}">
+            <div style="position: absolute; inset: -1px; display: flex; align-items: center; justify-content: center; padding: 0 22px; background: oklch(0.640 0.205 27 / 0.16); border: 2px solid oklch(0.640 0.205 27); border-radius: 10px;">
+              <span style="font-size: 30px; font-weight: 700; letter-spacing: -0.01em; line-height: 1; white-space: nowrap; text-transform: uppercase; color: oklch(0.640 0.205 27);">RED FLAG</span>
+            </div>
+          </sc-if>
+          <sc-if value="{{ evRain }}" hint-placeholder-val="{{ false }}">
+            <div style="position: absolute; inset: -1px; display: flex; align-items: center; justify-content: center; padding: 0 22px; background: oklch(0.700 0.135 248 / 0.14); border: 2px solid oklch(0.700 0.135 248); border-radius: 10px;">
+              <span style="font-size: 30px; font-weight: 700; letter-spacing: -0.01em; line-height: 1; white-space: nowrap; text-transform: uppercase; color: oklch(0.700 0.135 248);">RAIN INCOMING · 4 MIN</span>
+            </div>
+          </sc-if>
+        </section>
+      </div>
+      <div style="flex: 1; min-height: 0; display: grid; grid-template-columns: 352px minmax(0, 1fr) 424px; gap: 12px;">
+
+        <section aria-label="Timing" style="background: oklch(0.195 0.008 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 10px; padding: 10px 0 8px; display: flex; flex-direction: column; min-height: 0; overflow: hidden;">
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px 7px; border-bottom: 1px solid oklch(0.300 0.012 235); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">
+            <span>Pos</span><span>Driver</span><span style="text-align: center;">Tyre</span><span style="text-align: right;">Wear</span><span style="text-align: right;">To ldr</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">1</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">PIASTRI</span>
+            <div style="display: flex; justify-content: center;"><span title="M compound, 9 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.820 0.150 80); background: color-mix(in oklch, oklch(0.820 0.150 80) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.820 0.150 80);">9</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">48%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.635 0.013 234);">LDR</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; background: oklch(0.235 0.010 235); border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.800 0.115 192);">2</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: oklch(0.800 0.115 192);">VERSTAPPEN</span>
+            <div style="display: flex; justify-content: center;"><span title="M compound, 9 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.820 0.150 80); background: color-mix(in oklch, oklch(0.820 0.150 80) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.820 0.150 80);">9</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.820 0.150 80);">61%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.965 0.004 230);">+1.2</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">3</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">NORRIS</span>
+            <div style="display: flex; justify-content: center;"><span title="M compound, 11 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.820 0.150 80); background: color-mix(in oklch, oklch(0.820 0.150 80) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.820 0.150 80);">11</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">55%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+2.0</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">4</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">LECLERC</span>
+            <div style="display: flex; justify-content: center;"><span title="H compound, 4 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.965 0.004 230); background: color-mix(in oklch, oklch(0.965 0.004 230) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.965 0.004 230);">4</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">22%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+8.4</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">5</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">RUSSELL</span>
+            <div style="display: flex; justify-content: center;"><span title="M compound, 12 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.820 0.150 80); background: color-mix(in oklch, oklch(0.820 0.150 80) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.820 0.150 80);">12</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.820 0.150 80);">66%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+12.9</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">6</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">HAMILTON</span>
+            <div style="display: flex; justify-content: center;"><span title="H compound, 3 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.965 0.004 230); background: color-mix(in oklch, oklch(0.965 0.004 230) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.965 0.004 230);">3</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">18%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+15.6</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">7</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">ALONSO</span>
+            <div style="display: flex; justify-content: center;"><span title="M compound, 14 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.820 0.150 80); background: color-mix(in oklch, oklch(0.820 0.150 80) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.820 0.150 80);">14</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.820 0.150 80);">71%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+21.3</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">8</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">SAINZ</span>
+            <div style="display: flex; justify-content: center;"><span title="H compound, 6 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.965 0.004 230); background: color-mix(in oklch, oklch(0.965 0.004 230) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.965 0.004 230);">6</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">34%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+24.8</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">9</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">ALBON</span>
+            <div style="display: flex; justify-content: center;"><span title="S compound, 2 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.640 0.205 27); background: color-mix(in oklch, oklch(0.640 0.205 27) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.640 0.205 27);">2</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">12%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+31.5</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">10</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">HÜLKENBERG</span>
+            <div style="display: flex; justify-content: center;"><span title="M compound, 10 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.820 0.150 80); background: color-mix(in oklch, oklch(0.820 0.150 80) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.820 0.150 80);">10</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">58%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+36.2</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">11</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">GASLY</span>
+            <div style="display: flex; justify-content: center;"><span title="H compound, 8 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.965 0.004 230); background: color-mix(in oklch, oklch(0.965 0.004 230) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.965 0.004 230);">8</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">41%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+40.7</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">12</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">OCON</span>
+            <div style="display: flex; justify-content: center;"><span title="M compound, 13 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.820 0.150 80); background: color-mix(in oklch, oklch(0.820 0.150 80) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.820 0.150 80);">13</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.820 0.150 80);">63%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+44.1</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">13</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">TSUNODA</span>
+            <div style="display: flex; justify-content: center;"><span title="M compound, 11 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.820 0.150 80); background: color-mix(in oklch, oklch(0.820 0.150 80) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.820 0.150 80);">11</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">57%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+48.9</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">14</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">STROLL</span>
+            <div style="display: flex; justify-content: center;"><span title="H compound, 5 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.965 0.004 230); background: color-mix(in oklch, oklch(0.965 0.004 230) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.965 0.004 230);">5</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">27%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+53.4</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">15</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">BEARMAN</span>
+            <div style="display: flex; justify-content: center;"><span title="M compound, 15 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.820 0.150 80); background: color-mix(in oklch, oklch(0.820 0.150 80) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.820 0.150 80);">15</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.820 0.150 80);">74%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+58.0</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">16</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">COLAPINTO</span>
+            <div style="display: flex; justify-content: center;"><span title="H compound, 7 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.965 0.004 230); background: color-mix(in oklch, oklch(0.965 0.004 230) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.965 0.004 230);">7</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">36%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+1 L</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">17</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">LAWSON</span>
+            <div style="display: flex; justify-content: center;"><span title="M compound, 12 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.820 0.150 80); background: color-mix(in oklch, oklch(0.820 0.150 80) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.820 0.150 80);">12</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.820 0.150 80);">61%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+1 L</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">18</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">ANTONELLI</span>
+            <div style="display: flex; justify-content: center;"><span title="S compound, 3 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.640 0.205 27); background: color-mix(in oklch, oklch(0.640 0.205 27) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.640 0.205 27);">3</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">16%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+1 L</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">19</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">HADJAR</span>
+            <div style="display: flex; justify-content: center;"><span title="M compound, 16 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.820 0.150 80); background: color-mix(in oklch, oklch(0.820 0.150 80) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.820 0.150 80);">16</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.640 0.205 27);">82%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+1 L</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">20</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">BORTOLETO</span>
+            <div style="display: flex; justify-content: center;"><span title="H compound, 9 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.965 0.004 230); background: color-mix(in oklch, oklch(0.965 0.004 230) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.965 0.004 230);">9</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">44%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+1 L</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px; border-bottom: 1px solid oklch(0.245 0.010 235);">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">21</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">DOOHAN</span>
+            <div style="display: flex; justify-content: center;"><span title="M compound, 14 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.820 0.150 80); background: color-mix(in oklch, oklch(0.820 0.150 80) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.820 0.150 80);">14</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.820 0.150 80);">68%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+1 L</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px; align-items: center; gap: 6px; padding: 0 14px; height: 31px;">
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: oklch(0.720 0.010 232);">22</span>
+            <span style="font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">SARGEANT</span>
+            <div style="display: flex; justify-content: center;"><span title="H compound, 10 laps" style="display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid oklch(0.965 0.004 230); background: color-mix(in oklch, oklch(0.965 0.004 230) 14%, transparent); font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; line-height: 1; color: oklch(0.965 0.004 230);">10</span></div>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; color: oklch(0.720 0.010 232);">47%</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; text-align: right; white-space: nowrap; color: oklch(0.720 0.010 232);">+2 L</span>
+          </div>
+        </section>
+
+        <section aria-label="Car" style="background: oklch(0.195 0.008 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 10px; padding: 12px 16px 14px; display: flex; flex-direction: column; gap: 10px; min-height: 0;">
+          <div style="display: flex; align-items: baseline; justify-content: space-between;">
+            <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Tyres &amp; damage</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.720 0.010 232);">Medium · 9 laps</span>
+          </div>
+
+          <div style="position: relative; flex: 1; min-height: 0;">
+            <svg viewBox="0 0 300 520" role="img" aria-label="Car diagram: front wing damaged 12 per cent" style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); height: 100%; width: auto;">
+              <g aria-hidden="true" stroke="oklch(0.300 0.012 235)" stroke-width="2" stroke-linecap="round" fill="none">
+                <path d="M126 120 L70 128"></path><path d="M126 156 L70 158"></path>
+                <path d="M174 120 L230 128"></path><path d="M174 156 L230 158"></path>
+                <path d="M172 384 L232 374"></path><path d="M172 418 L232 424"></path>
+                <path d="M128 384 L68 374"></path><path d="M128 418 L68 424"></path>
+              </g>
+
+              <rect x="84" y="246" width="132" height="166" rx="14" fill="oklch(0.125 0.005 235)" stroke="oklch(0.300 0.012 235)" stroke-width="1.5"></rect>
+
+              <g aria-hidden="true" fill="oklch(0.235 0.010 235)" stroke="oklch(0.300 0.012 235)" stroke-width="1.5">
+                <rect x="20" y="98" width="46" height="82" rx="9"></rect>
+                <rect x="234" y="98" width="46" height="82" rx="9"></rect>
+                <rect x="14" y="356" width="54" height="94" rx="10"></rect>
+                <rect x="232" y="356" width="54" height="94" rx="10"></rect>
+              </g>
+
+              <path d="M122 252 H98 a14 14 0 0 0 -14 14 V354 a14 14 0 0 0 14 14 h24 Z" fill="oklch(0.125 0.005 235)" stroke="oklch(0.300 0.012 235)" stroke-width="1.5"></path>
+              <path d="M178 252 H202 a14 14 0 0 1 14 14 V354 a14 14 0 0 1 -14 14 h-24 Z" fill="oklch(0.125 0.005 235)" stroke="oklch(0.300 0.012 235)" stroke-width="1.5"></path>
+
+              <path d="M138 46 h24 l12 102 h-48 z" fill="oklch(0.235 0.010 235)" stroke="oklch(0.300 0.012 235)" stroke-width="1.5"></path>
+              <rect x="120" y="142" width="60" height="172" rx="14" fill="oklch(0.235 0.010 235)" stroke="oklch(0.300 0.012 235)" stroke-width="1.5"></rect>
+              <path d="M126 300 h48 l-12 132 h-24 z" fill="oklch(0.235 0.010 235)" stroke="oklch(0.300 0.012 235)" stroke-width="1.5"></path>
+              <ellipse cx="150" cy="230" rx="17" ry="25" fill="oklch(0.125 0.005 235)" stroke="oklch(0.300 0.012 235)" stroke-width="1.5"></ellipse>
+              <path d="M131 208 Q150 192 169 208" fill="none" stroke="oklch(0.300 0.012 235)" stroke-width="3" stroke-linecap="round"></path>
+
+              <rect x="34" y="20" width="232" height="26" rx="5" fill="oklch(0.820 0.150 80 / 0.10)" stroke="oklch(0.820 0.150 80)" stroke-width="2"></rect>
+              <rect x="22" y="12" width="14" height="44" rx="4" fill="oklch(0.820 0.150 80 / 0.10)" stroke="oklch(0.820 0.150 80)" stroke-width="2"></rect>
+              <rect x="264" y="12" width="14" height="44" rx="4" fill="oklch(0.820 0.150 80 / 0.10)" stroke="oklch(0.820 0.150 80)" stroke-width="2"></rect>
+
+              <rect x="106" y="422" width="88" height="30" rx="5" fill="oklch(0.125 0.005 235)" stroke="oklch(0.300 0.012 235)" stroke-width="1.5"></rect>
+              <rect x="96" y="452" width="108" height="10" rx="3" fill="oklch(0.235 0.010 235)" stroke="oklch(0.300 0.012 235)" stroke-width="1.5" aria-hidden="true"></rect>
+              <rect x="72" y="466" width="156" height="24" rx="5" fill="oklch(0.125 0.005 235)" stroke="oklch(0.300 0.012 235)" stroke-width="1.5"></rect>
+              <rect x="62" y="458" width="14" height="42" rx="4" fill="oklch(0.125 0.005 235)" stroke="oklch(0.300 0.012 235)" stroke-width="1.5"></rect>
+              <rect x="224" y="458" width="14" height="42" rx="4" fill="oklch(0.125 0.005 235)" stroke="oklch(0.300 0.012 235)" stroke-width="1.5"></rect>
+            </svg>
+
+            <div style="position: absolute; left: 4%; top: 8%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; white-space: nowrap; color: oklch(0.635 0.013 234);">FL</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 46px; font-weight: 600; line-height: 1;">52<small style="font-size: 20px; color: oklch(0.720 0.010 232);">%</small></span>
+              <div style="width: 84px; height: 4px; border-radius: 2px; background: oklch(0.125 0.005 235); overflow: hidden;"><div style="width: 52%; height: 100%; background: oklch(0.720 0.010 232);"></div></div>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; white-space: nowrap; color: oklch(0.720 0.010 232);">104°C</span>
+            </div>
+
+            <div style="position: absolute; right: 4%; top: 8%; display: flex; flex-direction: column; align-items: flex-end; gap: 2px;">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; white-space: nowrap; color: oklch(0.635 0.013 234);">FR</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 46px; font-weight: 600; line-height: 1; color: oklch(0.820 0.150 80);">61<small style="font-size: 20px; color: oklch(0.720 0.010 232);">%</small></span>
+              <div style="width: 84px; height: 4px; border-radius: 2px; background: oklch(0.125 0.005 235); overflow: hidden;"><div style="width: 61%; height: 100%; background: oklch(0.820 0.150 80);"></div></div>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; white-space: nowrap; color: oklch(0.820 0.150 80);">112°C HOT</span>
+            </div>
+
+            <div style="position: absolute; left: 4%; bottom: 6%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; white-space: nowrap; color: oklch(0.635 0.013 234);">RL</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 46px; font-weight: 600; line-height: 1;">34<small style="font-size: 20px; color: oklch(0.720 0.010 232);">%</small></span>
+              <div style="width: 84px; height: 4px; border-radius: 2px; background: oklch(0.125 0.005 235); overflow: hidden;"><div style="width: 34%; height: 100%; background: oklch(0.720 0.010 232);"></div></div>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; white-space: nowrap; color: oklch(0.720 0.010 232);">96°C</span>
+            </div>
+
+            <div style="position: absolute; right: 4%; bottom: 6%; display: flex; flex-direction: column; align-items: flex-end; gap: 2px;">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; white-space: nowrap; color: oklch(0.635 0.013 234);">RR</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 46px; font-weight: 600; line-height: 1;">38<small style="font-size: 20px; color: oklch(0.720 0.010 232);">%</small></span>
+              <div style="width: 84px; height: 4px; border-radius: 2px; background: oklch(0.125 0.005 235); overflow: hidden;"><div style="width: 38%; height: 100%; background: oklch(0.720 0.010 232);"></div></div>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; white-space: nowrap; color: oklch(0.720 0.010 232);">99°C</span>
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: stretch; height: 38px; background: oklch(0.125 0.005 235); border: 1px solid oklch(0.245 0.010 235); border-radius: 6px; overflow: hidden;">
+            <div style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; background: oklch(0.820 0.150 80 / 0.10); border-right: 1px solid oklch(0.245 0.010 235);">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.820 0.150 80);">Front wing</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 17px; font-weight: 600; color: oklch(0.820 0.150 80);">12%</span>
+            </div>
+            <div style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; border-right: 1px solid oklch(0.245 0.010 235);">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Gearbox</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 17px; font-weight: 600; color: oklch(0.720 0.010 232);">8%</span>
+            </div>
+            <div style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; border-right: 1px solid oklch(0.245 0.010 235);">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Engine</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 17px; font-weight: 600; color: oklch(0.720 0.010 232);">4%</span>
+            </div>
+            <div style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Rest</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.800 0.160 152);">Clean</span>
+            </div>
+          </div>
+        </section>
+
+        <section aria-label="Weather and stint" style="background: oklch(0.195 0.008 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 10px; padding: 12px 0 14px; display: flex; flex-direction: column; justify-content: space-between; min-height: 0; overflow: hidden;">
+
+          <div style="display: flex; flex-direction: column; gap: 10px; padding: 0 18px 16px;">
+            <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Weather</span>
+          <div style="display: flex; align-items: stretch; justify-content: space-between;">
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 68px;">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Now</span>
+              <svg width="24" height="24" viewBox="0 -2.5 146 146" fill="oklch(0.965 0.004 230)" aria-hidden="true"><path d="M70.6837 110.317C63.9266 110.239 57.2292 109.043 50.8624 106.779C39.1192 102.49 32.5945 93.8792 30.3675 81.8039C29.0595 74.7122 29.8049 67.7084 31.6853 60.806C33.4189 54.4887 36.8946 48.7868 41.715 44.3508C42.7432 43.3673 43.545 42.1719 44.0647 40.8473C44.7407 39.0883 46.0541 38.1731 47.5513 37.3901C53.3558 34.3532 59.5712 32.5698 65.922 31.0235C78.7862 27.8888 90.1907 30.9433 100.432 38.8213C111.226 47.1246 116.033 58.2556 114.91 71.823C114.243 79.8881 112.14 87.4904 106.85 93.9206C99.9248 102.338 90.9619 107.273 80.3798 109.325C77.2031 109.94 73.9188 110.002 70.6837 110.317ZM39.2451 73.3391C39.3902 75.509 39.4421 77.1958 39.6252 78.8681C40.6688 88.3305 45.3847 94.9674 54.6049 98.0201C62.6215 100.748 71.2074 101.355 79.5278 99.7817C86.867 98.3791 93.3017 94.953 98.1613 89.1392C104.563 81.4797 105.184 72.4025 103.974 63.0244C103.442 59.4491 102.004 56.0692 99.7975 53.2062C89.8113 39.6542 74.0907 36.6666 60.0649 41.9639C49.4979 45.9551 41.8252 53.7833 39.9809 65.7818C39.5733 68.4376 39.4532 71.1371 39.2451 73.3391Z"></path><path d="M75.2512 134.083C75.1973 134.451 75.1488 134.897 75.0667 135.336C74.5489 138.11 72.9828 139.717 70.7756 139.748C68.441 139.781 66.7063 138.026 66.3783 135.107C66.3263 133.991 66.3714 132.872 66.514 131.764C66.743 128.294 66.9419 124.819 67.2471 121.355C67.3095 120.239 67.5766 119.144 68.0347 118.125C68.2769 117.649 68.6438 117.248 69.0967 116.965C69.5495 116.682 70.0713 116.527 70.6049 116.519C71.1392 116.51 71.6656 116.647 72.1276 116.915C72.5897 117.183 72.9697 117.572 73.227 118.04C73.6254 118.722 73.8781 119.478 73.9693 120.262C74.4366 124.837 74.8278 129.421 75.2512 134.083Z"></path><path d="M30.7701 33.4547C30.14 33.0904 28.7908 32.6356 27.8929 31.7312C25.061 28.8774 22.3297 25.9251 19.6986 22.8744C18.3452 21.3091 18.3952 19.4925 19.4361 18.2717C19.9858 17.617 20.7621 17.1942 21.6103 17.0872C22.4584 16.9803 23.3156 17.1971 24.0106 17.6949C27.8344 20.0275 31.3861 22.7487 34.1493 26.3382C34.7464 27.1501 35.1707 28.0754 35.3962 29.0577C35.9988 31.5794 33.9829 33.7789 30.7701 33.4547Z"></path><path d="M121.499 118.382C121.402 121.865 119.033 123.756 116.38 122.897C115.022 122.412 113.814 121.581 112.875 120.486C110.971 118.288 109.29 115.887 107.585 113.521C107.061 112.796 106.663 111.989 106.408 111.132C105.935 109.504 106.202 107.962 107.655 106.907C108.285 106.419 109.055 106.148 109.852 106.134C110.648 106.121 111.427 106.364 112.075 106.829C112.821 107.327 113.498 107.922 114.088 108.598C116.041 110.763 118.026 112.914 119.827 115.206C120.499 116.201 121.06 117.266 121.499 118.382Z"></path><path d="M123.744 16.2363C126.884 16.3157 128.338 18.9345 126.954 21.38C126.169 22.5997 125.192 23.6836 124.059 24.5899C121.379 26.9612 118.623 29.2497 115.876 31.543C115.194 32.1127 114.474 32.9212 113.695 33.0242C112.537 33.2237 111.347 33.0394 110.305 32.4993C109.224 31.7944 109.193 30.353 109.774 29.1388C110.098 28.4273 110.544 27.7775 111.09 27.2178C114.452 23.9362 117.818 20.6602 121.28 17.4875C122.029 16.942 122.861 16.52 123.744 16.2363Z"></path><path d="M71.8811 14.0098C72.4311 10.5312 72.9372 7.10654 73.5423 3.6962C73.6946 2.92608 74.0247 2.20227 74.5058 1.58169C74.7946 1.1644 75.1897 0.832169 75.6511 0.619621C76.1119 0.407074 76.6212 0.32165 77.1259 0.372854C77.6313 0.424056 78.113 0.609876 78.5219 0.910615C78.9308 1.21136 79.2518 1.61613 79.4507 2.08292C79.8569 3.00335 80.0893 3.99115 80.1372 4.99606C80.3433 8.00736 80.5034 11.0247 80.5402 14.0419C80.5336 15.1599 80.3275 16.2679 79.9311 17.3133C79.6594 18.117 79.131 18.8093 78.4274 19.2842C77.7245 19.7592 76.885 19.9903 76.0377 19.9425C75.2442 19.9374 74.475 19.6717 73.8475 19.1862C73.22 18.7006 72.7698 18.0223 72.5657 17.2556C72.2395 16.2048 72.1029 15.0954 71.8811 14.0098Z"></path><path d="M19.8111 118.528C20.1045 117.619 20.5347 116.76 21.087 115.979C23.4688 113.297 25.9821 110.729 28.4907 108.164C28.998 107.722 29.5724 107.363 30.1923 107.102C30.7424 106.803 31.3737 106.687 31.9941 106.772C32.6145 106.857 33.1915 107.137 33.6413 107.573C34.1838 107.986 34.5736 108.567 34.7496 109.226C34.9255 109.884 34.8776 110.582 34.6134 111.211C34.391 111.846 34.0787 112.446 33.6856 112.992C31.8052 115.366 29.979 117.798 27.9096 120.003C26.8343 121.137 25.5168 122.013 24.0555 122.566C21.6435 123.456 19.5328 121.576 19.8111 118.528Z"></path><path d="M10.8093 75.2653C8.68082 75.2653 6.54305 75.3841 4.4257 75.2331C2.10751 75.0684 0.991806 74.0524 0.867759 72.3846C0.746992 70.7687 1.89999 69.244 3.95236 68.9933C8.17458 68.4781 12.425 68.1893 16.6683 67.8625C17.3425 67.8579 18.0131 67.9616 18.6549 68.1683C20.5209 68.6422 21.4811 69.7429 21.5251 71.3837C21.5721 72.1234 21.3605 72.8565 20.9261 73.4571C20.4917 74.0576 19.8619 74.4895 19.1446 74.6766C17.8517 75.0244 16.5203 75.2082 15.1816 75.2253C13.7291 75.3125 12.2677 75.2443 10.8093 75.2443V75.2653Z"></path><path d="M134.473 68.1994C136.366 68.0202 138.267 67.9467 140.168 67.9775C141.484 68.0097 142.767 68.3943 143.882 69.0933C144.254 69.3985 144.545 69.7903 144.732 70.2334C144.919 70.6764 144.995 71.1575 144.953 71.6373C144.912 72.1164 144.755 72.5778 144.496 72.9828C144.236 73.3877 143.882 73.7238 143.464 73.9614C142.103 74.6932 140.575 75.0588 139.029 75.0233C135.232 74.9308 131.443 74.5311 127.652 74.2292C126.986 74.1576 126.326 74.0388 125.677 73.8741C124.218 73.5459 123.234 72.7583 123.248 71.1332C123.229 70.4447 123.483 69.7766 123.955 69.2751C124.427 68.7737 125.078 68.479 125.767 68.456C128.089 68.181 130.448 68.2125 132.789 68.1246C133.349 68.1036 133.909 68.1246 134.469 68.1246L134.473 68.1994Z"></path></svg>
+              <div style="display: flex; align-items: center; gap: 3px;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.700 0.135 248)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z"></path></svg>
+                <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; white-space: nowrap; color: oklch(0.720 0.010 232);">5%</span>
+              </div>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 68px;">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">+5m</span>
+              <svg width="24" height="24" viewBox="0 -2.5 146 146" fill="oklch(0.965 0.004 230)" aria-hidden="true"><path d="M70.6837 110.317C63.9266 110.239 57.2292 109.043 50.8624 106.779C39.1192 102.49 32.5945 93.8792 30.3675 81.8039C29.0595 74.7122 29.8049 67.7084 31.6853 60.806C33.4189 54.4887 36.8946 48.7868 41.715 44.3508C42.7432 43.3673 43.545 42.1719 44.0647 40.8473C44.7407 39.0883 46.0541 38.1731 47.5513 37.3901C53.3558 34.3532 59.5712 32.5698 65.922 31.0235C78.7862 27.8888 90.1907 30.9433 100.432 38.8213C111.226 47.1246 116.033 58.2556 114.91 71.823C114.243 79.8881 112.14 87.4904 106.85 93.9206C99.9248 102.338 90.9619 107.273 80.3798 109.325C77.2031 109.94 73.9188 110.002 70.6837 110.317ZM39.2451 73.3391C39.3902 75.509 39.4421 77.1958 39.6252 78.8681C40.6688 88.3305 45.3847 94.9674 54.6049 98.0201C62.6215 100.748 71.2074 101.355 79.5278 99.7817C86.867 98.3791 93.3017 94.953 98.1613 89.1392C104.563 81.4797 105.184 72.4025 103.974 63.0244C103.442 59.4491 102.004 56.0692 99.7975 53.2062C89.8113 39.6542 74.0907 36.6666 60.0649 41.9639C49.4979 45.9551 41.8252 53.7833 39.9809 65.7818C39.5733 68.4376 39.4532 71.1371 39.2451 73.3391Z"></path><path d="M75.2512 134.083C75.1973 134.451 75.1488 134.897 75.0667 135.336C74.5489 138.11 72.9828 139.717 70.7756 139.748C68.441 139.781 66.7063 138.026 66.3783 135.107C66.3263 133.991 66.3714 132.872 66.514 131.764C66.743 128.294 66.9419 124.819 67.2471 121.355C67.3095 120.239 67.5766 119.144 68.0347 118.125C68.2769 117.649 68.6438 117.248 69.0967 116.965C69.5495 116.682 70.0713 116.527 70.6049 116.519C71.1392 116.51 71.6656 116.647 72.1276 116.915C72.5897 117.183 72.9697 117.572 73.227 118.04C73.6254 118.722 73.8781 119.478 73.9693 120.262C74.4366 124.837 74.8278 129.421 75.2512 134.083Z"></path><path d="M30.7701 33.4547C30.14 33.0904 28.7908 32.6356 27.8929 31.7312C25.061 28.8774 22.3297 25.9251 19.6986 22.8744C18.3452 21.3091 18.3952 19.4925 19.4361 18.2717C19.9858 17.617 20.7621 17.1942 21.6103 17.0872C22.4584 16.9803 23.3156 17.1971 24.0106 17.6949C27.8344 20.0275 31.3861 22.7487 34.1493 26.3382C34.7464 27.1501 35.1707 28.0754 35.3962 29.0577C35.9988 31.5794 33.9829 33.7789 30.7701 33.4547Z"></path><path d="M121.499 118.382C121.402 121.865 119.033 123.756 116.38 122.897C115.022 122.412 113.814 121.581 112.875 120.486C110.971 118.288 109.29 115.887 107.585 113.521C107.061 112.796 106.663 111.989 106.408 111.132C105.935 109.504 106.202 107.962 107.655 106.907C108.285 106.419 109.055 106.148 109.852 106.134C110.648 106.121 111.427 106.364 112.075 106.829C112.821 107.327 113.498 107.922 114.088 108.598C116.041 110.763 118.026 112.914 119.827 115.206C120.499 116.201 121.06 117.266 121.499 118.382Z"></path><path d="M123.744 16.2363C126.884 16.3157 128.338 18.9345 126.954 21.38C126.169 22.5997 125.192 23.6836 124.059 24.5899C121.379 26.9612 118.623 29.2497 115.876 31.543C115.194 32.1127 114.474 32.9212 113.695 33.0242C112.537 33.2237 111.347 33.0394 110.305 32.4993C109.224 31.7944 109.193 30.353 109.774 29.1388C110.098 28.4273 110.544 27.7775 111.09 27.2178C114.452 23.9362 117.818 20.6602 121.28 17.4875C122.029 16.942 122.861 16.52 123.744 16.2363Z"></path><path d="M71.8811 14.0098C72.4311 10.5312 72.9372 7.10654 73.5423 3.6962C73.6946 2.92608 74.0247 2.20227 74.5058 1.58169C74.7946 1.1644 75.1897 0.832169 75.6511 0.619621C76.1119 0.407074 76.6212 0.32165 77.1259 0.372854C77.6313 0.424056 78.113 0.609876 78.5219 0.910615C78.9308 1.21136 79.2518 1.61613 79.4507 2.08292C79.8569 3.00335 80.0893 3.99115 80.1372 4.99606C80.3433 8.00736 80.5034 11.0247 80.5402 14.0419C80.5336 15.1599 80.3275 16.2679 79.9311 17.3133C79.6594 18.117 79.131 18.8093 78.4274 19.2842C77.7245 19.7592 76.885 19.9903 76.0377 19.9425C75.2442 19.9374 74.475 19.6717 73.8475 19.1862C73.22 18.7006 72.7698 18.0223 72.5657 17.2556C72.2395 16.2048 72.1029 15.0954 71.8811 14.0098Z"></path><path d="M19.8111 118.528C20.1045 117.619 20.5347 116.76 21.087 115.979C23.4688 113.297 25.9821 110.729 28.4907 108.164C28.998 107.722 29.5724 107.363 30.1923 107.102C30.7424 106.803 31.3737 106.687 31.9941 106.772C32.6145 106.857 33.1915 107.137 33.6413 107.573C34.1838 107.986 34.5736 108.567 34.7496 109.226C34.9255 109.884 34.8776 110.582 34.6134 111.211C34.391 111.846 34.0787 112.446 33.6856 112.992C31.8052 115.366 29.979 117.798 27.9096 120.003C26.8343 121.137 25.5168 122.013 24.0555 122.566C21.6435 123.456 19.5328 121.576 19.8111 118.528Z"></path><path d="M10.8093 75.2653C8.68082 75.2653 6.54305 75.3841 4.4257 75.2331C2.10751 75.0684 0.991806 74.0524 0.867759 72.3846C0.746992 70.7687 1.89999 69.244 3.95236 68.9933C8.17458 68.4781 12.425 68.1893 16.6683 67.8625C17.3425 67.8579 18.0131 67.9616 18.6549 68.1683C20.5209 68.6422 21.4811 69.7429 21.5251 71.3837C21.5721 72.1234 21.3605 72.8565 20.9261 73.4571C20.4917 74.0576 19.8619 74.4895 19.1446 74.6766C17.8517 75.0244 16.5203 75.2082 15.1816 75.2253C13.7291 75.3125 12.2677 75.2443 10.8093 75.2443V75.2653Z"></path><path d="M134.473 68.1994C136.366 68.0202 138.267 67.9467 140.168 67.9775C141.484 68.0097 142.767 68.3943 143.882 69.0933C144.254 69.3985 144.545 69.7903 144.732 70.2334C144.919 70.6764 144.995 71.1575 144.953 71.6373C144.912 72.1164 144.755 72.5778 144.496 72.9828C144.236 73.3877 143.882 73.7238 143.464 73.9614C142.103 74.6932 140.575 75.0588 139.029 75.0233C135.232 74.9308 131.443 74.5311 127.652 74.2292C126.986 74.1576 126.326 74.0388 125.677 73.8741C124.218 73.5459 123.234 72.7583 123.248 71.1332C123.229 70.4447 123.483 69.7766 123.955 69.2751C124.427 68.7737 125.078 68.479 125.767 68.456C128.089 68.181 130.448 68.2125 132.789 68.1246C133.349 68.1036 133.909 68.1246 134.469 68.1246L134.473 68.1994Z"></path></svg>
+              <div style="display: flex; align-items: center; gap: 3px;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.700 0.135 248)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z"></path></svg>
+                <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; white-space: nowrap; color: oklch(0.720 0.010 232);">4%</span>
+              </div>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 68px;">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">+10m</span>
+              <svg width="24" height="24" viewBox="0 -20.5 163 163" fill="oklch(0.965 0.004 230)" aria-hidden="true"><path d="M76.6061 29.8095C81.2142 23.8185 87.389 20.532 94.2957 18.496C104.267 15.5576 113.713 17.4846 122.504 22.4341C126.486 24.7426 130.159 27.5464 133.435 30.7787C139.73 36.8649 141.962 44.5438 140.797 53.2429C141.045 53.4614 141.256 53.7683 141.542 53.8825C155.091 59.2507 163.38 76.9564 157.097 93.7081C155.187 98.8059 152.192 103.302 148.818 107.51C144.444 112.968 138.296 115.492 131.675 116.705C125.077 117.914 118.396 118.7 111.731 119.501C94.2963 121.597 76.7564 121.301 59.2471 121.66C50.6996 121.835 42.1693 121.682 33.8226 119.521C31.2242 118.848 28.6375 118.086 26.1145 117.177C12.7672 112.374 5.32391 102.352 1.98512 89.0586C-1.21387 76.3256 -0.443573 63.6363 5.83758 52.0558C14.8898 35.3737 28.8884 25.0331 48.1335 23.009C56.9127 22.0855 65.2836 24.3869 73.2423 28.1116C74.2564 28.5842 75.2402 29.1171 76.6061 29.8095ZM63.0729 111.699C67.5598 111.516 72.0511 111.407 76.5332 111.138C91.1 110.266 105.657 109.213 120.23 108.493C125.162 108.278 129.989 107 134.382 104.747C144.705 99.4911 149.685 90.1993 148.01 78.6989C146.778 70.242 142.114 64.4401 133.717 62.2617C123.054 59.4966 113.209 61.2585 104.733 68.6202C102.371 70.6732 100.309 73.0754 98.1044 75.3149C97.4553 76.0867 96.73 76.7897 95.9385 77.4145C93.2718 79.1807 90.1627 78.1562 89.1828 75.093C88.835 73.9398 88.8382 72.7092 89.1927 71.558C90.5421 67.4887 89.9849 63.5898 88.5704 59.7082C86.755 54.6183 83.9498 49.9377 80.3177 45.9366C69.9305 34.5865 56.9981 30.887 42.1432 33.9764C36.1358 35.2235 31.007 38.5947 26.1901 42.3614C10.442 54.6763 7.14262 71.9899 11.1725 88.1187C13.6712 98.122 19.5866 105.38 29.7513 108.52C32.8564 109.469 36.018 110.224 39.2172 110.78C47.1162 112.168 55.0971 111.897 63.0729 111.699ZM99.0456 60.5049C108.202 52.8782 118.539 50.0455 129.815 50.8803C130.793 46.1107 129.891 41.7035 126.873 38.2945C116.437 26.5073 101.407 22.6546 86.6986 31.6786C85.4043 32.5653 84.1559 33.5162 82.9575 34.5283C90.7259 41.443 96.3159 50.4684 99.0456 60.5043V60.5049Z"></path><path d="M142.527 25.1056C141.753 24.5701 140.479 24.1405 140.122 23.3148C139.944 22.8096 139.888 22.2699 139.958 21.7387C140.027 21.2076 140.219 20.6997 140.521 20.2569C143.143 17.4691 146.553 15.5465 150.296 14.744C150.955 14.5568 151.659 14.6029 152.288 14.8748C152.916 15.1466 153.432 15.6272 153.747 16.2355C154.13 16.8728 154.274 17.6256 154.153 18.359C154.031 19.0923 153.654 19.7588 153.087 20.2395C150.144 22.7953 146.476 23.8606 142.527 25.1056Z"></path><path d="M154.549 40.8203C155.923 40.9381 157.29 41.1253 158.645 41.3805C160.756 41.8826 161.909 43.3714 161.769 45.1461C161.761 45.5711 161.668 45.9904 161.493 46.378C161.319 46.7657 161.067 47.1141 160.754 47.4017C160.441 47.6892 160.074 47.9099 159.673 48.0509C159.272 48.192 158.846 48.2504 158.422 48.2221C155.663 48.1704 152.918 47.8406 150.225 47.2376C149.555 47.083 148.97 46.6777 148.589 46.105C148.208 45.5323 148.061 44.8355 148.178 44.1578C148.22 43.478 148.489 42.8324 148.943 42.324C149.396 41.8156 150.007 41.4743 150.678 41.3549C151.98 41.0694 153.325 40.9811 154.549 40.8203Z"></path><path d="M129.324 6.76267C129.067 8.11915 128.69 9.44974 128.197 10.7392C127.84 11.6414 127.16 12.3786 126.289 12.8069C125.418 13.2352 124.42 13.324 123.487 13.0562C122.602 12.8257 121.83 12.2807 121.318 11.523C120.805 10.7654 120.586 9.84689 120.701 8.93937C120.932 6.9433 121.402 4.98258 122.101 3.09833C122.326 2.32811 122.829 1.66895 123.512 1.24854C124.196 0.828128 125.012 0.676533 125.8 0.822945C127.609 1.02838 128.547 2.23802 128.994 3.85787C129.169 4.81756 129.28 5.78798 129.324 6.76267Z"></path><path d="M99.5604 9.15197C99.4422 9.89541 99.246 10.6246 98.9743 11.3267C97.7272 13.9889 94.6772 14.3364 93.102 11.86C92.2789 10.525 91.7558 9.02674 91.5701 7.46945C91.3837 5.91217 91.5392 4.33304 92.0249 2.84177C92.6609 0.654852 95.4668 0.407397 97.2376 2.26811C98.9414 4.0586 99.4357 6.34481 99.5604 9.15197Z"></path><path d="M69.619 11.5369C72.1348 11.4837 76.5664 14.2121 77.3697 16.5992C77.6749 17.5062 77.5929 18.9936 77.0271 19.6303C76.3426 20.4008 74.8474 21.0746 73.8964 20.8718C72.4242 20.5471 71.0407 19.9055 69.8409 18.9925C68.6418 18.0795 67.6553 16.9164 66.9504 15.5839C65.7959 13.5407 67.1906 11.5881 69.619 11.5369Z"></path></svg>
+              <div style="display: flex; align-items: center; gap: 3px;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.700 0.135 248)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z"></path></svg>
+                <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; white-space: nowrap; color: oklch(0.720 0.010 232);">4%</span>
+              </div>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 68px;">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">+15m</span>
+              <svg width="24" height="24" viewBox="0 -20.5 163 163" fill="oklch(0.965 0.004 230)" aria-hidden="true"><path d="M76.6061 29.8095C81.2142 23.8185 87.389 20.532 94.2957 18.496C104.267 15.5576 113.713 17.4846 122.504 22.4341C126.486 24.7426 130.159 27.5464 133.435 30.7787C139.73 36.8649 141.962 44.5438 140.797 53.2429C141.045 53.4614 141.256 53.7683 141.542 53.8825C155.091 59.2507 163.38 76.9564 157.097 93.7081C155.187 98.8059 152.192 103.302 148.818 107.51C144.444 112.968 138.296 115.492 131.675 116.705C125.077 117.914 118.396 118.7 111.731 119.501C94.2963 121.597 76.7564 121.301 59.2471 121.66C50.6996 121.835 42.1693 121.682 33.8226 119.521C31.2242 118.848 28.6375 118.086 26.1145 117.177C12.7672 112.374 5.32391 102.352 1.98512 89.0586C-1.21387 76.3256 -0.443573 63.6363 5.83758 52.0558C14.8898 35.3737 28.8884 25.0331 48.1335 23.009C56.9127 22.0855 65.2836 24.3869 73.2423 28.1116C74.2564 28.5842 75.2402 29.1171 76.6061 29.8095ZM63.0729 111.699C67.5598 111.516 72.0511 111.407 76.5332 111.138C91.1 110.266 105.657 109.213 120.23 108.493C125.162 108.278 129.989 107 134.382 104.747C144.705 99.4911 149.685 90.1993 148.01 78.6989C146.778 70.242 142.114 64.4401 133.717 62.2617C123.054 59.4966 113.209 61.2585 104.733 68.6202C102.371 70.6732 100.309 73.0754 98.1044 75.3149C97.4553 76.0867 96.73 76.7897 95.9385 77.4145C93.2718 79.1807 90.1627 78.1562 89.1828 75.093C88.835 73.9398 88.8382 72.7092 89.1927 71.558C90.5421 67.4887 89.9849 63.5898 88.5704 59.7082C86.755 54.6183 83.9498 49.9377 80.3177 45.9366C69.9305 34.5865 56.9981 30.887 42.1432 33.9764C36.1358 35.2235 31.007 38.5947 26.1901 42.3614C10.442 54.6763 7.14262 71.9899 11.1725 88.1187C13.6712 98.122 19.5866 105.38 29.7513 108.52C32.8564 109.469 36.018 110.224 39.2172 110.78C47.1162 112.168 55.0971 111.897 63.0729 111.699ZM99.0456 60.5049C108.202 52.8782 118.539 50.0455 129.815 50.8803C130.793 46.1107 129.891 41.7035 126.873 38.2945C116.437 26.5073 101.407 22.6546 86.6986 31.6786C85.4043 32.5653 84.1559 33.5162 82.9575 34.5283C90.7259 41.443 96.3159 50.4684 99.0456 60.5043V60.5049Z"></path><path d="M142.527 25.1056C141.753 24.5701 140.479 24.1405 140.122 23.3148C139.944 22.8096 139.888 22.2699 139.958 21.7387C140.027 21.2076 140.219 20.6997 140.521 20.2569C143.143 17.4691 146.553 15.5465 150.296 14.744C150.955 14.5568 151.659 14.6029 152.288 14.8748C152.916 15.1466 153.432 15.6272 153.747 16.2355C154.13 16.8728 154.274 17.6256 154.153 18.359C154.031 19.0923 153.654 19.7588 153.087 20.2395C150.144 22.7953 146.476 23.8606 142.527 25.1056Z"></path><path d="M154.549 40.8203C155.923 40.9381 157.29 41.1253 158.645 41.3805C160.756 41.8826 161.909 43.3714 161.769 45.1461C161.761 45.5711 161.668 45.9904 161.493 46.378C161.319 46.7657 161.067 47.1141 160.754 47.4017C160.441 47.6892 160.074 47.9099 159.673 48.0509C159.272 48.192 158.846 48.2504 158.422 48.2221C155.663 48.1704 152.918 47.8406 150.225 47.2376C149.555 47.083 148.97 46.6777 148.589 46.105C148.208 45.5323 148.061 44.8355 148.178 44.1578C148.22 43.478 148.489 42.8324 148.943 42.324C149.396 41.8156 150.007 41.4743 150.678 41.3549C151.98 41.0694 153.325 40.9811 154.549 40.8203Z"></path><path d="M129.324 6.76267C129.067 8.11915 128.69 9.44974 128.197 10.7392C127.84 11.6414 127.16 12.3786 126.289 12.8069C125.418 13.2352 124.42 13.324 123.487 13.0562C122.602 12.8257 121.83 12.2807 121.318 11.523C120.805 10.7654 120.586 9.84689 120.701 8.93937C120.932 6.9433 121.402 4.98258 122.101 3.09833C122.326 2.32811 122.829 1.66895 123.512 1.24854C124.196 0.828128 125.012 0.676533 125.8 0.822945C127.609 1.02838 128.547 2.23802 128.994 3.85787C129.169 4.81756 129.28 5.78798 129.324 6.76267Z"></path><path d="M99.5604 9.15197C99.4422 9.89541 99.246 10.6246 98.9743 11.3267C97.7272 13.9889 94.6772 14.3364 93.102 11.86C92.2789 10.525 91.7558 9.02674 91.5701 7.46945C91.3837 5.91217 91.5392 4.33304 92.0249 2.84177C92.6609 0.654852 95.4668 0.407397 97.2376 2.26811C98.9414 4.0586 99.4357 6.34481 99.5604 9.15197Z"></path><path d="M69.619 11.5369C72.1348 11.4837 76.5664 14.2121 77.3697 16.5992C77.6749 17.5062 77.5929 18.9936 77.0271 19.6303C76.3426 20.4008 74.8474 21.0746 73.8964 20.8718C72.4242 20.5471 71.0407 19.9055 69.8409 18.9925C68.6418 18.0795 67.6553 16.9164 66.9504 15.5839C65.7959 13.5407 67.1906 11.5881 69.619 11.5369Z"></path></svg>
+              <div style="display: flex; align-items: center; gap: 3px;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.700 0.135 248)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z"></path></svg>
+                <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; white-space: nowrap; color: oklch(0.720 0.010 232);">8%</span>
+              </div>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 68px;">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">+20m</span>
+              <svg width="24" height="24" viewBox="0 -12 160 160" fill="oklch(0.965 0.004 230)" aria-hidden="true"><path d="M99.3343 38.3444C100.705 37.3862 101.784 36.6023 102.892 35.8633C114.084 28.4014 126.167 26.9015 138.908 30.8093C154.36 35.5481 160.709 50.7884 159.385 63.0744C158.266 73.4901 153.144 81.9023 145.621 88.916C142.693 91.6444 138.926 93.1539 135.086 93.9265C128.076 95.3356 121.012 96.6043 113.912 97.4188C95.8203 99.4948 77.6201 99.3937 59.4434 99.6852C50.8992 99.8223 42.3784 99.6642 34.0344 97.5186C31.5442 96.8787 29.0647 96.1567 26.6448 95.291C13.184 90.4741 5.62161 80.4223 2.28085 66.9963C-0.85579 54.3947 -0.115497 41.8403 6.04357 30.3229C15.0026 13.5705 28.91 2.72458 48.1498 1.16775C65.4621 -0.23288 79.9396 6.45285 90.628 20.5457C94.6133 25.7958 97.3358 31.6504 99.3343 38.3444ZM63.6295 89.7069C68.0047 89.5296 72.3838 89.4246 76.7563 89.1621C91.3231 88.2872 105.879 87.2042 120.453 86.5223C125.834 86.2604 131.085 84.7751 135.805 82.1793C144.083 77.7543 148.182 70.7216 148.654 61.5047C149.179 51.252 143.707 42.8965 134.46 40.3827C123.86 37.5007 113.949 39.0703 105.394 46.3602C102.842 48.5347 100.65 51.1271 98.2645 53.5004C97.5281 54.3381 96.6814 55.0718 95.7475 55.6809C93.3531 57.0021 90.7508 56.0088 89.5825 53.5338C89.2714 52.8759 89.1033 52.1596 89.0902 51.4321C89.0771 50.7045 89.2182 49.9825 89.505 49.3137C90.8617 45.6586 90.3392 42.0508 89.123 38.4521C87.3234 33.3669 84.6271 28.6452 81.1623 24.5113C70.3577 11.1535 49.0599 6.91406 34.4308 15.1117C13.9439 26.5976 6.40545 44.9352 11.4763 66.0285C13.8844 76.0478 19.8118 83.3266 29.9778 86.4875C33.0789 87.4497 36.2376 88.2143 39.4354 88.7762C47.448 90.1893 55.5415 89.9149 63.6289 89.7062L63.6295 89.7069Z"></path><path d="M105.236 129.91C105.52 128.907 105.879 127.928 106.31 126.979C108.107 123.489 109.985 120.039 111.873 116.598C112.225 115.899 112.709 115.275 113.299 114.76C113.639 114.462 114.053 114.259 114.498 114.173C114.943 114.087 115.402 114.121 115.829 114.271C116.257 114.421 116.637 114.683 116.93 115.028C117.223 115.373 117.42 115.79 117.499 116.236C117.731 117.335 117.667 118.476 117.314 119.543C115.957 123.098 114.517 126.631 112.86 130.055C112.187 131.341 111.18 132.422 109.945 133.185C107.689 134.586 105.327 133.118 105.236 129.91Z"></path><path d="M37.6312 119.293C37.3929 120.006 37.1293 120.979 36.7486 121.904C35.4701 125.013 34.1642 128.111 32.8314 131.198C32.5052 132.03 32.0507 132.805 31.4841 133.495C30.9244 134.134 30.1636 134.564 29.3269 134.714C28.4904 134.864 27.6276 134.723 26.8811 134.318C26.207 133.894 25.714 133.235 25.4976 132.469C25.2812 131.703 25.3566 130.883 25.7094 130.169C27.8753 125.749 30.2469 121.426 32.6491 117.128C32.9554 116.575 33.4581 116.157 34.0579 115.957C34.6576 115.758 35.3106 115.79 35.8874 116.049C37.2966 116.541 37.559 117.724 37.6312 119.293Z"></path><path d="M69.5389 135.005C69.1399 135.022 68.7408 134.956 68.3687 134.811C67.9965 134.665 67.6585 134.443 67.3763 134.159C67.0941 133.877 66.8742 133.537 66.7305 133.164C66.5874 132.791 66.5231 132.392 66.5421 131.993C66.5742 131.205 66.781 130.433 67.1472 129.734C69.1858 126.13 71.2907 122.565 73.4061 119.006C73.6515 118.496 74.0532 118.079 74.5533 117.816C75.4315 117.527 76.6208 117.116 77.266 117.483C77.9223 117.857 78.2032 119.08 78.4074 119.986C78.5098 120.442 78.1107 121.036 77.8823 121.539C76.3609 124.902 74.7975 128.247 73.3043 131.623C72.5305 133.372 71.4115 134.65 69.5389 135.005Z"></path></svg>
+              <div style="display: flex; align-items: center; gap: 3px;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="oklch(0.700 0.135 248)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5s5 5.5 5 9a5 5 0 0 1-10 0c0-3.5 5-9 5-9Z"></path></svg>
+                <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; white-space: nowrap; color: oklch(0.720 0.010 232);">12%</span>
+              </div>
+            </div>
+          </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid oklch(0.245 0.010 235);">
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 16px 18px; border-right: 1px solid oklch(0.245 0.010 235);">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Track temp</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 34px; font-weight: 600; line-height: 1; white-space: nowrap;">41<small style="font-size: 17px; color: oklch(0.720 0.010 232);">°C</small></span>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 16px 18px;">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Air temp</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 34px; font-weight: 600; line-height: 1; white-space: nowrap; color: oklch(0.720 0.010 232);">24<small style="font-size: 17px;">°C</small></span>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; border-top: 1px solid oklch(0.245 0.010 235);">
+            <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 14px;">
+              <div style="display: flex; flex-direction: column; gap: 2px;">
+                <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Box in</span>
+                <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 64px; font-weight: 600; line-height: 0.92; letter-spacing: -0.02em; white-space: nowrap; color: oklch(0.800 0.115 192);">3<small style="font-size: 22px; letter-spacing: 0.06em; color: oklch(0.720 0.010 232);"> LAPS</small></span>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+                <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Window</span>
+                <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; white-space: nowrap;">26–31</span>
+              </div>
+            </div>
+
+            <div>
+              <div style="position: relative; height: 24px; background: oklch(0.125 0.005 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 4px; overflow: hidden;">
+                <div style="position: absolute; left: 27%; width: 46%; top: 0; bottom: 0; background: oklch(0.800 0.115 192 / 0.20);"></div>
+                <div style="position: absolute; left: 55%; top: 0; bottom: 0; width: 2px; background: oklch(0.820 0.150 80);"></div>
+                <div style="position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: oklch(0.965 0.004 230);"></div>
+              </div>
+              <div style="position: relative; height: 18px; margin-top: 6px; font-size: 12px; font-weight: 600; white-space: nowrap;">
+                <span style="position: absolute; left: 0; top: 0; color: oklch(0.635 0.013 234);">Lap 23</span>
+                <span style="position: absolute; left: 55%; top: 0; transform: translateX(-50%); color: oklch(0.820 0.150 80);">Cliff 29</span>
+                <span style="position: absolute; right: 0; top: 0; color: oklch(0.635 0.013 234);">Lap 34</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid oklch(0.245 0.010 235);">
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 16px 18px; border-right: 1px solid oklch(0.245 0.010 235);">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Wear rate</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 34px; font-weight: 600; line-height: 1; white-space: nowrap; color: oklch(0.820 0.150 80);">6.8</span>
+              <span style="font-size: 13px; font-weight: 600; white-space: nowrap; color: oklch(0.820 0.150 80);">% per lap on FR</span>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 16px 18px;">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Stops</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 34px; font-weight: 600; line-height: 1; white-space: nowrap;">1</span>
+              <span style="font-size: 13px; font-weight: 600; white-space: nowrap; color: oklch(0.720 0.010 232);">of 2 planned</span>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid oklch(0.245 0.010 235);">
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 16px 18px; border-right: 1px solid oklch(0.245 0.010 235);">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Fuel</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 34px; font-weight: 600; line-height: 1; white-space: nowrap;">+1.4</span>
+              <span style="font-size: 13px; font-weight: 600; white-space: nowrap; color: oklch(0.720 0.010 232);">laps spare · RICH</span>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 16px 18px;">
+              <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Last lap</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 34px; font-weight: 600; line-height: 1; white-space: nowrap;">1:32.4</span>
+              <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; white-space: nowrap; color: oklch(0.820 0.150 80);">+0.557 to best</span>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div style="flex: none; display: grid; grid-template-columns: 352px minmax(0, 1fr) 424px; gap: 12px; height: 106px;">
+
+        <section aria-label="Boost and S mode" style="display: flex; align-items: stretch; gap: 10px; padding: 12px 14px; background: oklch(0.195 0.008 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 10px;">
+          <div style="flex: 1; display: grid; place-items: center; background: oklch(0.790 0.147 223 / 0.12); border: 1px solid oklch(0.790 0.147 223); border-radius: 6px;">
+            <span style="font-size: 26px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.05; white-space: nowrap; color: oklch(0.790 0.147 223);">BOOST</span>
+          </div>
+          <div style="flex: 1; display: grid; place-items: center; background: oklch(0.125 0.005 235); border: 1px solid oklch(0.655 0.261 357); border-radius: 6px;">
+            <span style="font-size: 26px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.05; white-space: nowrap; color: oklch(0.655 0.261 357);">S MODE</span>
+          </div>
+        </section>
+
+        <section aria-label="Battery" style="display: flex; align-items: center; justify-content: center; gap: 26px; padding: 0 20px; background: oklch(0.195 0.008 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 10px;">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Battery</span>
+            <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 56px; font-weight: 600; line-height: 1; white-space: nowrap;">54<small style="font-size: 22px; color: oklch(0.720 0.010 232);">%</small></span>
+          </div>
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px;">
+            <div style="position: relative; height: 38px; background: oklch(0.125 0.005 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 5px; overflow: hidden;">
+              <div style="position: absolute; left: 0; top: 0; bottom: 0; width: 54%; background: oklch(0.790 0.147 223);"></div>
+              <div aria-hidden="true" style="position: absolute; left: 25%; top: 0; bottom: 0; width: 1px; background: oklch(0.155 0.006 235 / 0.22);"></div>
+              <div aria-hidden="true" style="position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: oklch(0.155 0.006 235 / 0.22);"></div>
+              <div aria-hidden="true" style="position: absolute; left: 75%; top: 0; bottom: 0; width: 1px; background: oklch(0.300 0.012 235);"></div>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-family: 'Geist Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; white-space: nowrap; color: oklch(0.635 0.013 234);">
+              <span>0</span><span>25</span><span>50</span><span>75</span><span>100</span>
+            </div>
+          </div>
+        </section>
+
+        <section aria-label="Deployment" style="display: flex; align-items: center; justify-content: center; gap: 16px; padding: 0 20px; background: oklch(0.195 0.008 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 10px;">
+          <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: oklch(0.635 0.013 234);">Deploy</span>
+          <div role="group" aria-label="ERS deploy mode" style="flex: 1; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; background: oklch(0.125 0.005 235); border: 1px solid oklch(0.300 0.012 235); border-radius: 6px; padding: 2px;">
+            <span style="text-align: center; padding: 11px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; white-space: nowrap; color: oklch(0.635 0.013 234);">NONE</span>
+            <span style="text-align: center; padding: 11px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; white-space: nowrap; background: oklch(0.235 0.010 235); color: oklch(0.965 0.004 230);">MEDIUM</span>
+            <span style="text-align: center; padding: 11px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; white-space: nowrap; color: oklch(0.635 0.013 234);">HOTLAP</span>
+            <span style="text-align: center; padding: 11px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; white-space: nowrap; color: oklch(0.635 0.013 234);">OVERTAKE</span>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;session&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Practice&quot;,&quot;Qualifying&quot;,&quot;Race&quot;,&quot;Time trial&quot;],&quot;default&quot;:&quot;Race&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Session&quot;},&quot;event&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;None&quot;,&quot;Yellow flag&quot;,&quot;Safety car&quot;,&quot;Virtual safety car&quot;,&quot;Red flag&quot;,&quot;Rain incoming&quot;,&quot;Penalty&quot;],&quot;default&quot;:&quot;Yellow flag&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Event banner&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const ev = this.props.event ?? "Yellow flag";
+    const session = this.props.session ?? "Race";
+    return {
+      sessionLabel: session,
+      evPenalty: ev === "Penalty",
+      evYellow: ev === "Yellow flag",
+      evSafety: ev === "Safety car",
+      evVsc: ev === "Virtual safety car",
+      evRed: ev === "Red flag",
+      evRain: ev === "Rain incoming",
+    };
+  }
+}
+</script>
+</body>
+</html>

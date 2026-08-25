@@ -133,10 +133,18 @@ export interface RaceSnapshot {
   format?: number;
   /** The game's per-session UID; a change means a new session began. */
   sessionUid?: string;
+  /** The session clock (header sessionTime) of the latest packet, seconds. */
+  sessionTime?: number;
   trackName: string | null;
   session: {
     totalLaps: number;
     sessionType?: number;
+    /** 0 clear … 3 light rain, 4 heavy rain, 5 storm. */
+    weather?: number;
+    trackTemperature?: number;
+    airTemperature?: number;
+    /** 0 none, 1 full safety car, 2 virtual, 3 formation lap. */
+    safetyCarStatus?: number;
     /** Seconds remaining / total in a timed session (practice, qualifying). */
     sessionTimeLeft?: number;
     sessionDuration?: number;

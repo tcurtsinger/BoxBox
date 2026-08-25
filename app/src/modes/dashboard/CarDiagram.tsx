@@ -1,7 +1,8 @@
 /**
- * Top-down car silhouette with bodywork damage painted onto the part it belongs
- * to. Severity is carried by fill + stroke class AND a % readout next to the
- * part (never hue alone). Undamaged parts sit quiet in the graphite inset.
+ * Top-down F1 silhouette, nose up, with bodywork damage painted onto the part
+ * it belongs to (fill + stroke via severity class). No text inside the SVG —
+ * the numbers live in the damage strip below the car. Geometry follows the
+ * design handoff's table (viewBox 300×520).
  */
 import type { DamageCell } from "./dashboardData";
 
@@ -10,61 +11,72 @@ interface Props {
   damage: Record<string, DamageCell | undefined>;
 }
 
-/** Where each part's % label sits (kept outside the silhouette for legibility). */
-const LABEL_POS: Record<string, { x: number; y: number; anchor: "start" | "end" }> = {
-  frontWing: { x: 214, y: 26, anchor: "end" },
-  sidepod: { x: 6, y: 218, anchor: "start" },
-  floor: { x: 214, y: 258, anchor: "end" },
-  diffuser: { x: 6, y: 380, anchor: "start" },
-  rearWing: { x: 214, y: 428, anchor: "end" },
-};
-
 export function CarDiagram({ damage }: Props) {
   const cls = (key: string) => `car-part is-${damage[key]?.state ?? "ok"}`;
-  const labels = Object.entries(LABEL_POS)
-    .map(([key, pos]) => ({ key, pos, cell: damage[key] }))
-    .filter((l) => (l.cell?.pct ?? 0) > 0);
+  const worst = Object.values(damage)
+    .filter((c): c is DamageCell => !!c && c.pct > 0)
+    .sort((a, b) => b.pct - a.pct)[0];
+  const label = worst
+    ? `Car damage diagram — worst: ${worst.label} ${worst.pct} percent`
+    : "Car damage diagram — no damage";
 
   return (
-    <svg
-      className="car-diagram"
-      viewBox="0 0 220 440"
-      role="img"
-      aria-label="Car damage diagram"
-    >
-      {/* Wheels first — recognition only; wear lives in the corner cells. */}
-      <g className="car-wheel" aria-hidden="true">
-        <rect x="14" y="52" width="30" height="52" rx="7" />
-        <rect x="176" y="52" width="30" height="52" rx="7" />
-        <rect x="10" y="300" width="34" height="58" rx="7" />
-        <rect x="176" y="300" width="34" height="58" rx="7" />
+    <svg className="car-diagram" viewBox="0 0 300 520" role="img" aria-label={label}>
+      {/* Suspension arms — recognition only. */}
+      <g className="car-susp" aria-hidden="true">
+        <path d="M120 160 66 122" />
+        <path d="M120 186 66 160" />
+        <path d="M180 160 234 122" />
+        <path d="M180 186 234 160" />
+        <path d="M120 330 68 384" />
+        <path d="M120 356 68 420" />
+        <path d="M180 330 232 384" />
+        <path d="M180 356 232 420" />
       </g>
 
-      {/* Floor spans the reference plane under everything. */}
-      <rect className={cls("floor")} x="52" y="120" width="116" height="230" rx="10" />
-      {/* Sidepods (left + right read as one part — one damage value). */}
-      <path className={cls("sidepod")} d="M52 170 h24 v120 h-24 a10 10 0 0 1 -10-10 v-100 a10 10 0 0 1 10-10 z" />
-      <path className={cls("sidepod")} d="M168 170 h-24 v120 h24 a10 10 0 0 0 10-10 v-100 a10 10 0 0 0 -10-10 z" />
-      {/* Nose + monocoque, neutral (engine/gearbox report via chips). */}
-      <path className="car-body" d="M101 36 h18 l10 96 h-38 z" />
-      <rect className="car-body" x="86" y="132" width="48" height="180" rx="12" />
-      <circle className="car-cockpit" cx="110" cy="196" r="14" />
-      {/* Front wing, diffuser, rear wing. */}
-      <rect className={cls("frontWing")} x="22" y="8" width="176" height="24" rx="5" />
-      <rect className={cls("diffuser")} x="68" y="356" width="84" height="26" rx="5" />
-      <rect className={cls("rearWing")} x="42" y="408" width="136" height="22" rx="5" />
+      {/* Floor first — the reference plane under the bodywork. */}
+      <rect className={cls("floor")} x="84" y="246" width="132" height="166" rx="14" />
 
-      {labels.map(({ key, pos, cell }) => (
-        <text
-          key={key}
-          className={`car-part-pct is-${cell!.state}`}
-          x={pos.x}
-          y={pos.y}
-          textAnchor={pos.anchor}
-        >
-          {cell!.pct}%
-        </text>
-      ))}
+      {/* Wheels: rears wider and taller than fronts. */}
+      <g className="car-wheel" aria-hidden="true">
+        <rect x="20" y="98" width="46" height="82" rx="9" />
+        <rect x="234" y="98" width="46" height="82" rx="9" />
+        <rect x="14" y="356" width="54" height="94" rx="10" />
+        <rect x="232" y="356" width="54" height="94" rx="10" />
+      </g>
+
+      {/* Sidepods: one damage value, both sides. */}
+      <path
+        className={cls("sidepod")}
+        d="M120 252 v116 h-22 a14 14 0 0 1 -14 -14 v-88 a14 14 0 0 1 14 -14 z"
+      />
+      <path
+        className={cls("sidepod")}
+        d="M180 252 v116 h22 a14 14 0 0 0 14 -14 v-88 a14 14 0 0 0 -14 -14 z"
+      />
+
+      {/* Nose, monocoque, engine cover, cockpit, halo — neutral body. */}
+      <path className="car-body" d="M138 46 h24 l12 102 h-48 z" />
+      <rect className="car-body" x="120" y="142" width="60" height="172" rx="14" />
+      <path className="car-body" d="M126 300 h48 l-12 132 h-24 z" />
+      <ellipse className="car-cockpit" cx="150" cy="230" rx="17" ry="25" />
+      <path className="car-halo" d="M131 208 Q150 192 169 208" aria-hidden="true" />
+
+      {/* Front wing + endplates. */}
+      <g className={cls("frontWing")}>
+        <rect x="34" y="20" width="232" height="26" rx="5" />
+        <rect x="22" y="12" width="14" height="44" rx="4" />
+        <rect x="264" y="12" width="14" height="44" rx="4" />
+      </g>
+
+      {/* Diffuser, beam wing, rear wing + endplates. */}
+      <rect className={cls("diffuser")} x="106" y="422" width="88" height="30" rx="5" />
+      <rect className="car-body" x="96" y="452" width="108" height="10" rx="3" />
+      <g className={cls("rearWing")}>
+        <rect x="72" y="466" width="156" height="24" rx="5" />
+        <rect x="62" y="458" width="14" height="42" rx="4" />
+        <rect x="224" y="458" width="14" height="42" rx="4" />
+      </g>
     </svg>
   );
 }

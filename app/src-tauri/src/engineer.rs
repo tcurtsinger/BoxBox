@@ -22,6 +22,7 @@ const P_INFO: u8 = 1;
 // Tunable thresholds — kept in lockstep with callouts.ts.
 const FUEL_TIGHT_LAPS: f32 = 0.3;
 const FUEL_SHORT_LAPS: f32 = 0.0;
+const BATTERY_LEFT_ON_PCT: f32 = 30.0;
 const TYRE_OFF_PCT: f32 = 50.0;
 const DRS_RANGE_SEC: f32 = 1.0;
 const MIN_LAP_MS: u32 = 40_000;
@@ -92,6 +93,9 @@ pub struct PlayerFrame {
     pub best_lap_ms: u32,
     pub session_best_ms: u32,
     pub fuel_laps: f32,
+    /// Overtake deploy engaged (25: mode 3 selected; 26: override active).
+    pub boost_engaged: bool,
+    pub battery_pct: f32,
     pub tyre_wear: Vec<f32>,
     pub fia_flag: i8,
     pub interval_ahead: Option<f32>,
@@ -171,6 +175,8 @@ pub fn extract_player_frame(snap: &SessionSnapshot) -> Option<PlayerFrame> {
         best_lap_ms: d.best_lap_ms,
         session_best_ms: session_best,
         fuel_laps: d.fuel_remaining_laps,
+        boost_engaged: d.overtake_active || d.ers_deploy_mode == 3,
+        battery_pct: d.battery_pct,
         tyre_wear: d.tyre_wear.clone(),
         fia_flag: d.fia_flags,
         interval_ahead: interval,
@@ -202,6 +208,21 @@ fn fuel_tyres(prev: &PlayerFrame, next: &PlayerFrame, out: &mut Vec<Callout>) {
             P_STRATEGY,
             "Fuel's getting tight — save where you can.",
             "fuel-tight",
+        ));
+    }
+
+    // Overtake deploy left engaged while the battery bleeds down: fire once as
+    // it crosses the line, only if boost was ALREADY on (a deliberate late-race
+    // deploy at low charge isn't a mistake worth narrating).
+    if prev.boost_engaged
+        && next.boost_engaged
+        && crossed_below(prev.battery_pct, next.battery_pct, BATTERY_LEFT_ON_PCT)
+    {
+        out.push(Callout::new(
+            Category::FuelTyres,
+            P_STRATEGY,
+            "You've left overtake deployed — battery's draining fast.",
+            "battery-left-on",
         ));
     }
 
@@ -486,6 +507,8 @@ mod tests {
             best_lap_ms: 80_500,
             session_best_ms: 80_000,
             fuel_laps: 1.0,
+            boost_engaged: false,
+            battery_pct: 60.0,
             tyre_wear: vec![10.0, 10.0, 10.0, 10.0],
             fia_flag: 0,
             interval_ahead: Some(2.0),
@@ -540,6 +563,25 @@ mod tests {
         assert!(texts(frame(), n)
             .iter()
             .any(|t| t.contains("fastest lap of the session")));
+    }
+
+    #[test]
+    fn calls_out_a_battery_left_in_overtake() {
+        // Boost on both frames as the charge crosses the line → one callout.
+        let (mut p, mut n) = (frame(), frame());
+        p.boost_engaged = true;
+        p.battery_pct = 32.0;
+        n.boost_engaged = true;
+        n.battery_pct = 28.0;
+        assert!(texts(p, n).iter().any(|t| t.contains("left overtake")));
+
+        // Deploying INTO overtake at low charge is deliberate — stay quiet.
+        let (mut p2, mut n2) = (frame(), frame());
+        p2.boost_engaged = false;
+        p2.battery_pct = 32.0;
+        n2.boost_engaged = true;
+        n2.battery_pct = 28.0;
+        assert!(!texts(p2, n2).iter().any(|t| t.contains("left overtake")));
     }
 
     #[test]

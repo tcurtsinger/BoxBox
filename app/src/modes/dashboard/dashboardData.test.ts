@@ -1,15 +1,17 @@
 import { describe, it, expect } from "vitest";
 import {
-  advanceAlerts,
-  initialAlertState,
   toDashboardData,
+  toDamageStrip,
+  toTowerRows,
+  toWeatherPanel,
+  toStintPanel,
+  raceControlEvent,
+  fmtLapTime,
+  fmtDeltaToBest,
   wearState,
   tempState,
   damageState,
-  BOOST_LEFT_ON_MS,
-  DAMAGE_HOLD_MS,
-  type DashboardData,
-  type AlertEngineState,
+  batteryState,
 } from "./dashboardData";
 import type { RaceSnapshot, LiveDriver } from "../timing/liveGrid";
 
@@ -24,15 +26,15 @@ const driver = (over: Partial<LiveDriver> = {}): LiveDriver =>
     gridPosition: 1,
     lastLapMS: 90_000,
     bestLapMS: 89_000,
-    currentLapNum: 3,
+    currentLapNum: 20,
     deltaToLeaderMS: 0,
     deltaToCarAheadMS: 0,
     pitStatus: 0,
-    numPitStops: 0,
+    numPitStops: 1,
     penaltiesSec: 0,
-    tyreVisual: 16,
-    tyreAgeLaps: 4,
-    tyreWear: [12, 14, 9, 11],
+    tyreVisual: 17,
+    tyreAgeLaps: 8,
+    tyreWear: [12, 14, 9, 24],
     tyreSurfaceTemp: [92, 95, 88, 90],
     frontWingDamage: 0,
     rearWingDamage: 0,
@@ -55,46 +57,39 @@ const driver = (over: Partial<LiveDriver> = {}): LiveDriver =>
     telemetryPublic: true,
     showOnlineNames: false,
     liveryColours: [],
+    driverStatus: 4,
+    resultStatus: 2,
     ...over,
-  }) as LiveDriver;
+  }) as unknown as LiveDriver;
 
-const snap = (d: Partial<LiveDriver> = {}, format = 2026): RaceSnapshot =>
+const snap = (over: Partial<RaceSnapshot> = {}): RaceSnapshot =>
   ({
-    format,
+    format: 2026,
+    sessionUid: "u1",
+    sessionTime: 1000,
     trackName: "Suzuka",
-    session: { totalLaps: 53 },
+    session: { totalLaps: 53, sessionType: 1 },
     sessionCategory: "race",
     numActiveCars: 1,
     playerCarIndex: 0,
-    drivers: [driver(d)],
+    drivers: [driver()],
     finalClassification: null,
     qualiSegments: [],
     incidents: [],
+    ...over,
   }) as unknown as RaceSnapshot;
 
-const dash = (d: Partial<LiveDriver> = {}, format = 2026): DashboardData =>
-  toDashboardData(snap(d, format), 0)!;
-
-/** Run the engine through a sequence of frames, returning the last result. */
-function run(frames: [Partial<LiveDriver>, number][], format = 2026, inPits = false) {
-  let st: AlertEngineState = initialAlertState();
-  let alert = null;
-  for (const [d, t] of frames) {
-    const r = advanceAlerts(st, dash(d, format), inPits, t);
-    st = r.state;
-    alert = r.alert;
-  }
-  return { state: st, alert };
-}
-
 describe("severity helpers", () => {
-  it("steps wear at 60/80 and damage at 10/35", () => {
+  it("steps wear at 60/80, damage at 10/35, battery at 30/15", () => {
     expect(wearState(59)).toBe("ok");
     expect(wearState(60)).toBe("warn");
     expect(wearState(80)).toBe("bad");
     expect(damageState(9)).toBe("ok");
     expect(damageState(10)).toBe("warn");
     expect(damageState(35)).toBe("bad");
+    expect(batteryState(31)).toBe("ok");
+    expect(batteryState(30)).toBe("warn");
+    expect(batteryState(15)).toBe("bad");
   });
 
   it("reads temps against the working window, quiet on a zeroed feed", () => {
@@ -107,183 +102,230 @@ describe("severity helpers", () => {
 
 describe("toDashboardData", () => {
   it("maps corners front-first from the [RL,RR,FL,FR] wheel order", () => {
-    const d = dash({ tyreWear: [40, 41, 10, 11] });
+    const d = toDashboardData(snap(), 0)!;
     expect(d.corners.map((c) => c.pos)).toEqual(["FL", "FR", "RL", "RR"]);
-    expect(d.corners[0].wear).toBe(10);
-    expect(d.corners[2].wear).toBe(40);
-  });
-
-  it("flags restricted telemetry instead of showing fake zeros", () => {
-    // Index 0 IS the player — restrict a different car to see the flag.
-    const s = snap();
-    s.drivers.push(driver({ index: 1, telemetryPublic: false }));
-    expect(toDashboardData(s, 1)!.restricted).toBe(true);
+    expect(d.corners[0].wear).toBe(9);
+    expect(d.corners[3].wear).toBe(14);
   });
 
   it("never restricts the player's own car (privacy hides it from others only)", () => {
-    expect(dash({ telemetryPublic: false }).restricted).toBe(false);
+    const s = snap({ drivers: [driver({ telemetryPublic: false })] });
+    expect(toDashboardData(s, 0)!.restricted).toBe(false);
   });
 
-  it("returns null for an unknown car index", () => {
-    expect(toDashboardData(snap(), 7)).toBeNull();
-  });
-});
-
-describe("press-the-button prompts", () => {
-  it("26: overtake in range fires the boost prompt, cleared once pressed", () => {
-    const { alert } = run([[{ overtakeAvailable: true }, 0]]);
-    expect(alert).toMatchObject({ kind: "press", tone: "boost" });
-    const pressed = run([[{ overtakeAvailable: true, overtakeActive: true }, 0]]);
-    expect(pressed.alert).toBeNull();
-  });
-
-  it("26: S-mode availability prompts when boost isn't the story", () => {
-    const { alert } = run([[{ activeAeroAvailable: true }, 0]]);
-    expect(alert).toMatchObject({ kind: "press", tone: "smode" });
-    expect(alert!.text).toContain("S MODE");
-  });
-
-  it("25: DRS allowed and closed prompts; open goes quiet", () => {
-    const { alert } = run([[{ drsAllowed: true }, 0]], 2025);
-    expect(alert).toMatchObject({ kind: "press", tone: "drs" });
-    expect(run([[{ drsAllowed: true, drs: true }, 0]], 2025).alert).toBeNull();
-  });
-
-  it("prompts stay silent in the pit lane", () => {
-    const { alert } = run([[{ overtakeAvailable: true }, 0]], 2026, true);
-    expect(alert).toBeNull();
+  it("flags a restricted non-player car", () => {
+    const s = snap({
+      drivers: [driver(), driver({ index: 1, position: 2, telemetryPublic: false })],
+    });
+    expect(toDashboardData(s, 1)!.restricted).toBe(true);
   });
 });
 
-describe("battery left on", () => {
-  it("25: deploy parked in OVERTAKE past the grace window shouts", () => {
-    const frames: [Partial<LiveDriver>, number][] = [
-      [{ ersDeployMode: 3 }, 0],
-      [{ ersDeployMode: 3 }, BOOST_LEFT_ON_MS - 1],
-      [{ ersDeployMode: 3 }, BOOST_LEFT_ON_MS],
-    ];
-    expect(run(frames.slice(0, 2), 2025).alert).toBeNull();
-    expect(run(frames, 2025).alert).toMatchObject({ kind: "battery-on" });
+describe("toDamageStrip", () => {
+  it("shows worst-first damaged parts plus a CLEAN summary, never five zeroes", () => {
+    const d = toDashboardData(
+      snap({ drivers: [driver({ frontWingDamage: 12, gearboxDamage: 8, engineDamage: 4 })] }),
+      0,
+    )!;
+    const strip = toDamageStrip(d.damage);
+    expect(strip.map((c) => c.label)).toEqual(["FRONT WING", "GEARBOX", "ENGINE", "REST"]);
+    expect(strip[0].value).toBe("12%");
+    expect(strip[3]).toMatchObject({ value: "CLEAN", clean: true });
   });
 
-  it("dropping out of overtake resets the clock", () => {
-    const { alert } = run(
-      [
-        [{ ersDeployMode: 3 }, 0],
-        [{ ersDeployMode: 1 }, 3_000],
-        [{ ersDeployMode: 3 }, 4_000],
-        [{ ersDeployMode: 3 }, 4_000 + BOOST_LEFT_ON_MS - 1],
+  it("an undamaged car reads ALL CLEAN in one cell", () => {
+    const d = toDashboardData(snap(), 0)!;
+    const strip = toDamageStrip(d.damage);
+    expect(strip).toHaveLength(1);
+    expect(strip[0]).toMatchObject({ label: "ALL", value: "CLEAN" });
+  });
+});
+
+describe("raceControlEvent priority", () => {
+  it("red flag outranks safety car outranks yellow", () => {
+    const s = snap({
+      session: { totalLaps: 53, sessionType: 1, safetyCarStatus: 1 },
+      drivers: [driver({ fiaFlags: 4 })],
+    });
+    expect(raceControlEvent(s, 0)).toMatchObject({ text: "RED FLAG", tone: "danger" });
+    const sc = snap({
+      session: { totalLaps: 53, sessionType: 1, safetyCarStatus: 1 },
+      drivers: [driver({ fiaFlags: 3 })],
+    });
+    expect(raceControlEvent(sc, 0)!.text).toBe("SAFETY CAR");
+    const yellow = snap({ drivers: [driver({ fiaFlags: 3 })] });
+    expect(raceControlEvent(yellow, 0)).toMatchObject({ text: "YELLOW FLAG", tone: "flag" });
+  });
+
+  it("VSC reads as VIRTUAL SAFETY CAR", () => {
+    const s = snap({ session: { totalLaps: 53, sessionType: 1, safetyCarStatus: 2 } });
+    expect(raceControlEvent(s, 0)!.text).toBe("VIRTUAL SAFETY CAR");
+  });
+
+  it("a fresh player penalty shows with its type, then ages off the banner", () => {
+    const pen = {
+      id: "p1",
+      source: "auto",
+      sessionTime: 995,
+      lapNum: 20,
+      code: "PENA",
+      label: "Time penalty",
+      carIndices: [0],
+      detail: { vehicleIdx: 0, penaltyType: 4 },
+      status: "open",
+      note: "",
+      ruling: null,
+    };
+    const s = snap({ incidents: [pen] } as Partial<RaceSnapshot>);
+    expect(raceControlEvent(s, 0)).toMatchObject({ text: "PENALTY · TIME", tone: "caution" });
+    const old = snap({ incidents: [{ ...pen, sessionTime: 980 }] } as Partial<RaceSnapshot>);
+    expect(raceControlEvent(old, 0)).toBeNull();
+  });
+
+  it("rain incoming fires from this session's forecast within 20 minutes", () => {
+    const s = snap({
+      session: {
+        totalLaps: 53,
+        sessionType: 1,
+        weatherForecast: [
+          { sessionType: 1, timeOffsetMin: 10, weather: 4, rainPct: 70 },
+          { sessionType: 2, timeOffsetMin: 5, weather: 4, rainPct: 90 }, // other session
+        ],
+      },
+    });
+    expect(raceControlEvent(s, 0)).toMatchObject({ text: "RAIN INCOMING · 10 MIN", tone: "info" });
+  });
+
+  it("a quiet race shows no banner", () => {
+    expect(raceControlEvent(snap(), 0)).toBeNull();
+  });
+});
+
+describe("toTowerRows", () => {
+  const grid = () =>
+    snap({
+      playerCarIndex: 1,
+      drivers: [
+        driver({ index: 0, name: "PIASTRI", position: 1, currentLapNum: 23 }),
+        driver({
+          index: 1,
+          name: "VERSTAPPEN",
+          position: 2,
+          currentLapNum: 23,
+          deltaToLeaderMS: 1200,
+          tyreWear: [34, 38, 52, 61],
+        }),
+        driver({
+          index: 2,
+          name: "SARGEANT",
+          position: 3,
+          currentLapNum: 22,
+          deltaToLeaderMS: 90_000,
+        }),
+        driver({ index: 3, name: "GHOST", position: 4, telemetryPublic: false }),
       ],
-      2025,
-    );
-    expect(alert).toBeNull();
+    });
+
+  it("leader reads LDR, gaps are cumulative, lapped cars read laps down", () => {
+    const rows = toTowerRows(grid());
+    expect(rows[0].gap).toBe("LDR");
+    expect(rows[1].gap).toBe("+1.2");
+    expect(rows[2].gap).toBe("+1 L");
+  });
+
+  it("marks the player and carries worst-corner wear", () => {
+    const rows = toTowerRows(grid());
+    expect(rows[1].isPlayer).toBe(true);
+    expect(rows[1].worstWear).toBe(61);
+    expect(rows[1].wearState).toBe("warn");
+  });
+
+  it("restricted cars show no wear instead of fake zeros", () => {
+    const rows = toTowerRows(grid());
+    expect(rows[3].worstWear).toBeNull();
   });
 });
 
-describe("fresh damage", () => {
-  it("first sight latches silently; a later jump shouts and holds", () => {
-    const frames: [Partial<LiveDriver>, number][] = [
-      [{ frontWingDamage: 20 }, 0], // joined mid-session — no shout
-      [{ frontWingDamage: 55 }, 1_000],
-    ];
-    const { alert } = run(frames);
-    expect(alert).toMatchObject({ kind: "damage", tone: "danger" });
-    expect(alert!.text).toContain("FRONT WING");
-    expect(alert!.text).toContain("55");
+describe("toWeatherPanel", () => {
+  it("builds five slots, carrying the last known chance through gaps", () => {
+    const s = snap({
+      session: {
+        totalLaps: 53,
+        sessionType: 1,
+        weather: 0,
+        trackTemperature: 41,
+        airTemperature: 24,
+        weatherForecast: [
+          { sessionType: 1, timeOffsetMin: 0, weather: 0, rainPct: 5 },
+          { sessionType: 1, timeOffsetMin: 10, weather: 1, rainPct: 14 },
+          { sessionType: 1, timeOffsetMin: 20, weather: 3, rainPct: 32 },
+        ],
+      },
+    });
+    const w = toWeatherPanel(s);
+    expect(w.slots.map((x) => x.label)).toEqual(["NOW", "+5M", "+10M", "+15M", "+20M"]);
+    expect(w.slots.map((x) => x.rainPct)).toEqual([5, 5, 14, 14, 32]);
+    expect(w.slots[0].glyph).toBe("sunny");
+    expect(w.slots[2].glyph).toBe("cloudy");
+    expect(w.slots[4].glyph).toBe("rainLight");
+    expect(w.trackTemp).toBe(41);
+    expect(w.airTemp).toBe(24);
   });
 
-  it("expires after the hold window and re-arms from the new base", () => {
-    const held = run([
-      [{}, 0],
-      [{ floorDamage: 30 }, 1_000],
-      [{ floorDamage: 30 }, 1_000 + DAMAGE_HOLD_MS - 1],
-    ]);
-    expect(held.alert).toMatchObject({ kind: "damage" });
-    const expired = run([
-      [{}, 0],
-      [{ floorDamage: 30 }, 1_000],
-      [{ floorDamage: 30 }, 1_000 + DAMAGE_HOLD_MS],
-    ]);
-    expect(expired.alert).toBeNull();
-  });
-
-  it("waits for the first Car Damage packet before latching baselines", () => {
-    // A car is visible (participants/lap data) frames before its damage packet
-    // arrives; its zeroed defaults must not become the baseline.
-    const { alert } = run([
-      [{ tyreWear: [] }, 0], // no Car Damage packet yet
-      [{ frontWingDamage: 40 }, 1_000], // first real packet: pre-existing damage
-    ]);
-    expect(alert).toBeNull();
-    // A real jump AFTER the first damage packet still shouts.
-    const hit = run([
-      [{ tyreWear: [] }, 0],
-      [{ frontWingDamage: 40 }, 1_000],
-      [{ frontWingDamage: 60 }, 2_000],
-    ]);
-    expect(hit.alert).toMatchObject({ kind: "damage" });
-  });
-
-  it("a held damage alert goes quiet if the car becomes restricted", () => {
-    const s = snap();
-    s.drivers.push(driver({ index: 1 }));
-    let st = initialAlertState();
-    let r = advanceAlerts(st, toDashboardData(s, 1)!, false, 0);
-    s.drivers[1] = driver({ index: 1, frontWingDamage: 40 });
-    r = advanceAlerts(r.state, toDashboardData(s, 1)!, false, 1_000);
-    expect(r.alert).toMatchObject({ kind: "damage" });
-    s.drivers[1] = driver({ index: 1, frontWingDamage: 40, telemetryPublic: false });
-    r = advanceAlerts(r.state, toDashboardData(s, 1)!, false, 2_000);
-    expect(r.alert).toBeNull();
-  });
-
-  it("a pit-lane repair lowers the baseline instead of shouting", () => {
-    const { alert } = run([
-      [{ frontWingDamage: 40 }, 0],
-      [{ frontWingDamage: 0 }, 1_000], // new wing
-      [{ frontWingDamage: 5 }, 2_000], // normal scuff, under the jump threshold
-    ]);
-    expect(alert).toBeNull();
+  it("no forecast still yields five quiet slots and null temps", () => {
+    const w = toWeatherPanel(snap());
+    expect(w.slots).toHaveLength(5);
+    expect(w.trackTemp).toBeNull();
   });
 });
 
-describe("battery critical", () => {
-  it("latches at 15% and releases above 20% (hysteresis)", () => {
-    expect(run([[{ batteryPct: 15 }, 0]]).alert).toMatchObject({ kind: "battery-low" });
-    const still = run([
-      [{ batteryPct: 15 }, 0],
-      [{ batteryPct: 18 }, 1_000], // between the thresholds — stays latched
-    ]);
-    expect(still.alert).toMatchObject({ kind: "battery-low" });
-    const cleared = run([
-      [{ batteryPct: 15 }, 0],
-      [{ batteryPct: 25 }, 1_000],
-    ]);
-    expect(cleared.alert).toBeNull();
+describe("toStintPanel", () => {
+  it("projects wear rate and cliff from the current stint", () => {
+    // Worst corner FR 61% over 9 laps → 6.8 %/lap; cliff ≈ lap 22 (20 + ⌊19/6.8⌋).
+    const s = snap({
+      drivers: [driver({ tyreWear: [34, 38, 52, 61], tyreAgeLaps: 9 })],
+    });
+    const p = toStintPanel(s, 0);
+    expect(p.wearRate).toBeCloseTo(6.78, 1);
+    expect(p.wearCorner).toBe("FR");
+    expect(p.cliffLap).toBe(22);
+    expect(p.wearRateState).toBe("warn");
+  });
+
+  it("uses the game's pit window for BOX IN when it sends one", () => {
+    const s = snap({
+      session: { totalLaps: 53, sessionType: 1, pitStopWindowIdealLap: 26, pitStopWindowLatestLap: 31 },
+    });
+    const p = toStintPanel(s, 0);
+    expect(p.windowLabel).toBe("26–31");
+    expect(p.boxInLaps).toBe(6); // lap 20 → ideal 26
+    expect(p.windowStartPct).toBeGreaterThan(0);
+  });
+
+  it("renders honest nulls with no stint data and no window", () => {
+    const s = snap({ drivers: [driver({ tyreWear: [], tyreAgeLaps: 0 })] });
+    const p = toStintPanel(s, 0);
+    expect(p.wearRate).toBeNull();
+    expect(p.cliffLap).toBeNull();
+    expect(p.boxInLaps).toBeNull();
+    expect(p.windowLabel).toBeNull();
+  });
+
+  it("a fresh stint (age 0) projects nothing rather than dividing by zero", () => {
+    const s = snap({ drivers: [driver({ tyreAgeLaps: 0 })] });
+    expect(toStintPanel(s, 0).wearRate).toBeNull();
   });
 });
 
-describe("priority", () => {
-  it("press-the-button outranks everything; damage outranks battery-low", () => {
-    const { alert } = run([
-      [{ batteryPct: 10 }, 0],
-      [{ batteryPct: 10, frontWingDamage: 40, overtakeAvailable: true }, 1_000],
-    ]);
-    expect(alert).toMatchObject({ kind: "press" });
-    const noPress = run([
-      [{ batteryPct: 10 }, 0],
-      [{ batteryPct: 10, frontWingDamage: 40 }, 1_000],
-    ]);
-    expect(noPress.alert).toMatchObject({ kind: "damage" });
+describe("formatting", () => {
+  it("fmtLapTime renders m:ss.t and dashes on empty", () => {
+    expect(fmtLapTime(92_431)).toBe("1:32.4");
+    expect(fmtLapTime(0)).toBe("—");
   });
 
-  it("restricted telemetry raises no alerts at all", () => {
-    // Restriction only applies to non-player cars, so watch car 1.
-    const s = snap();
-    s.drivers.push(
-      driver({ index: 1, telemetryPublic: false, batteryPct: 5, overtakeAvailable: true }),
-    );
-    const r = advanceAlerts(initialAlertState(), toDashboardData(s, 1)!, false, 0);
-    expect(r.alert).toBeNull();
+  it("fmtDeltaToBest names the gap or the match", () => {
+    expect(fmtDeltaToBest(92_431, 91_874)).toBe("+0.557 to best");
+    expect(fmtDeltaToBest(91_874, 91_874)).toBe("matched best");
+    expect(fmtDeltaToBest(0, 91_874)).toBeNull();
   });
 });

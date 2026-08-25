@@ -1,15 +1,14 @@
 /**
- * Pure derivation for the in-race Dashboard: turns one driver's raw snapshot
- * fields into glance-ready panel data, and runs the alert engine that decides
- * what (if anything) the big top band should be shouting.
+ * Pure derivation for the in-race Dashboard: one `RaceSnapshot` in, glance-ready
+ * panel data out. No state machines — every panel derives from the current poll.
  *
- * Game palette note: the eye-catching states reuse the official 2026 HUD
- * colours — OVERTAKE/boost cyan `#00CEFF`, S-mode magenta `#FF1493`, DRS
- * green — sampled from the game's own on-screen banners. Wear/damage/battery
- * severity uses the app's semantic data layer instead (green/amber/red),
+ * Game palette note: BOOST / S MODE wear the official 2026 HUD colours
+ * (`--hud-boost` cyan, `--hud-smode` magenta, sampled from the game's own
+ * banners). Wear/damage/battery severity uses the app's semantic data layer,
  * because those are BoxBox judgements, not game states.
  */
 import type { LiveDriver, RaceSnapshot } from "../timing/liveGrid";
+import { toDriverRows } from "../timing/liveGrid";
 
 /** Severity for a glance cell: `ok` is quiet, `warn` amber, `bad` red. */
 export type Severity = "ok" | "warn" | "bad";
@@ -31,15 +30,6 @@ export interface DamageCell {
   label: string;
   pct: number;
   state: Severity;
-}
-
-/** The press-button prompt and warning band. One at a time, priority-ordered. */
-export interface DashAlert {
-  kind: "press" | "battery-on" | "damage" | "battery-low";
-  /** The big line. */
-  text: string;
-  /** Which colour world the band uses (game colours for game states). */
-  tone: "boost" | "smode" | "drs" | "caution" | "danger";
 }
 
 export interface EnergyPanel {
@@ -68,13 +58,15 @@ export interface DashboardData {
   /** True once a Car Damage packet has been ingested for this car. Until then
    *  the damage fields are default zeroes, not real readings. */
   damageSeen: boolean;
-  /** 2026-format feed: show override/aero instead of the 25 deploy strip. */
+  /** 2026-format feed: show override/aero instead of the 25 DRS tile. */
   is26: boolean;
   corners: CornerCell[];
   damage: DamageCell[];
   compound: string;
   tyreAgeLaps: number;
   energy: EnergyPanel;
+  lastLapMS: number;
+  bestLapMS: number;
 }
 
 export const DEPLOY_MODES = ["NONE", "MEDIUM", "HOTLAP", "OVERTAKE"] as const;
@@ -103,6 +95,8 @@ export function damageState(pct: number): Severity {
   return pct >= 35 ? "bad" : pct >= 10 ? "warn" : "ok";
 }
 
+/** Battery severity. The 15/30 steps double as the display hysteresis: the
+ *  value colours, it doesn't shout, so a threshold flicker costs nothing. */
 export function batteryState(pct: number): Severity {
   return pct <= 15 ? "bad" : pct <= 30 ? "warn" : "ok";
 }
@@ -187,115 +181,340 @@ export function toDashboardData(snap: RaceSnapshot, driverIndex: number): Dashbo
       fuelLaps: d.fuelRemainingLaps,
       fuelState: d.fuelRemainingLaps < 0 ? "bad" : d.fuelRemainingLaps < 0.5 ? "warn" : "ok",
     },
+    lastLapMS: d.lastLapMS,
+    bestLapMS: d.bestLapMS,
   };
 }
 
-// --- Alert engine -------------------------------------------------------------
+// --- Damage strip (four cells; the strip never shows five zeroes) -------------
 
-/** Boost engaged this long with the prompt gone = probably left on. */
-export const BOOST_LEFT_ON_MS = 6_000;
-/** A fresh damage hit stays on the band this long. */
-export const DAMAGE_HOLD_MS = 10_000;
-/** One component jumping this much in one look = a hit worth shouting. */
-export const DAMAGE_JUMP_PCT = 10;
-/** Battery latches critical at/below LOW, releases above CLEAR (hysteresis). */
-export const BATTERY_LOW_PCT = 15;
-export const BATTERY_CLEAR_PCT = 20;
-
-export interface AlertEngineState {
-  /** When the boost (overtake) engagement started, or null when off. */
-  boostOnSinceMs: number | null;
-  /** Latched per-part damage baseline; a jump is measured against this. */
-  damageBase: Record<string, number>;
-  damageHold: { text: string; untilMs: number } | null;
-  batteryLowLatched: boolean;
+export interface DamageStripCell {
+  label: string;
+  /** Formatted value ("12%" or "CLEAN"). */
+  value: string;
+  state: Severity;
+  /** The CLEAN summary cell renders green, not neutral. */
+  clean: boolean;
 }
 
-export function initialAlertState(): AlertEngineState {
-  return { boostOnSinceMs: null, damageBase: {}, damageHold: null, batteryLowLatched: false };
+/** The damaged parts (worst first, up to three) plus a summary cell for the
+ *  rest, so the strip reads "what's broken" rather than a row of zeroes. */
+export function toDamageStrip(damage: DamageCell[]): DamageStripCell[] {
+  const hit = damage.filter((c) => c.pct > 0).sort((a, b) => b.pct - a.pct);
+  const shown = hit.slice(0, 3);
+  const cells: DamageStripCell[] = shown.map((c) => ({
+    label: c.label.toUpperCase(),
+    value: `${c.pct}%`,
+    state: c.state,
+    clean: false,
+  }));
+  const restLabel = shown.length === 0 ? "ALL" : "REST";
+  cells.push({ label: restLabel, value: "CLEAN", state: "ok", clean: true });
+  return cells;
 }
+
+// --- Event banner (race-control events only, one at a time) -------------------
+
+export type EventTone = "flag" | "caution" | "danger" | "info";
+
+export interface DashEvent {
+  text: string;
+  tone: EventTone;
+}
+
+/** How long a penalty stays on the banner after the stewards call it. */
+export const PENALTY_BANNER_SECS = 10;
+/** A forecast slot at/above this rain chance within 20 minutes = rain incoming. */
+export const RAIN_INCOMING_PCT = 60;
+
+const PENALTY_DETAIL: Record<number, string> = {
+  0: "DRIVE-THROUGH",
+  1: "STOP & GO",
+  2: "GRID",
+  4: "TIME",
+  6: "DSQ",
+};
 
 /**
- * Advance the alert engine one frame and return what the band should show.
- * Mutates nothing: returns the next state alongside the (possibly null) alert.
- * `inPits` silences the press prompts — no button is worth pressing in the lane.
+ * The one loud element on the screen, priority-ordered:
+ * red flag → safety car → VSC → yellow flag → penalty → rain incoming.
+ * Null means the banner sits quiet. Flags read from the WATCHED car's FIA flag;
+ * penalties only ever concern the player.
  */
-export function advanceAlerts(
-  st: AlertEngineState,
-  data: DashboardData,
-  inPits: boolean,
-  nowMs: number,
-): { state: AlertEngineState; alert: DashAlert | null } {
-  const e = data.energy;
-  const next: AlertEngineState = {
-    boostOnSinceMs: st.boostOnSinceMs,
-    damageBase: { ...st.damageBase },
-    damageHold: st.damageHold,
-    batteryLowLatched: st.batteryLowLatched,
+export function raceControlEvent(snap: RaceSnapshot, driverIndex: number): DashEvent | null {
+  const d = snap.drivers.find((x) => x.index === driverIndex);
+  if (d?.fiaFlags === 4) return { text: "RED FLAG", tone: "danger" };
+  const clock = snap.sessionTime ?? 0;
+  const redFlagged = snap.incidents.some(
+    (i) => i.code === "RDFL" && clock - i.sessionTime < 30,
+  );
+  if (redFlagged) return { text: "RED FLAG", tone: "danger" };
+
+  const sc = snap.session?.safetyCarStatus ?? 0;
+  if (sc === 1) return { text: "SAFETY CAR", tone: "caution" };
+  if (sc === 2) return { text: "VIRTUAL SAFETY CAR", tone: "caution" };
+
+  if (d?.fiaFlags === 3) return { text: "YELLOW FLAG", tone: "flag" };
+
+  // A penalty the stewards just handed the player (PENA events carry the
+  // penalised car in detail.vehicleIdx).
+  const pen = snap.incidents.find(
+    (i) =>
+      i.code === "PENA" &&
+      i.detail["vehicleIdx"] === snap.playerCarIndex &&
+      driverIndex === snap.playerCarIndex &&
+      clock - i.sessionTime < PENALTY_BANNER_SECS,
+  );
+  if (pen) {
+    const detail = PENALTY_DETAIL[pen.detail["penaltyType"] ?? -1];
+    return { text: detail ? `PENALTY · ${detail}` : "PENALTY", tone: "caution" };
+  }
+
+  // Rain incoming: the nearest forecast slot for THIS session crossing the
+  // threshold within the panel's 20-minute horizon.
+  const rain = (snap.session?.weatherForecast ?? []).find(
+    (w) =>
+      w.sessionType === (snap.session?.sessionType ?? -1) &&
+      w.timeOffsetMin > 0 &&
+      w.timeOffsetMin <= 20 &&
+      w.rainPct >= RAIN_INCOMING_PCT,
+  );
+  if (rain) return { text: `RAIN INCOMING · ${rain.timeOffsetMin} MIN`, tone: "info" };
+
+  return null;
+}
+
+// --- Timing tower --------------------------------------------------------------
+
+/** Compound letter → colour class (motorsport convention; matches Timing). */
+export type CompoundTone = "soft" | "medium" | "hard" | "inter" | "wet" | "unknown";
+
+const COMPOUND_TONE: Record<string, CompoundTone> = {
+  S: "soft",
+  SS: "soft",
+  M: "medium",
+  H: "hard",
+  I: "inter",
+  W: "wet",
+  D: "hard",
+};
+
+export interface TowerRow {
+  index: number;
+  pos: number;
+  name: string;
+  isPlayer: boolean;
+  compound: CompoundTone;
+  compoundLabel: string;
+  ageLaps: number;
+  /** Worst-corner wear % (what forces the stop), or null when unavailable
+   *  (restricted telemetry). */
+  worstWear: number | null;
+  wearState: Severity;
+  /** "LDR", "+12.9", "+1 L" — cumulative to the leader, one reference frame. */
+  gap: string;
+  out: boolean;
+}
+
+export function toTowerRows(snap: RaceSnapshot): TowerRow[] {
+  const rows = toDriverRows(snap);
+  const byIndex = new Map(snap.drivers.map((d) => [d.index, d]));
+  const leader = rows[0] != null ? byIndex.get(rows[0].index) : undefined;
+  return rows.map((r) => {
+    const d = byIndex.get(r.index);
+    const wear =
+      r.restricted || !d || d.tyreWear.length === 0
+        ? null
+        : Math.round(Math.max(...d.tyreWear, 0));
+    // Lapped cars show laps down, never a fabricated time gap. The feed's
+    // leader delta caps out for lapped cars, so lap count is the honest read.
+    const lapsDown =
+      leader && d && leader.currentLapNum - d.currentLapNum > 0 && r.pos > 1
+        ? leader.currentLapNum - d.currentLapNum
+        : 0;
+    const gap =
+      r.pos === 1
+        ? "LDR"
+        : lapsDown > 0
+          ? `+${lapsDown} L`
+          : r.gapSec != null
+            ? `+${r.gapSec.toFixed(1)}`
+            : "—";
+    return {
+      index: r.index,
+      pos: r.pos,
+      name: r.name,
+      isPlayer: r.index === snap.playerCarIndex,
+      compound: COMPOUND_TONE[r.tyre] ?? "unknown",
+      compoundLabel: r.tyre,
+      ageLaps: r.age,
+      worstWear: wear,
+      wearState: wear == null ? "ok" : wearState(wear),
+      gap,
+      out: r.status != null,
+    };
+  });
+}
+
+// --- Weather -------------------------------------------------------------------
+
+export type WeatherGlyph = "sunny" | "cloudy" | "rainLight" | "rainHeavy" | "storm";
+
+export interface WeatherSlot {
+  label: string;
+  rainPct: number;
+  glyph: WeatherGlyph;
+}
+
+export interface WeatherPanel {
+  slots: WeatherSlot[];
+  trackTemp: number | null;
+  airTemp: number | null;
+}
+
+function glyphFor(weather: number, rainPct: number): WeatherGlyph {
+  // The packet's own weather code wins when it's already raining.
+  if (weather >= 5) return "storm";
+  if (weather === 4) return "rainHeavy";
+  if (weather === 3) return "rainLight";
+  if (rainPct > 80) return "storm";
+  if (rainPct > 50) return "rainHeavy";
+  if (rainPct > 25) return "rainLight";
+  if (rainPct >= 10) return "cloudy";
+  return weather >= 1 ? "cloudy" : "sunny";
+}
+
+/** Five slots: NOW plus the nearest forecast samples for this session at
+ *  +5/+10/+15/+20 minutes. Missing samples repeat the last known chance. */
+export function toWeatherPanel(snap: RaceSnapshot): WeatherPanel {
+  const s = snap.session;
+  const forecast = (s?.weatherForecast ?? []).filter(
+    (w) => w.sessionType === (s?.sessionType ?? -1),
+  );
+  const now = forecast.find((w) => w.timeOffsetMin === 0);
+  let lastPct = now?.rainPct ?? 0;
+  let lastWeather = now?.weather ?? s?.weather ?? 0;
+  const slots: WeatherSlot[] = [5, 10, 15, 20].reduce<WeatherSlot[]>(
+    (acc, mins) => {
+      const sample = forecast.find((w) => w.timeOffsetMin === mins);
+      if (sample) {
+        lastPct = sample.rainPct;
+        lastWeather = sample.weather;
+      }
+      acc.push({
+        label: `+${mins}M`,
+        rainPct: lastPct,
+        glyph: glyphFor(lastWeather, lastPct),
+      });
+      return acc;
+    },
+    [
+      {
+        label: "NOW",
+        rainPct: now?.rainPct ?? 0,
+        glyph: glyphFor(s?.weather ?? 0, now?.rainPct ?? 0),
+      },
+    ],
+  );
+  return {
+    slots,
+    trackTemp: s?.trackTemperature ?? null,
+    airTemp: s?.airTemperature ?? null,
   };
+}
 
-  // Boost engagement clock (26: override active; 25: deploy left in OVERTAKE).
-  const boostEngaged = data.is26 ? e.boostActive : e.deployMode === 3;
-  next.boostOnSinceMs = boostEngaged ? (st.boostOnSinceMs ?? nowMs) : null;
+// --- Stint projections ----------------------------------------------------------
 
-  // Damage baselines: first sight latches silently (joining mid-session isn't
-  // a hit); repairs lower the base so the next real hit measures from there.
-  // Nothing latches before the first Car Damage packet — a car can appear
-  // frames earlier with default zeroes, and latching those would report its
-  // pre-existing damage as a fresh collision.
-  let freshHit: { label: string; pct: number; delta: number } | null = null;
-  for (const part of data.damageSeen ? data.damage : []) {
-    const base = next.damageBase[part.key];
-    if (base === undefined || part.pct < base) {
-      next.damageBase[part.key] = part.pct;
-      continue;
-    }
-    const delta = part.pct - base;
-    if (delta >= DAMAGE_JUMP_PCT) {
-      if (!freshHit || delta > freshHit.delta) freshHit = { label: part.label, pct: part.pct, delta };
-      next.damageBase[part.key] = part.pct;
-    }
-  }
-  if (freshHit) {
-    next.damageHold = {
-      text: `${freshHit.label.toUpperCase()} DAMAGE — ${freshHit.pct}%`,
-      untilMs: nowMs + DAMAGE_HOLD_MS,
-    };
-  } else if (next.damageHold && nowMs >= next.damageHold.untilMs) {
-    next.damageHold = null;
-  }
+/** Worst-corner wear at which the tyre is treated as gone. */
+export const CLIFF_WEAR_PCT = 80;
 
-  // Battery latch with hysteresis so the band doesn't flicker at the threshold.
-  next.batteryLowLatched = next.batteryLowLatched
-    ? e.batteryPct <= BATTERY_CLEAR_PCT
-    : e.batteryPct <= BATTERY_LOW_PCT;
+export interface StintPanel {
+  /** Laps until the recommended stop, or null (no basis to project). */
+  boxInLaps: number | null;
+  /** "26–31" from the game's pit window, or null. */
+  windowLabel: string | null;
+  /** Lap-axis geometry, percentages 0–100 across [axisFrom, axisTo]. */
+  axisFrom: number;
+  axisTo: number;
+  windowStartPct: number | null;
+  windowWidthPct: number | null;
+  cliffLap: number | null;
+  cliffPct: number | null;
+  /** Wear rate on the worst corner. */
+  wearRate: number | null;
+  wearCorner: string | null;
+  wearRateState: Severity;
+  stopsDone: number;
+}
 
-  // Priority: press-the-button > battery left on > fresh damage > battery low.
-  let alert: DashAlert | null = null;
-  if (!inPits && !data.restricted) {
-    if (data.is26 && e.boostAvailable && !e.boostActive) {
-      alert = { kind: "press", text: "OVERTAKE — PRESS THE BUTTON", tone: "boost" };
-    } else if (data.is26 && e.aeroAvailable && !e.aeroStraight) {
-      alert = { kind: "press", text: "S MODE — PRESS THE BUTTON", tone: "smode" };
-    } else if (!data.is26 && e.drsAllowed && !e.drsOpen) {
-      alert = { kind: "press", text: "DRS — PRESS THE BUTTON", tone: "drs" };
-    }
-  }
-  if (!alert && !data.restricted && boostEngaged && next.boostOnSinceMs !== null) {
-    if (nowMs - next.boostOnSinceMs >= BOOST_LEFT_ON_MS) {
-      alert = { kind: "battery-on", text: "BATTERY LEFT ON — OVERTAKE ENGAGED", tone: "caution" };
+const CORNER_NAMES = ["RL", "RR", "FL", "FR"];
+
+/**
+ * Project the stint from what the feed actually gives us: average wear per lap
+ * over the current stint (wear ÷ tyre age) extrapolated to the cliff, plus the
+ * game's own pit-window recommendation when it sends one. Null fields render as
+ * em-dashes — no invented numbers.
+ */
+export function toStintPanel(snap: RaceSnapshot, driverIndex: number): StintPanel {
+  const d = snap.drivers.find((x) => x.index === driverIndex);
+  const lap = d?.currentLapNum ?? 0;
+  const total = snap.session?.totalLaps ?? 0;
+
+  let wearRate: number | null = null;
+  let wearCorner: string | null = null;
+  let cliffLap: number | null = null;
+  if (d && d.tyreWear.length > 0 && d.tyreAgeLaps > 0) {
+    const worst = Math.max(...d.tyreWear);
+    const wIdx = d.tyreWear.indexOf(worst);
+    wearRate = worst / d.tyreAgeLaps;
+    wearCorner = CORNER_NAMES[wIdx] ?? null;
+    if (wearRate > 0.1) {
+      cliffLap = lap + Math.max(0, Math.floor((CLIFF_WEAR_PCT - worst) / wearRate));
     }
   }
-  if (!alert && !data.restricted && next.damageHold) {
-    alert = { kind: "damage", text: next.damageHold.text, tone: "danger" };
-  }
-  if (!alert && !data.restricted && next.batteryLowLatched) {
-    alert = {
-      kind: "battery-low",
-      text: `BATTERY CRITICAL — ${Math.round(e.batteryPct)}%`,
-      tone: "danger",
-    };
-  }
 
-  return { state: next, alert };
+  const idealLap = snap.session?.pitStopWindowIdealLap ?? null;
+  const latestLap = snap.session?.pitStopWindowLatestLap ?? null;
+  const window = idealLap != null && latestLap != null && latestLap > idealLap;
+  const windowLabel = window ? `${idealLap}–${latestLap}` : null;
+
+  // BOX IN: the game's ideal lap when it gives one, else the projected cliff.
+  const target = window && idealLap! >= lap ? idealLap! : cliffLap;
+  const boxInLaps = target != null && target >= lap ? target - lap : null;
+
+  // Lap axis: from now to just past the furthest marker (min 10 laps of road).
+  const furthest = Math.max(lap + 10, latestLap ?? 0, cliffLap ?? 0);
+  const axisTo = total > 0 ? Math.min(furthest + 1, total) : furthest + 1;
+  const span = Math.max(axisTo - lap, 1);
+  const pct = (l: number) => Math.min(100, Math.max(0, ((l - lap) / span) * 100));
+
+  return {
+    boxInLaps,
+    windowLabel,
+    axisFrom: lap,
+    axisTo,
+    windowStartPct: window ? pct(idealLap!) : null,
+    windowWidthPct: window ? pct(latestLap!) - pct(idealLap!) : null,
+    cliffLap,
+    cliffPct: cliffLap != null && cliffLap <= axisTo ? pct(cliffLap) : null,
+    wearRate,
+    wearCorner,
+    wearRateState: wearRate != null && wearRate >= 4 ? "warn" : "ok",
+    stopsDone: d?.numPitStops ?? 0,
+  };
+}
+
+// --- Formatting helpers ---------------------------------------------------------
+
+export function fmtLapTime(ms: number): string {
+  if (ms <= 0) return "—";
+  const m = Math.floor(ms / 60000);
+  const s = (ms % 60000) / 1000;
+  return `${m}:${s.toFixed(1).padStart(4, "0")}`;
+}
+
+export function fmtDeltaToBest(lastMs: number, bestMs: number): string | null {
+  if (lastMs <= 0 || bestMs <= 0) return null;
+  const delta = (lastMs - bestMs) / 1000;
+  return delta <= 0 ? "matched best" : `+${delta.toFixed(3)} to best`;
 }

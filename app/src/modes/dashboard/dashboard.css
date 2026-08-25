@@ -1,178 +1,352 @@
-/* Dashboard — the second-monitor pit board. Pit-board scale: everything sized to
-   be read in a sub-second glance from racing distance. Colour states only, no
-   motion (the voice engineer does the yelling); game states use the official
-   2026 HUD colours (--hud-boost / --hud-smode), BoxBox judgements use the
-   semantic data layer. */
+/* Dashboard — the second-monitor pit board. Read-only, glance-optimised at ~3ft.
+   Nine panels on one shared column grid. Colour states only, no motion beyond
+   the two state transitions; game states use the official 2026 HUD colours
+   (--hud-boost / --hud-smode), BoxBox judgements use the semantic data layer. */
 
 .dash {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
+  display: grid;
+  grid-template-columns: 352px minmax(0, 1fr) 424px;
+  grid-template-rows: 52px minmax(0, 1fr) 106px;
+  gap: 12px;
   height: 100%;
   min-height: 0;
-  padding: var(--space-lg) var(--space-xl) var(--space-xl);
+  padding: 14px 18px 18px;
 }
 
-/* ---- Header: track + car picker ---------------------------------------- */
-.dash-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-lg);
-}
-
-.dash-track {
-  font-size: var(--text-headline);
-  font-weight: 600;
-  letter-spacing: var(--tracking-tight);
-}
-
-.dash-pick {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-.dash-pick-label {
-  font-size: var(--text-label);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--faint);
-}
-
-.dash-pick select {
-  background: var(--inset);
-  color: var(--ink);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 6px 10px;
-  font: inherit;
-  font-size: var(--text-body);
-}
-
-.dash-pick select:focus-visible {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--focus-ring);
-}
-
-/* ---- Alert band --------------------------------------------------------- */
-.dash-alert {
-  display: grid;
-  place-items: center;
-  min-height: 92px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-card);
-  background: var(--inset);
-  font-size: 2.5rem;
-  font-weight: 700;
-  letter-spacing: var(--tracking-tight);
-  text-align: center;
-  padding: var(--space-sm) var(--space-lg);
-  transition:
-    background-color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-
-.dash-alert-clear {
-  font-size: var(--text-label);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--faint);
-}
-
-.dash-alert.is-boost {
-  background: var(--hud-boost-tint);
-  border-color: var(--hud-boost);
-  color: var(--hud-boost);
-}
-
-.dash-alert.is-smode {
-  background: var(--hud-smode-tint);
-  border-color: var(--hud-smode);
-  color: var(--hud-smode);
-}
-
-.dash-alert.is-drs {
-  background: var(--data-good-tint);
-  border-color: var(--data-good);
-  color: var(--data-good);
-}
-
-.dash-alert.is-caution {
-  background: var(--data-caution-tint);
-  border-color: var(--data-caution);
-  color: var(--data-caution);
-}
-
-.dash-alert.is-danger {
-  background: var(--data-danger-tint);
-  border-color: var(--data-danger);
-  color: var(--data-danger);
-}
-
-/* ---- Two-column body ----------------------------------------------------- */
-.dash-cols {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  gap: var(--space-lg);
-  flex: 1;
-  min-height: 0;
-}
-
-.dash-carzone,
-.dash-energy {
+/* Uniform panel treatment (Flat-By-Default: no shadows at rest). */
+.dash > section {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  padding: var(--space-lg) 18px;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
+  min-width: 0;
+}
+
+.dash-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+  white-space: nowrap;
 }
 
 .dash-empty {
-  flex: 1;
+  grid-column: 1 / -1;
+  grid-row: 2 / -1;
   display: grid;
   place-items: center;
   text-align: center;
   color: var(--muted);
   font-size: var(--text-title);
   line-height: 1.5;
-  max-width: 52ch;
-  margin: 0 auto;
   padding: var(--space-2xl);
 }
 
-/* ---- Car zone: corners frame the silhouette ------------------------------ */
-.dash-cargrid {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-areas:
-    "fl car fr"
-    "rl car rr";
-  grid-template-columns: 1fr auto 1fr;
-  grid-template-rows: 1fr 1fr;
+/* ---- Row 1: session strip ------------------------------------------------ */
+.dash-session {
+  display: flex;
   align-items: center;
-  justify-items: center;
-  column-gap: var(--space-md);
+  justify-content: center;
+  gap: 14px;
+  padding: 0 16px;
 }
 
-.dash-cargrid > .dash-corner:nth-of-type(1) { grid-area: fl; }
-.dash-cargrid > .dash-corner:nth-of-type(2) { grid-area: fr; }
-.dash-cargrid > .dash-corner:nth-of-type(3) { grid-area: rl; }
-.dash-cargrid > .dash-corner:nth-of-type(4) { grid-area: rr; }
+.dash-session-track {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.dash-session-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 10px 0;
+  background: var(--border-soft);
+}
+
+.dash-session-type {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.dash-session-lap {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.dash-session-lapval {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.dash-session-lapval small {
+  font-size: 14px;
+  color: var(--faint);
+}
+
+/* ---- Row 1: event banner ------------------------------------------------- */
+.dash-banner {
+  grid-column: 2 / -1;
+  display: grid;
+  place-items: center;
+  padding: 0 22px;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.dash-banner.is-live {
+  border-width: 2px;
+}
+
+.dash-banner.is-flag {
+  background: oklch(0.86 0.155 98 / 0.14);
+  border-color: var(--data-flag);
+  color: var(--data-flag);
+}
+
+.dash-banner.is-caution {
+  background: oklch(0.82 0.15 80 / 0.14);
+  border-color: var(--data-caution);
+  color: var(--data-caution);
+}
+
+.dash-banner.is-danger {
+  background: oklch(0.64 0.205 27 / 0.16);
+  border-color: var(--data-danger);
+  color: var(--data-danger);
+}
+
+.dash-banner.is-info {
+  background: oklch(0.7 0.135 248 / 0.14);
+  border-color: var(--data-info);
+  color: var(--data-info);
+}
+
+/* ---- Row 2: timing tower ------------------------------------------------- */
+.dash-tower {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 0 8px;
+}
+
+.dash-tbody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.dash-trow {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 34px 40px 58px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  height: 31px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.dash-tbody .dash-trow:last-child {
+  border-bottom: none;
+}
+
+.dash-thead {
+  height: auto;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.dash-thead .dash-ttyre {
+  text-align: center;
+}
+
+.dash-thead .dash-twear,
+.dash-thead .dash-tgap {
+  text-align: right;
+}
+
+.dash-tpos {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.dash-tname {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-ttyre {
+  display: flex;
+  justify-content: center;
+}
+
+.dash-compound {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid var(--faint);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--faint);
+}
+
+.dash-compound.is-soft {
+  border-color: var(--data-danger);
+  color: var(--data-danger);
+  background: var(--data-danger-tint);
+}
+
+.dash-compound.is-medium {
+  border-color: var(--data-caution);
+  color: var(--data-caution);
+  background: var(--data-caution-tint);
+}
+
+.dash-compound.is-hard {
+  border-color: var(--ink);
+  color: var(--ink);
+  background: oklch(0.965 0.004 230 / 0.1);
+}
+
+.dash-compound.is-inter {
+  border-color: var(--data-good);
+  color: var(--data-good);
+  background: var(--data-good-tint);
+}
+
+.dash-compound.is-wet {
+  border-color: var(--data-info);
+  color: var(--data-info);
+  background: var(--data-info-tint);
+}
+
+.dash-twear {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--muted);
+}
+
+.dash-twear.is-warn {
+  color: var(--data-caution);
+}
+
+.dash-twear.is-bad {
+  color: var(--data-danger);
+}
+
+.dash-tgap {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--muted);
+}
+
+/* Player row: tonal step + teal number, never an accent stripe. */
+.dash-trow.is-player {
+  background: var(--surface-raised);
+}
+
+.dash-trow.is-player .dash-tpos,
+.dash-trow.is-player .dash-tname {
+  color: var(--primary);
+}
+
+.dash-trow.is-player .dash-tgap {
+  color: var(--ink);
+}
+
+.dash-trow.is-out {
+  opacity: 0.45;
+}
+
+/* ---- Row 2: tyres & damage ----------------------------------------------- */
+.dash-carzone {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 14px;
+}
+
+.dash-carhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.dash-carhead-tyre {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.dash-carstage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
 
 .car-diagram {
-  grid-area: car;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   height: 100%;
-  max-height: 420px;
   width: auto;
+}
+
+.car-susp path {
+  stroke: var(--border);
+  stroke-width: 2;
+  stroke-linecap: round;
+  fill: none;
 }
 
 .car-wheel rect {
@@ -193,216 +367,592 @@
   stroke-width: 1.5;
 }
 
-.car-part {
-  fill: var(--inset);
+.car-halo {
+  fill: none;
   stroke: var(--border);
-  stroke-width: 1.5;
-  transition: fill var(--dur-fast) var(--ease-out), stroke var(--dur-fast) var(--ease-out);
+  stroke-width: 3;
+  stroke-linecap: round;
 }
 
-.car-part.is-warn {
+.car-part,
+g.car-part rect {
+  fill: var(--inset);
+  stroke: var(--border);
+  stroke-width: 2;
+  transition:
+    fill var(--dur-fast) var(--ease-out),
+    stroke var(--dur-fast) var(--ease-out);
+}
+
+.car-part.is-warn,
+g.car-part.is-warn rect {
   fill: var(--data-caution-tint);
   stroke: var(--data-caution);
 }
 
-.car-part.is-bad {
+.car-part.is-bad,
+g.car-part.is-bad rect {
   fill: var(--data-danger-tint);
   stroke: var(--data-danger);
 }
 
-.car-part-pct {
-  font-family: var(--font-mono);
-  font-size: 15px;
-  font-weight: 600;
-  fill: var(--muted);
-}
-
-.car-part-pct.is-warn { fill: var(--data-caution); }
-.car-part-pct.is-bad { fill: var(--data-danger); }
-
-/* Corner cell: wear big, temp under it, label on top. */
+/* Corner readouts sit beside their own wheel. */
 .dash-corner {
+  position: absolute;
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: 2px;
-  min-width: 88px;
+}
+
+.dash-corner.is-left {
+  left: 4%;
+  align-items: flex-start;
+}
+
+.dash-corner.is-right {
+  right: 4%;
+  align-items: flex-end;
+}
+
+.dash-corner.is-front {
+  top: 8%;
+}
+
+.dash-corner.is-rear {
+  bottom: 6%;
 }
 
 .dash-corner-pos {
-  font-size: var(--text-label);
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   color: var(--faint);
 }
 
 .dash-corner-wear {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 2.25rem;
+  font-size: 46px;
   font-weight: 600;
-  line-height: 1.05;
+  line-height: 1;
   color: var(--ink);
 }
 
 .dash-corner-wear small {
-  font-size: 1.1rem;
+  font-size: 20px;
   color: var(--muted);
 }
 
-.dash-corner.is-warn .dash-corner-wear { color: var(--data-caution); }
-.dash-corner.is-bad .dash-corner-wear { color: var(--data-danger); }
+.dash-corner-wear.is-warn {
+  color: var(--data-caution);
+}
+
+.dash-corner-wear.is-bad {
+  color: var(--data-danger);
+}
+
+.dash-corner-bar {
+  width: 84px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--inset);
+  overflow: hidden;
+}
+
+.dash-corner-fill {
+  display: block;
+  height: 100%;
+  background: var(--muted);
+  transition: width var(--dur-base) var(--ease-out);
+}
+
+.dash-corner-fill.is-warn {
+  background: var(--data-caution);
+}
+
+.dash-corner-fill.is-bad {
+  background: var(--data-danger);
+}
 
 .dash-corner-temp {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: var(--text-data);
+  font-size: 15px;
   font-weight: 600;
   color: var(--muted);
+  white-space: nowrap;
 }
 
-.dash-corner-temp.is-cold { color: var(--data-info); }
-.dash-corner-temp.is-hot { color: var(--data-caution); }
-
-.dash-carfoot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  justify-content: center;
+.dash-corner-temp.is-cold {
+  color: var(--data-info);
 }
 
-/* ---- Chips (compound, engine/gearbox, boost states) ---------------------- */
-.dash-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--inset);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 4px 10px;
-  font-size: var(--text-label);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  transition:
-    background-color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-
-.dash-chip.is-warn {
-  background: var(--data-caution-tint);
-  border-color: var(--data-caution);
+.dash-corner-temp.is-hot {
   color: var(--data-caution);
 }
 
-.dash-chip.is-bad {
+/* Damage strip: one inset well, equal cells, never five zeroes. */
+.dash-dmgstrip {
+  display: flex;
+  align-items: stretch;
+  height: 38px;
+  background: var(--inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.dash-dmgcell {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-right: 1px solid var(--border-soft);
+  min-width: 0;
+}
+
+.dash-dmgcell:last-child {
+  border-right: none;
+}
+
+.dash-dmgcell-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-dmgcell-val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.dash-dmgcell.is-warn {
+  background: var(--data-caution-tint);
+}
+
+.dash-dmgcell.is-warn .dash-dmgcell-label,
+.dash-dmgcell.is-warn .dash-dmgcell-val {
+  color: var(--data-caution);
+}
+
+.dash-dmgcell.is-bad {
   background: var(--data-danger-tint);
-  border-color: var(--data-danger);
+}
+
+.dash-dmgcell.is-bad .dash-dmgcell-label,
+.dash-dmgcell.is-bad .dash-dmgcell-val {
   color: var(--data-danger);
 }
 
-.dash-chip-big {
-  font-size: var(--text-title);
-  padding: 10px 16px;
-  border-radius: var(--radius-md);
-}
-
-.dash-chip.is-boost-avail {
-  background: var(--hud-boost-tint);
-  border-color: var(--hud-boost);
-  color: var(--hud-boost);
-}
-
-.dash-chip.is-boost-active {
-  background: var(--hud-boost);
-  border-color: var(--hud-boost);
-  color: var(--on-primary);
-}
-
-.dash-chip.is-smode {
-  background: var(--hud-smode-tint);
-  border-color: var(--hud-smode);
-  color: var(--hud-smode);
-}
-
-.dash-chip.is-drs-avail {
-  background: var(--data-good-tint);
-  border-color: var(--data-good);
+.dash-dmgcell.is-clean .dash-dmgcell-val {
   color: var(--data-good);
 }
 
-.dash-chip.is-drs-open {
-  background: var(--data-good);
-  border-color: var(--data-good);
-  color: var(--on-primary);
-}
-
-/* ---- Energy zone --------------------------------------------------------- */
-.dash-block {
+/* ---- Row 2: weather & stint ---------------------------------------------- */
+.dash-side {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  justify-content: space-between;
+  padding: 12px 0 14px;
+  overflow: hidden;
 }
 
-.dash-label {
-  font-size: var(--text-label);
+.dash-weather {
+  padding: 0 18px 16px;
+}
+
+.dash-wslots {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
+.dash-wslot {
+  width: 68px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: var(--ink);
+}
+
+.dash-wslot-time {
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--faint);
 }
 
-.dash-batt-row {
+.dash-wslot-rain {
   display: flex;
   align-items: center;
-  gap: var(--space-lg);
-}
-
-.dash-batt-num {
+  gap: 3px;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 3.25rem;
+  font-size: 13px;
   font-weight: 600;
-  line-height: 1;
-  color: var(--ink);
-  min-width: 3.2ch;
-}
-
-.dash-batt-num small {
-  font-size: 1.4rem;
   color: var(--muted);
 }
 
-.dash-batt-num.is-warn { color: var(--data-caution); }
-.dash-batt-num.is-bad { color: var(--data-danger); }
+.dash-drop {
+  width: 11px;
+  height: 11px;
+  fill: var(--data-info);
+}
 
-.dash-batt-track {
-  flex: 1;
-  height: 22px;
+.dash-temps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--border-soft);
+}
+
+.dash-temp {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 16px 18px;
+}
+
+.dash-temp + .dash-temp {
+  border-left: 1px solid var(--border-soft);
+}
+
+.dash-temp-val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.dash-temp-val small {
+  font-size: 17px;
+  color: var(--muted);
+}
+
+.dash-temp.is-air .dash-temp-val {
+  color: var(--muted);
+}
+
+.dash-stint {
+  padding: 16px 18px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.dash-stint-top {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.dash-boxin {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 64px;
+  font-weight: 600;
+  line-height: 0.92;
+  letter-spacing: -0.02em;
+  color: var(--primary);
+}
+
+.dash-boxin small {
+  font-size: 22px;
+  letter-spacing: var(--tracking-label);
+  color: var(--muted);
+}
+
+.dash-window {
+  text-align: right;
+}
+
+.dash-window-val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.dash-lapbar {
+  position: relative;
+  height: 24px;
   background: var(--inset);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
+.dash-lapbar-window {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: oklch(0.8 0.115 192 / 0.2);
+}
+
+.dash-lapbar-cliff {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--data-caution);
+}
+
+.dash-lapbar-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--ink);
+}
+
+.dash-lapbar-caps {
+  position: relative;
+  height: 18px;
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dash-cap-now {
+  position: absolute;
+  left: 0;
+  color: var(--faint);
+}
+
+/* Anchored on its marker's x — position IS the lap number. */
+.dash-cap-cliff {
+  position: absolute;
+  transform: translateX(-50%);
+  color: var(--data-caution);
+}
+
+.dash-cap-end {
+  position: absolute;
+  right: 0;
+  color: var(--faint);
+}
+
+.dash-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--border-soft);
+}
+
+.dash-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 12px 18px;
+}
+
+.dash-stat + .dash-stat {
+  border-left: 1px solid var(--border-soft);
+}
+
+.dash-stat-val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.dash-stat-cap {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.dash-stat-val.is-warn,
+.dash-stat-cap.is-warn {
+  color: var(--data-caution);
+}
+
+.dash-stat-val.is-bad,
+.dash-stat-cap.is-bad {
+  color: var(--data-danger);
+}
+
+/* ---- Row 3: boost / s-mode tiles ------------------------------------------ */
+.dash-tiles {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.dash-tile {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-md);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.dash-tile.is-boost {
+  border: 1px solid var(--hud-boost);
+  background: var(--inset);
+  color: var(--hud-boost);
+}
+
+.dash-tile.is-boost.is-avail {
+  background: var(--hud-boost-tint);
+}
+
+.dash-tile.is-boost.is-active {
+  background: var(--hud-boost);
+  color: var(--on-primary);
+}
+
+.dash-tile.is-smode {
+  border: 1px solid var(--hud-smode);
+  background: var(--inset);
+  color: var(--hud-smode);
+}
+
+.dash-tile.is-smode.is-active {
+  background: var(--hud-smode-tint);
+}
+
+.dash-tile.is-drs {
+  border: 1px solid var(--data-good);
+  background: var(--inset);
+  color: var(--data-good);
+}
+
+.dash-tile.is-drs.is-avail {
+  background: var(--data-good-tint);
+}
+
+.dash-tile.is-drs.is-active {
+  background: var(--data-good);
+  color: var(--on-primary);
+}
+
+/* ---- Row 3: battery register ---------------------------------------------- */
+.dash-battery {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  padding: 0 20px;
+}
+
+.dash-batt-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dash-batt-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 56px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.dash-batt-num small {
+  font-size: 22px;
+  color: var(--muted);
+}
+
+.dash-batt-num.is-warn {
+  color: var(--data-caution);
+}
+
+.dash-batt-num.is-bad {
+  color: var(--data-danger);
+}
+
+.dash-batt-scale {
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-batt-track {
+  position: relative;
+  height: 38px;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
 .dash-batt-fill {
-  height: 100%;
+  position: absolute;
+  inset: 0 auto 0 0;
   background: var(--hud-boost);
   transition: width var(--dur-base) var(--ease-out);
 }
 
-.dash-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
+/* Scale ticks: low alpha under the fill so they scribe the scale without
+   reading as breaks in the bar. */
+.dash-batt-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
 }
 
-/* ---- ERS deploy strip (25-style modes; 26 keeps them too) ---------------- */
+.dash-batt-tick.is-under {
+  background: oklch(0.155 0.006 235 / 0.22);
+}
+
+.dash-batt-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  color: var(--faint);
+}
+
+/* ---- Row 3: deploy --------------------------------------------------------- */
+.dash-deploy-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 0 20px;
+}
+
 .dash-deploy {
+  flex: 1;
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
@@ -415,12 +965,13 @@
 
 .dash-deploy-seg {
   text-align: center;
-  padding: 8px 4px;
+  padding: 11px 6px;
   border-radius: var(--radius-sm);
-  font-size: var(--text-label);
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: var(--tracking-label);
+  letter-spacing: 0.04em;
   color: var(--faint);
+  white-space: nowrap;
   transition:
     background-color var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
@@ -437,41 +988,73 @@
   color: var(--on-primary);
 }
 
-/* ---- Fuel ----------------------------------------------------------------- */
-.dash-fuel {
-  flex-direction: row;
-  gap: var(--space-2xl);
-  margin-top: auto;
-  padding-top: var(--space-lg);
-  border-top: 1px solid var(--border-soft);
-}
-
-.dash-fuel > div {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-.dash-fuel-val {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: 1.375rem;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.dash-fuel-val.is-warn { color: var(--data-caution); }
-.dash-fuel-val.is-bad { color: var(--data-danger); }
-
-/* ---- Narrow fallback (small window, not a small device) ------------------- */
-@media (max-width: 1080px) {
-  .dash-cols {
-    grid-template-columns: 1fr;
-    overflow-y: auto;
+/* ---- Compact step (windowed use below the 1600×1000 design canvas): shrink
+   the corner readouts and the silhouette so they keep their ~30px clearance. */
+@media (max-width: 1440px) {
+  .car-diagram {
+    height: 84%;
+    max-height: 340px;
   }
 
-  .dash-alert {
-    font-size: 1.75rem;
-    min-height: 72px;
+  .dash-corner-wear {
+    font-size: 32px;
+  }
+
+  .dash-corner-wear small {
+    font-size: 15px;
+  }
+
+  .dash-corner-bar {
+    width: 64px;
+  }
+
+  .dash-corner-temp {
+    font-size: 13px;
+  }
+
+  .dash-boxin {
+    font-size: 48px;
+  }
+
+  .dash-batt-num {
+    font-size: 44px;
+  }
+
+  .dash-banner {
+    font-size: 24px;
+  }
+
+  .dash-tile {
+    font-size: 20px;
+  }
+}
+
+/* ---- Narrow fallback (small window, not a small device). Below this the
+   middle column starves (the rail alone can eat 200px), so stack instead. */
+@media (max-width: 1320px) {
+  .dash {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    overflow-y: auto;
+    height: auto;
+  }
+
+  .dash-banner {
+    grid-column: 1;
+    min-height: 52px;
+  }
+
+  .dash-tower {
+    max-height: 380px;
+  }
+
+  .dash-carstage {
+    min-height: 420px;
+  }
+
+  .dash-empty {
+    grid-column: 1;
+    grid-row: auto;
+    min-height: 300px;
   }
 }

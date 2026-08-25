@@ -1,35 +1,91 @@
 /**
- * The in-race glance dashboard: a second-monitor pit board for the driver. One
- * screen, no scrolling, readable in under a second from racing distance — big
- * alert band on top, tyres + damage on the car, energy on the right.
+ * The in-race Dashboard: a read-only second-monitor pit board for a driver
+ * mid-lap, at ~3ft. Nine panels on one shared column grid — session strip and
+ * event banner up top, timing tower / car / weather-stint in the middle, and
+ * the boost-battery-deploy register along the bottom. No clicks, no hovers:
+ * the user is driving.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, type ComponentType } from "react";
 import { useShell } from "../../shell/shell-context";
 import { NoFeed } from "../../shell/NoFeed";
 import { StandbyBanner } from "../../shell/StandbyBanner";
 import { useDashboardSnapshot } from "./useDashboardSnapshot";
 import {
-  advanceAlerts,
-  initialAlertState,
   toDashboardData,
+  toDamageStrip,
+  toTowerRows,
+  toWeatherPanel,
+  toStintPanel,
+  raceControlEvent,
+  fmtLapTime,
+  fmtDeltaToBest,
   DEPLOY_MODES,
   type CornerCell,
-  type DashAlert,
+  type TowerRow,
+  type WeatherGlyph,
 } from "./dashboardData";
 import { CarDiagram } from "./CarDiagram";
+import {
+  WeatherSunnyIcon,
+  WeatherCloudyDayIcon,
+  WeatherRainLightIcon,
+  WeatherRainHeavyIcon,
+  WeatherThunderstormIcon,
+} from "./weatherIcons";
 import "./dashboard.css";
 
-function Corner({ c }: { c: CornerCell }) {
+const SESSION_LABEL: Record<string, string> = {
+  race: "Race",
+  qualifying: "Qualifying",
+  practice: "Practice",
+  timeTrial: "Time trial",
+};
+
+const GLYPHS: Record<WeatherGlyph, ComponentType<{ size?: number }>> = {
+  sunny: WeatherSunnyIcon,
+  cloudy: WeatherCloudyDayIcon,
+  rainLight: WeatherRainLightIcon,
+  rainHeavy: WeatherRainHeavyIcon,
+  storm: WeatherThunderstormIcon,
+};
+
+function Corner({ c, side, end }: { c: CornerCell; side: "left" | "right"; end: "front" | "rear" }) {
   return (
-    <div className={`dash-corner is-${c.wearState}`}>
+    <div className={`dash-corner is-${side} is-${end}`}>
       <span className="dash-corner-pos">{c.pos}</span>
-      <span className="dash-corner-wear">
+      <span className={`dash-corner-wear is-${c.wearState}`}>
         {c.wear}
         <small>%</small>
       </span>
-      <span className={`dash-corner-temp is-${c.tempState}`}>
-        {c.temp > 0 ? `${c.temp}°C` : "—"}
+      <span className="dash-corner-bar" aria-hidden="true">
+        <span className={`dash-corner-fill is-${c.wearState}`} style={{ width: `${c.wear}%` }} />
       </span>
+      <span className={`dash-corner-temp is-${c.tempState}`}>
+        {c.temp > 0 ? `${c.temp}°C${c.tempState === "hot" ? " HOT" : ""}` : "—"}
+      </span>
+    </div>
+  );
+}
+
+function TowerRowView({ r }: { r: TowerRow }) {
+  return (
+    <div className={`dash-trow${r.isPlayer ? " is-player" : ""}${r.out ? " is-out" : ""}`}>
+      <span className="dash-tpos">{r.pos}</span>
+      <span className="dash-tname" title={r.name}>
+        {r.name}
+      </span>
+      <span className="dash-ttyre">
+        <span
+          className={`dash-compound is-${r.compound}`}
+          title={`${r.compoundLabel} compound, ${r.ageLaps} laps`}
+        >
+          {r.ageLaps}
+        </span>
+      </span>
+      <span className={`dash-twear is-${r.wearState}`}>
+        {r.worstWear != null ? `${r.worstWear}%` : "—"}
+      </span>
+      <span className="dash-tgap">{r.gap}</span>
     </div>
   );
 }
@@ -39,47 +95,45 @@ export function DashboardView() {
   const hasFeed = feed.state === "live" || feed.state === "standby";
   const snap = useDashboardSnapshot(feed.sample === true);
 
-  // Default to the player's car; fall back to the leader when spectating.
-  const [selected, setSelected] = useState<number | null>(null);
+  // Read-only screen: always the player's car; the leader when spectating.
   const drivers = useMemo(
     () => (snap?.drivers ?? []).filter((d) => d.position > 0).sort((a, b) => a.position - b.position),
     [snap],
   );
   const playerIndex = snap != null && snap.playerCarIndex !== 255 ? snap.playerCarIndex : null;
-  const effective =
-    selected != null && drivers.some((d) => d.index === selected)
-      ? selected
-      : (playerIndex ?? drivers[0]?.index ?? null);
+  const watched = playerIndex ?? drivers[0]?.index ?? null;
 
   const data = useMemo(
-    () => (snap != null && effective != null ? toDashboardData(snap, effective) : null),
-    [snap, effective],
+    () => (snap != null && watched != null ? toDashboardData(snap, watched) : null),
+    [snap, watched],
   );
-  const inPits = useMemo(
-    () => (snap?.drivers ?? []).some((d) => d.index === effective && d.pitStatus > 0),
-    [snap, effective],
+  const event = useMemo(
+    () => (snap != null && watched != null ? raceControlEvent(snap, watched) : null),
+    [snap, watched],
   );
+  const tower = useMemo(() => (snap != null ? toTowerRows(snap) : []), [snap]);
 
-  // The alert engine carries per-part damage baselines and the boost clock, so
-  // it lives across polls in a ref and resets when the watched car changes —
-  // or when the session does: a new session reuses car indices, and comparing
-  // its fresh damage against last session's baselines would shout on lap one.
-  const sessionUid = snap?.sessionUid;
-  const engine = useRef(initialAlertState());
-  const [alert, setAlert] = useState<DashAlert | null>(null);
+  // When the window is shorter than the 22-row design height the tower scrolls;
+  // this is a no-touch screen, so keep the player's row in view automatically.
+  const towerBodyRef = useRef<HTMLDivElement | null>(null);
+  const playerPos = tower.find((r) => r.isPlayer)?.pos ?? null;
   useEffect(() => {
-    engine.current = initialAlertState();
-    setAlert(null);
-  }, [effective, sessionUid]);
-  useEffect(() => {
-    if (!data) {
-      setAlert(null);
-      return;
+    const body = towerBodyRef.current;
+    if (body == null || playerPos == null) return;
+    if (body.scrollHeight <= body.clientHeight) return;
+    const row = body.querySelector<HTMLElement>(".dash-trow.is-player");
+    if (row) {
+      body.scrollTop = Math.max(
+        0,
+        row.offsetTop - body.clientHeight / 2 + row.clientHeight / 2,
+      );
     }
-    const r = advanceAlerts(engine.current, data, inPits, Date.now());
-    engine.current = r.state;
-    setAlert(r.alert);
-  }, [data, inPits]);
+  }, [playerPos]);
+  const weather = useMemo(() => (snap != null ? toWeatherPanel(snap) : null), [snap]);
+  const stint = useMemo(
+    () => (snap != null && watched != null ? toStintPanel(snap, watched) : null),
+    [snap, watched],
+  );
 
   if (!hasFeed) {
     return (
@@ -96,160 +150,284 @@ export function DashboardView() {
     );
   }
 
+  const watchedDriver = snap?.drivers.find((d) => d.index === watched);
+  const lap = watchedDriver?.currentLapNum ?? 0;
+  const totalLaps = snap?.session?.totalLaps ?? 0;
   const e = data?.energy;
-  const damageByKey = Object.fromEntries((data?.damage ?? []).map((d) => [d.key, d]));
-  const chipDamage = (data?.damage ?? []).filter(
-    (d) => d.key === "engine" || d.key === "gearbox",
-  );
+  const damageByKey = Object.fromEntries((data?.damage ?? []).map((c) => [c.key, c]));
+  const strip = toDamageStrip(data?.damage ?? []);
+  const lastDelta = data ? fmtDeltaToBest(data.lastLapMS, data.bestLapMS) : null;
 
   return (
     <div className="rc-content">
       {feed.state === "standby" && <StandbyBanner />}
-      <section className="dash" aria-label="Race dashboard">
-        <header className="dash-bar">
-          <span className="dash-track">{snap?.trackName ?? "—"}</span>
-          <label className="dash-pick">
-            <span className="dash-pick-label">Car</span>
-            <select
-              value={effective ?? ""}
-              onChange={(ev) => setSelected(Number(ev.target.value))}
-              disabled={drivers.length === 0}
-            >
-              {drivers.map((d) => (
-                <option key={d.index} value={d.index}>
-                  {`P${d.position} · ${d.nameOverride ?? d.name}`}
-                  {d.index === playerIndex ? " (you)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-        </header>
-
-        <div
-          className={`dash-alert ${alert ? `is-live is-${alert.tone}` : "is-clear"}`}
+      <div className="dash" aria-label="Race dashboard">
+        {/* Row 1 — session + event banner */}
+        <section className="dash-session" aria-label="Session">
+          <span className="dash-session-track">{snap?.trackName ?? "—"}</span>
+          <span className="dash-session-sep" aria-hidden="true" />
+          <span className="dash-session-type">
+            {SESSION_LABEL[snap?.sessionCategory ?? ""] ?? "—"}
+          </span>
+          <span className="dash-session-sep" aria-hidden="true" />
+          <span className="dash-session-lap">
+            <span className="dash-label">Lap</span>
+            <span className="dash-session-lapval">
+              {lap}
+              <small>/{totalLaps > 0 ? totalLaps : "—"}</small>
+            </span>
+          </span>
+        </section>
+        <section
+          className={`dash-banner${event ? ` is-live is-${event.tone}` : ""}`}
+          aria-label="Event banner"
           role="status"
           aria-live="assertive"
         >
-          {alert ? alert.text : <span className="dash-alert-clear">Clear</span>}
-        </div>
+          {event?.text}
+        </section>
 
         {data == null ? (
           <div className="dash-empty">Waiting for car data…</div>
         ) : data.restricted ? (
           <div className="dash-empty">
             <strong>{data.name}</strong> — this lobby restricts car telemetry, so tyres, damage
-            and battery aren&apos;t shared. Pick another car or your own.
+            and battery aren&apos;t shared for this car.
           </div>
         ) : (
-          <div className="dash-cols">
-            <section className="dash-carzone" aria-label="Tyres and damage">
-              <div className="dash-cargrid">
-                <Corner c={data.corners[0]} />
-                <CarDiagram damage={damageByKey} />
-                <Corner c={data.corners[1]} />
-                <Corner c={data.corners[2]} />
-                <Corner c={data.corners[3]} />
+          <>
+            {/* Row 2 — tower | car | weather & stint */}
+            <section className="dash-tower" aria-label="Timing">
+              <div className="dash-trow dash-thead" aria-hidden="true">
+                <span className="dash-tpos">Pos</span>
+                <span className="dash-tname">Driver</span>
+                <span className="dash-ttyre">Tyre</span>
+                <span className="dash-twear">Wear</span>
+                <span className="dash-tgap">To ldr</span>
               </div>
-              <div className="dash-carfoot">
-                <span className="dash-chip">
-                  {data.compound} · {data.tyreAgeLaps} LAPS
-                </span>
-                {chipDamage.map((d) => (
-                  <span key={d.key} className={`dash-chip is-${d.state}`}>
-                    {d.label.toUpperCase()} {d.pct}%
-                  </span>
+              <div className="dash-tbody" ref={towerBodyRef}>
+                {tower.map((r) => (
+                  <TowerRowView key={r.index} r={r} />
                 ))}
               </div>
             </section>
 
-            {e && (
-              <section className="dash-energy" aria-label="Energy and deployment">
-                <div className="dash-block">
-                  <span className="dash-label">Battery</span>
-                  <div className="dash-batt-row">
-                    <span className={`dash-batt-num is-${e.batteryState}`}>
-                      {e.batteryPct}
-                      <small>%</small>
-                    </span>
-                    <div
-                      className="dash-batt-track"
-                      role="img"
-                      aria-label={`Battery ${e.batteryPct} percent`}
-                    >
-                      <div className="dash-batt-fill" style={{ width: `${e.batteryPct}%` }} />
-                    </div>
+            <section className="dash-carzone" aria-label="Car">
+              <div className="dash-carhead">
+                <span className="dash-label">Tyres &amp; damage</span>
+                <span className="dash-carhead-tyre">
+                  {data.compound} · {data.tyreAgeLaps} laps
+                </span>
+              </div>
+              <div className="dash-carstage">
+                <CarDiagram damage={damageByKey} />
+                <Corner c={data.corners[0]} side="left" end="front" />
+                <Corner c={data.corners[1]} side="right" end="front" />
+                <Corner c={data.corners[2]} side="left" end="rear" />
+                <Corner c={data.corners[3]} side="right" end="rear" />
+              </div>
+              <div className="dash-dmgstrip">
+                {strip.map((c) => (
+                  <div
+                    key={c.label}
+                    className={`dash-dmgcell${c.clean ? " is-clean" : ` is-${c.state}`}`}
+                  >
+                    <span className="dash-dmgcell-label">{c.label}</span>
+                    <span className="dash-dmgcell-val">{c.value}</span>
                   </div>
-                </div>
+                ))}
+              </div>
+            </section>
 
-                <div className="dash-block">
-                  <span className="dash-label">{data.is26 ? "Boost & aero" : "DRS"}</span>
-                  <div className="dash-chips">
-                    {data.is26 ? (
-                      <>
-                        <span
-                          className={`dash-chip dash-chip-big ${
-                            e.boostActive
-                              ? "is-boost-active"
-                              : e.boostAvailable
-                                ? "is-boost-avail"
-                                : ""
-                          }`}
-                        >
-                          {e.boostActive
-                            ? "OVERTAKE · ACTIVE"
-                            : e.boostAvailable
-                              ? "OVERTAKE · IN RANGE"
-                              : "OVERTAKE"}
+            <section className="dash-side" aria-label="Weather and stint">
+              <div className="dash-weather">
+                <span className="dash-label">Weather</span>
+                <div className="dash-wslots">
+                  {(weather?.slots ?? []).map((s) => {
+                    const Glyph = GLYPHS[s.glyph];
+                    return (
+                      <div key={s.label} className="dash-wslot">
+                        <span className="dash-wslot-time">{s.label}</span>
+                        <Glyph size={24} />
+                        <span className="dash-wslot-rain">
+                          <svg viewBox="0 0 24 24" className="dash-drop" aria-hidden="true">
+                            <path d="M12 3.5c3.2 4.2 6 7.4 6 10.7a6 6 0 1 1-12 0c0-3.3 2.8-6.5 6-10.7z" />
+                          </svg>
+                          {Math.round(s.rainPct)}%
                         </span>
-                        <span className={`dash-chip dash-chip-big ${e.aeroStraight ? "is-smode" : ""}`}>
-                          {e.aeroStraight ? "SM ACTIVE" : "Z-MODE"}
-                        </span>
-                      </>
-                    ) : (
-                      <span
-                        className={`dash-chip dash-chip-big ${
-                          e.drsOpen ? "is-drs-open" : e.drsAllowed ? "is-drs-avail" : ""
-                        }`}
-                      >
-                        {e.drsOpen ? "DRS · OPEN" : e.drsAllowed ? "DRS · AVAILABLE" : "DRS"}
-                      </span>
-                    )}
-                  </div>
+                      </div>
+                    );
+                  })}
                 </div>
+              </div>
 
-                <div className="dash-block">
-                  <span className="dash-label">ERS deploy</span>
-                  <div className="dash-deploy" role="group" aria-label="ERS deploy mode">
-                    {DEPLOY_MODES.map((m, i) => (
-                      <span
-                        key={m}
-                        className={`dash-deploy-seg${i === e.deployMode ? " is-active" : ""}${
-                          i === 3 && i === e.deployMode ? " is-ot" : ""
-                        }`}
-                      >
-                        {m}
-                      </span>
-                    ))}
-                  </div>
+              <div className="dash-temps">
+                <div className="dash-temp">
+                  <span className="dash-label">Track temp</span>
+                  <span className="dash-temp-val">
+                    {weather?.trackTemp != null ? weather.trackTemp : "—"}
+                    <small>°C</small>
+                  </span>
                 </div>
+                <div className="dash-temp is-air">
+                  <span className="dash-label">Air temp</span>
+                  <span className="dash-temp-val">
+                    {weather?.airTemp != null ? weather.airTemp : "—"}
+                    <small>°C</small>
+                  </span>
+                </div>
+              </div>
 
-                <div className="dash-block dash-fuel">
+              <div className="dash-stint">
+                <div className="dash-stint-top">
                   <div>
-                    <span className="dash-label">Fuel mix</span>
-                    <span className="dash-fuel-val">{e.fuelMixLabel}</span>
-                  </div>
-                  <div>
-                    <span className="dash-label">Fuel margin</span>
-                    <span className={`dash-fuel-val is-${e.fuelState}`}>
-                      {`${e.fuelLaps >= 0 ? "+" : ""}${e.fuelLaps.toFixed(1)} laps`}
+                    <span className="dash-label">Box in</span>
+                    <span className="dash-boxin">
+                      {stint?.boxInLaps != null ? stint.boxInLaps : "—"}
+                      <small> laps</small>
                     </span>
                   </div>
+                  <div className="dash-window">
+                    <span className="dash-label">Window</span>
+                    <span className="dash-window-val">{stint?.windowLabel ?? "—"}</span>
+                  </div>
                 </div>
-              </section>
-            )}
-          </div>
+                <div className="dash-lapbar" aria-hidden="true">
+                  {stint?.windowStartPct != null && (
+                    <span
+                      className="dash-lapbar-window"
+                      style={{
+                        left: `${stint.windowStartPct}%`,
+                        width: `${stint.windowWidthPct ?? 0}%`,
+                      }}
+                    />
+                  )}
+                  {stint?.cliffPct != null && (
+                    <span className="dash-lapbar-cliff" style={{ left: `${stint.cliffPct}%` }} />
+                  )}
+                  <span className="dash-lapbar-now" />
+                </div>
+                <div className="dash-lapbar-caps" aria-hidden="true">
+                  <span className="dash-cap-now">Lap {stint?.axisFrom ?? "—"}</span>
+                  {stint?.cliffPct != null && (
+                    <span className="dash-cap-cliff" style={{ left: `${stint.cliffPct}%` }}>
+                      Cliff {stint.cliffLap}
+                    </span>
+                  )}
+                  <span className="dash-cap-end">Lap {stint?.axisTo ?? "—"}</span>
+                </div>
+              </div>
+
+              <div className="dash-stats">
+                <div className="dash-stat">
+                  <span className="dash-label">Wear rate</span>
+                  <span className={`dash-stat-val is-${stint?.wearRateState ?? "ok"}`}>
+                    {stint?.wearRate != null ? stint.wearRate.toFixed(1) : "—"}
+                  </span>
+                  <span className={`dash-stat-cap is-${stint?.wearRateState ?? "ok"}`}>
+                    {stint?.wearCorner != null ? `% per lap on ${stint.wearCorner}` : "no stint data"}
+                  </span>
+                </div>
+                <div className="dash-stat">
+                  <span className="dash-label">Stops</span>
+                  <span className="dash-stat-val">{stint?.stopsDone ?? 0}</span>
+                  <span className="dash-stat-cap">completed</span>
+                </div>
+              </div>
+              <div className="dash-stats">
+                <div className="dash-stat">
+                  <span className="dash-label">Fuel</span>
+                  <span className={`dash-stat-val is-${e?.fuelState ?? "ok"}`}>
+                    {e != null ? `${e.fuelLaps >= 0 ? "+" : ""}${e.fuelLaps.toFixed(1)}` : "—"}
+                  </span>
+                  <span className="dash-stat-cap">laps spare · {e?.fuelMixLabel ?? "—"}</span>
+                </div>
+                <div className="dash-stat">
+                  <span className="dash-label">Last lap</span>
+                  <span className="dash-stat-val">{fmtLapTime(data.lastLapMS)}</span>
+                  <span className={`dash-stat-cap${lastDelta?.startsWith("+") ? " is-warn" : ""}`}>
+                    {lastDelta ?? "—"}
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            {/* Row 3 — bottom register */}
+            <section className="dash-tiles" aria-label="Boost and S mode">
+              {data.is26 ? (
+                <>
+                  <div
+                    className={`dash-tile is-boost${
+                      e?.boostActive ? " is-active" : e?.boostAvailable ? " is-avail" : ""
+                    }`}
+                  >
+                    BOOST
+                  </div>
+                  <div className={`dash-tile is-smode${e?.aeroStraight ? " is-active" : ""}`}>
+                    S MODE
+                  </div>
+                </>
+              ) : (
+                <div
+                  className={`dash-tile is-drs${
+                    e?.drsOpen ? " is-active" : e?.drsAllowed ? " is-avail" : ""
+                  }`}
+                >
+                  DRS
+                </div>
+              )}
+            </section>
+
+            <section className="dash-battery" aria-label="Battery">
+              <div className="dash-batt-group">
+                <span className="dash-label">Battery</span>
+                <span className={`dash-batt-num is-${e?.batteryState ?? "ok"}`}>
+                  {e?.batteryPct ?? 0}
+                  <small>%</small>
+                </span>
+              </div>
+              <div className="dash-batt-scale">
+                <div
+                  className="dash-batt-track"
+                  role="img"
+                  aria-label={`Battery ${e?.batteryPct ?? 0} percent`}
+                >
+                  <span className="dash-batt-fill" style={{ width: `${e?.batteryPct ?? 0}%` }} />
+                  {[25, 50, 75].map((t) => (
+                    <span
+                      key={t}
+                      className={`dash-batt-tick${(e?.batteryPct ?? 0) >= t ? " is-under" : ""}`}
+                      style={{ left: `${t}%` }}
+                      aria-hidden="true"
+                    />
+                  ))}
+                </div>
+                <div className="dash-batt-axis" aria-hidden="true">
+                  {[0, 25, 50, 75, 100].map((t) => (
+                    <span key={t}>{t}</span>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <section className="dash-deploy-panel" aria-label="Deployment">
+              <span className="dash-label">Deploy</span>
+              <div className="dash-deploy" role="group" aria-label="ERS deploy mode">
+                {DEPLOY_MODES.map((m, i) => (
+                  <span
+                    key={m}
+                    className={`dash-deploy-seg${i === e?.deployMode ? " is-active" : ""}${
+                      i === 3 && i === e?.deployMode ? " is-ot" : ""
+                    }`}
+                  >
+                    {m}
+                  </span>
+                ))}
+              </div>
+            </section>
+          </>
         )}
-      </section>
+      </div>
     </div>
   );
 }

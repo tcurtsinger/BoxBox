@@ -22,6 +22,8 @@ function frame(over: Partial<PlayerFrame> = {}): PlayerFrame {
     bestLapMS: 80_500,
     sessionBestMS: 80_000,
     fuelLaps: 1.0,
+    boostEngaged: false,
+    batteryPct: 60,
     tyreWear: [10, 10, 10, 10],
     fiaFlag: 0,
     intervalAheadSec: 2.0,
@@ -70,6 +72,19 @@ describe("fuel & tyre callouts", () => {
 
   it("warns when fuel goes short (crosses zero margin)", () => {
     expect(texts(frame({ fuelLaps: 0.1 }), frame({ fuelLaps: -0.1 })).some((t) => /short on fuel/i.test(t))).toBe(true);
+  });
+
+  it("calls out a battery left in overtake, but not a deliberate low-charge deploy", () => {
+    const out = texts(
+      frame({ boostEngaged: true, batteryPct: 32 }),
+      frame({ boostEngaged: true, batteryPct: 28 }),
+    );
+    expect(out.some((t) => t.includes("left overtake"))).toBe(true);
+    const quiet = texts(
+      frame({ boostEngaged: false, batteryPct: 32 }),
+      frame({ boostEngaged: true, batteryPct: 28 }),
+    );
+    expect(quiet.some((t) => t.includes("left overtake"))).toBe(false);
   });
 
   it("calls the specific corner going off (FL = wear index 2)", () => {
