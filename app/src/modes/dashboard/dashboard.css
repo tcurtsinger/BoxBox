@@ -360,22 +360,19 @@
   fill: var(--faint);
 }
 
-/* Damage overlays: a soft severity tint over the part's region of the art. */
-.car-ov {
-  stroke-width: 2;
-  transition:
-    fill var(--dur-fast) var(--ease-out),
-    stroke var(--dur-fast) var(--ease-out);
+/* Damage recolours the art's own linework: a clipped second copy of the trace
+   filled with the severity colour, so the highlight IS the part's shape. */
+.car-ov-art {
+  pointer-events: none;
+  transition: fill var(--dur-fast) var(--ease-out);
 }
 
-.car-ov.is-warn {
-  fill: var(--data-caution-tint);
-  stroke: var(--data-caution);
+.car-ov-art.is-warn {
+  fill: var(--data-caution);
 }
 
-.car-ov.is-bad {
-  fill: var(--data-danger-tint);
-  stroke: var(--data-danger);
+.car-ov-art.is-bad {
+  fill: var(--data-danger);
 }
 
 /* Corner readouts sit beside their own wheel. */
