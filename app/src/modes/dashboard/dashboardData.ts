@@ -359,8 +359,11 @@ export function toTowerRows(snap: RaceSnapshot): TowerRow[] {
     // line while everyone else is still finishing theirs, which would flash
     // the whole field as "+1 L" every lap. One lap down needs the time gap to
     // actually exceed the leader's lap time; two or more is unambiguous.
+    // Races only: in timed sessions gapSec is the best-lap delta and different
+    // run counts are normal, so lap counts say nothing there.
     const lapDiff = leader && d ? leader.currentLapNum - d.currentLapNum : 0;
     const lapsDown =
+      snap.sessionCategory === "race" &&
       r.pos > 1 &&
       lapDiff > 0 &&
       (lapDiff >= 2 ||
@@ -488,9 +491,14 @@ const CORNER_NAMES = ["RL", "RR", "FL", "FR"];
  * Project the stint from what the feed actually gives us: average wear per lap
  * over the current stint (wear ÷ tyre age) extrapolated to the cliff, plus the
  * game's own pit-window recommendation when it sends one. Null fields render as
- * em-dashes — no invented numbers.
+ * em-dashes — no invented numbers. `carPublic: false` (a restricted car) keeps
+ * the session-level window but derives nothing from the car's private wear.
  */
-export function toStintPanel(snap: RaceSnapshot, driverIndex: number): StintPanel {
+export function toStintPanel(
+  snap: RaceSnapshot,
+  driverIndex: number,
+  carPublic = true,
+): StintPanel {
   const d = snap.drivers.find((x) => x.index === driverIndex);
   const lap = d?.currentLapNum ?? 0;
   const total = snap.session?.totalLaps ?? 0;
@@ -498,7 +506,7 @@ export function toStintPanel(snap: RaceSnapshot, driverIndex: number): StintPane
   let wearRate: number | null = null;
   let wearCorner: string | null = null;
   let cliffLap: number | null = null;
-  if (d && d.tyreWear.length > 0 && d.tyreAgeLaps > 0) {
+  if (carPublic && d && d.tyreWear.length > 0 && d.tyreAgeLaps > 0) {
     const worst = Math.max(...d.tyreWear);
     const wIdx = d.tyreWear.indexOf(worst);
     wearRate = worst / d.tyreAgeLaps;

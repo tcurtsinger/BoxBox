@@ -325,6 +325,22 @@ describe("toTowerRows", () => {
     expect(rows[3].worstWear).toBeNull();
   });
 
+  it("timed sessions never show lap-down labels (gap is the best-lap delta)", () => {
+    const s = snap({
+      sessionCategory: "qualifying",
+      drivers: [
+        driver({ index: 0, position: 1, currentLapNum: 5, lastLapMS: 90_000 }),
+        driver({
+          index: 1,
+          position: 2,
+          currentLapNum: 2, // fewer runs is normal in quali
+          deltaToLeaderMS: 300_000,
+        }),
+      ],
+    });
+    expect(toTowerRows(s)[1].gap).not.toContain("L");
+  });
+
   it("the player's own tower wear survives their privacy setting", () => {
     const s = snap({
       playerCarIndex: 0,
@@ -397,6 +413,17 @@ describe("toStintPanel", () => {
     expect(p.cliffLap).toBeNull();
     expect(p.boxInLaps).toBeNull();
     expect(p.windowLabel).toBeNull();
+  });
+
+  it("a restricted car keeps the public window but derives nothing from private wear", () => {
+    const s = snap({
+      session: { totalLaps: 53, sessionType: 1, pitStopWindowIdealLap: 26, pitStopWindowLatestLap: 31 },
+      drivers: [driver({ tyreWear: [34, 38, 52, 61], tyreAgeLaps: 9 })],
+    });
+    const p = toStintPanel(s, 0, false);
+    expect(p.wearRate).toBeNull();
+    expect(p.cliffLap).toBeNull();
+    expect(p.windowLabel).toBe("26–31"); // session-level, public
   });
 
   it("a fresh stint (age 0) projects nothing rather than dividing by zero", () => {

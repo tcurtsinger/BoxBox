@@ -131,8 +131,11 @@ export function DashboardView() {
   }, [playerPos]);
   const weather = useMemo(() => (snap != null ? toWeatherPanel(snap) : null), [snap]);
   const stint = useMemo(
-    () => (snap != null && watched != null ? toStintPanel(snap, watched) : null),
-    [snap, watched],
+    () =>
+      snap != null && watched != null
+        ? toStintPanel(snap, watched, data != null && !data.restricted)
+        : null,
+    [snap, watched, data],
   );
 
   if (!hasFeed) {
@@ -214,7 +217,9 @@ export function DashboardView() {
               <div className="dash-carhead">
                 <span className="dash-label">Tyres &amp; damage</span>
                 <span className="dash-carhead-tyre">
-                  {data.restricted ? "—" : `${data.compound} · ${data.tyreAgeLaps} laps`}
+                  {data.restricted || !data.statusSeen
+                    ? "—"
+                    : `${data.compound} · ${data.tyreAgeLaps} laps`}
                 </span>
               </div>
               {data.restricted ? (
@@ -225,6 +230,10 @@ export function DashboardView() {
                   <strong>{data.name}</strong> restricts their telemetry, so tyres, damage and
                   battery aren&apos;t shared.
                 </div>
+              ) : !data.damageSeen ? (
+                // No Car Damage packet yet: the zeroed defaults are not a clean
+                // car, so hold the panel instead of presenting them as one.
+                <div className="dash-carstage dash-priv">Waiting for tyre and damage data…</div>
               ) : (
                 <>
                   <div className="dash-carstage">
