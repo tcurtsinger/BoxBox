@@ -519,7 +519,11 @@
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--faint);
+  /* nowrap + hidden + ellipsis: in a ~225px middle column each of the four
+     cells gets ~56px, and "FRONT WING" must truncate, not spill next door. */
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   max-width: 100%;
 }
 
