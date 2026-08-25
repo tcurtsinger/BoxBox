@@ -30,6 +30,7 @@ export interface Callout {
 // --- Tunable thresholds (kept named so they're easy to adjust by ear) ---------
 const FUEL_TIGHT_LAPS = 0.3; // fuel margin (laps of surplus) below this = "tight"
 const FUEL_SHORT_LAPS = 0.0; // below this you won't make the finish
+const BATTERY_LEFT_ON_PCT = 30; // overtake still engaged as the battery crosses this
 const TYRE_OFF_PCT = 50; // per-corner wear at which a tyre is "going off"
 const DRS_RANGE_SEC = 1.0; // within this of the car ahead = DRS
 const MIN_LAP_MS = 40_000; // ignore in/out/pit laps outside a plausible lap window
@@ -50,6 +51,9 @@ export interface PlayerFrame {
   bestLapMS: number;
   sessionBestMS: number;
   fuelLaps: number; // margin: laps of fuel surplus (+) / shortfall (−)
+  /** Overtake deploy engaged (25: mode 3 selected; 26: override active). */
+  boostEngaged: boolean;
+  batteryPct: number;
   tyreWear: number[]; // per corner, [RL, RR, FL, FR]
   fiaFlag: number; // -1 unknown, 0 none, 1 green, 2 blue, 3 yellow, 4 red
   intervalAheadSec: number | null; // null when leading or the delta isn't live (pits, off-track, non-race)
@@ -122,6 +126,8 @@ export function extractPlayerFrame(snap: RaceSnapshot): PlayerFrame | null {
     bestLapMS: d.bestLapMS,
     sessionBestMS: minBestLap(snap.drivers),
     fuelLaps: d.fuelRemainingLaps,
+    boostEngaged: d.overtakeActive || d.ersDeployMode === 3,
+    batteryPct: d.batteryPct,
     tyreWear: d.tyreWear ?? [],
     fiaFlag: d.fiaFlags,
     intervalAheadSec: d.position <= 1 || !racing ? null : d.deltaToCarAheadMS / 1000,
@@ -158,6 +164,22 @@ function fuelTyresCallouts(prev: PlayerFrame, next: PlayerFrame): Callout[] {
       priority: PRIORITY.strategy,
       text: "Fuel's getting tight — save where you can.",
       key: "fuel-tight",
+    });
+  }
+
+  // Overtake deploy left engaged while the battery bleeds down: fire once as
+  // it crosses the line, only if boost was ALREADY on (a deliberate late-race
+  // deploy at low charge isn't a mistake worth narrating).
+  if (
+    prev.boostEngaged &&
+    next.boostEngaged &&
+    crossedBelow(prev.batteryPct, next.batteryPct, BATTERY_LEFT_ON_PCT)
+  ) {
+    out.push({
+      category: "fuelTyres",
+      priority: PRIORITY.strategy,
+      text: "You've left overtake deployed — battery's draining fast.",
+      key: "battery-left-on",
     });
   }
 

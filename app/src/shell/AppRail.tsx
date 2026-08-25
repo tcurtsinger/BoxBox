@@ -2,6 +2,7 @@ import { useShell, type RaceSection, type TunesSection } from "./shell-context";
 import {
   BenchIcon,
   CollapseIcon,
+  DashboardIcon,
   GearIcon,
   HistoryIcon,
   IncidentsIcon,
@@ -73,6 +74,10 @@ export function AppRail() {
 
   return (
     <nav className={`rail${railCollapsed ? " is-collapsed" : ""}`} aria-label="App sections">
+      {railItem("dashboard", "Dashboard", DashboardIcon, mode === "dashboard", () =>
+        setMode("dashboard"),
+      )}
+      <div className="rail-sep" aria-hidden="true" />
       {TUNES_ITEMS.map((s) =>
         railItem(s.id, s.label, s.Icon, mode === "tunes" && tunesSection === s.id, () => {
           setMode("tunes");

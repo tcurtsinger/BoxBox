@@ -39,6 +39,14 @@
   --data-danger-tint: oklch(0.640 0.205 27 / 0.10);
   --data-info-tint: oklch(0.700 0.135 248 / 0.10);
 
+  /* ---- Game HUD states — the official 2026 on-screen colours ------------- */
+  /* Sampled from the game's own banners (OVERTAKE boost #00CEFF, "SM ACTIVE"
+     s-mode #FF1493). These mean exactly what they mean in-game, nothing else. */
+  --hud-boost: oklch(0.790 0.147 223);
+  --hud-boost-tint: oklch(0.790 0.147 223 / 0.12);
+  --hud-smode: oklch(0.655 0.261 357);
+  --hud-smode-tint: oklch(0.655 0.261 357 / 0.12);
+
   /* ---- Type — Geist (UI) + Geist Mono (data) ---------------------------- */
   --font-sans: "Geist Variable", "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono Variable", "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;

@@ -68,11 +68,24 @@ export interface LiveDriver {
   rearWingDamage: number;
   engineDamage: number;
   gearboxDamage: number;
+  /** Body damage % (CarDamage id 10). Optional: older saved snapshots lack them. */
+  floorDamage?: number;
+  diffuserDamage?: number;
+  sidepodDamage?: number;
   fuelRemainingLaps: number;
   batteryPct: number;
   ersDeployMode: number;
+  /** Fuel mix (CarStatus): 0 lean, 1 standard, 2 rich, 3 max. Optional: older snapshots. */
+  fuelMix?: number;
   fiaFlags: number;
   overtakeActive: boolean;
+  /** 2026 pack: manual-override boost in range / active-aero states. Optional: older snapshots. */
+  overtakeAvailable?: boolean;
+  activeAeroMode?: number;
+  activeAeroAvailable?: boolean;
+  /** DRS (25-format cars): allowed by race control / wing currently open. */
+  drsAllowed?: boolean;
+  drs?: boolean;
   telemetryPublic: boolean;
   showOnlineNames: boolean;
   liveryColours: { r: number; g: number; b: number }[];
@@ -116,10 +129,22 @@ export interface QualiSegment {
 }
 
 export interface RaceSnapshot {
+  /** UDP packet format year (2025 / 2026); drives 25-vs-26 feature labeling. */
+  format?: number;
+  /** The game's per-session UID; a change means a new session began. */
+  sessionUid?: string;
+  /** The session clock (header sessionTime) of the latest packet, seconds. */
+  sessionTime?: number;
   trackName: string | null;
   session: {
     totalLaps: number;
     sessionType?: number;
+    /** 0 clear … 3 light rain, 4 heavy rain, 5 storm. */
+    weather?: number;
+    trackTemperature?: number;
+    airTemperature?: number;
+    /** 0 none, 1 full safety car, 2 virtual, 3 formation lap. */
+    safetyCarStatus?: number;
     /** Seconds remaining / total in a timed session (practice, qualifying). */
     sessionTimeLeft?: number;
     sessionDuration?: number;

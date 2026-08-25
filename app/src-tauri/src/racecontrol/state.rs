@@ -228,12 +228,14 @@ pub struct DriverState {
     pub fuel_remaining_laps: f32,
     pub battery_pct: f32,
     pub ers_deploy_mode: u8,
+    pub fuel_mix: u8,
     pub fia_flags: i8,
     pub drs_allowed: bool,
     // 2026 active-aero / overtake (CarTelemetry2; replaces DRS)
     pub overtake_active: bool,
     pub overtake_available: bool,
     pub active_aero_mode: u8,
+    pub active_aero_available: bool,
     // telemetry (CarTelemetry)
     pub speed: u16,
     pub gear: i8,
@@ -1143,6 +1145,7 @@ impl SessionState {
             d.fuel_remaining_laps = c.fuel_remaining_laps;
             d.battery_pct = c.battery_pct;
             d.ers_deploy_mode = c.ers_deploy_mode;
+            d.fuel_mix = c.fuel_mix;
             d.fia_flags = c.vehicle_fia_flags;
             d.drs_allowed = c.drs_allowed;
         }
@@ -1166,6 +1169,7 @@ impl SessionState {
             d.overtake_active = c.overtake_active;
             d.overtake_available = c.overtake_available;
             d.active_aero_mode = c.active_aero_mode;
+            d.active_aero_available = c.active_aero_available;
         }
     }
 
