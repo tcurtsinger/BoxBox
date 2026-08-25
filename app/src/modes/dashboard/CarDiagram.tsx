@@ -29,8 +29,10 @@ const REGIONS: { key: string; rects: [x: number, y: number, w: number, h: number
   {
     key: "frontWing",
     rects: [
-      [64, 10, 116, 80],
-      [220, 10, 116, 80],
+      // Bottom edge at y=82: every wing flap/endplate line ends by ~80, while
+      // the tire shoulders' outline rises above 90 — 82 clears them entirely.
+      [64, 10, 116, 72],
+      [220, 10, 116, 72],
     ],
   },
   { key: "diffuser", rects: [[150, 470, 100, 70]] },
