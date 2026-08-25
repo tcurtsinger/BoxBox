@@ -355,56 +355,25 @@
   width: auto;
 }
 
-.car-susp path {
-  stroke: var(--border);
-  stroke-width: 2;
-  stroke-linecap: round;
-  fill: none;
+/* The traced line art: filled outline paths, coloured as one quiet voice. */
+.car-art {
+  fill: var(--faint);
 }
 
-.car-wheel rect {
-  fill: var(--surface-raised);
-  stroke: var(--border);
-  stroke-width: 1.5;
-}
-
-.car-body {
-  fill: var(--surface-raised);
-  stroke: var(--border);
-  stroke-width: 1.5;
-}
-
-.car-cockpit {
-  fill: var(--inset);
-  stroke: var(--border);
-  stroke-width: 1.5;
-}
-
-.car-halo {
-  fill: none;
-  stroke: var(--border);
-  stroke-width: 3;
-  stroke-linecap: round;
-}
-
-.car-part,
-g.car-part rect {
-  fill: var(--inset);
-  stroke: var(--border);
+/* Damage overlays: a soft severity tint over the part's region of the art. */
+.car-ov {
   stroke-width: 2;
   transition:
     fill var(--dur-fast) var(--ease-out),
     stroke var(--dur-fast) var(--ease-out);
 }
 
-.car-part.is-warn,
-g.car-part.is-warn rect {
+.car-ov.is-warn {
   fill: var(--data-caution-tint);
   stroke: var(--data-caution);
 }
 
-.car-part.is-bad,
-g.car-part.is-bad rect {
+.car-ov.is-bad {
   fill: var(--data-danger-tint);
   stroke: var(--data-danger);
 }
