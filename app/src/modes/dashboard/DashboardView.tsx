@@ -61,13 +61,16 @@ export function DashboardView() {
   );
 
   // The alert engine carries per-part damage baselines and the boost clock, so
-  // it lives across polls in a ref and resets when the watched car changes.
+  // it lives across polls in a ref and resets when the watched car changes —
+  // or when the session does: a new session reuses car indices, and comparing
+  // its fresh damage against last session's baselines would shout on lap one.
+  const sessionUid = snap?.sessionUid;
   const engine = useRef(initialAlertState());
   const [alert, setAlert] = useState<DashAlert | null>(null);
   useEffect(() => {
     engine.current = initialAlertState();
     setAlert(null);
-  }, [effective]);
+  }, [effective, sessionUid]);
   useEffect(() => {
     if (!data) {
       setAlert(null);

@@ -207,6 +207,36 @@ describe("fresh damage", () => {
     expect(expired.alert).toBeNull();
   });
 
+  it("waits for the first Car Damage packet before latching baselines", () => {
+    // A car is visible (participants/lap data) frames before its damage packet
+    // arrives; its zeroed defaults must not become the baseline.
+    const { alert } = run([
+      [{ tyreWear: [] }, 0], // no Car Damage packet yet
+      [{ frontWingDamage: 40 }, 1_000], // first real packet: pre-existing damage
+    ]);
+    expect(alert).toBeNull();
+    // A real jump AFTER the first damage packet still shouts.
+    const hit = run([
+      [{ tyreWear: [] }, 0],
+      [{ frontWingDamage: 40 }, 1_000],
+      [{ frontWingDamage: 60 }, 2_000],
+    ]);
+    expect(hit.alert).toMatchObject({ kind: "damage" });
+  });
+
+  it("a held damage alert goes quiet if the car becomes restricted", () => {
+    const s = snap();
+    s.drivers.push(driver({ index: 1 }));
+    let st = initialAlertState();
+    let r = advanceAlerts(st, toDashboardData(s, 1)!, false, 0);
+    s.drivers[1] = driver({ index: 1, frontWingDamage: 40 });
+    r = advanceAlerts(r.state, toDashboardData(s, 1)!, false, 1_000);
+    expect(r.alert).toMatchObject({ kind: "damage" });
+    s.drivers[1] = driver({ index: 1, frontWingDamage: 40, telemetryPublic: false });
+    r = advanceAlerts(r.state, toDashboardData(s, 1)!, false, 2_000);
+    expect(r.alert).toBeNull();
+  });
+
   it("a pit-lane repair lowers the baseline instead of shouting", () => {
     const { alert } = run([
       [{ frontWingDamage: 40 }, 0],

@@ -131,6 +131,8 @@ export interface QualiSegment {
 export interface RaceSnapshot {
   /** UDP packet format year (2025 / 2026); drives 25-vs-26 feature labeling. */
   format?: number;
+  /** The game's per-session UID; a change means a new session began. */
+  sessionUid?: string;
   trackName: string | null;
   session: {
     totalLaps: number;

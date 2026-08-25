@@ -65,6 +65,9 @@ export interface DashboardData {
   name: string;
   isPlayer: boolean;
   restricted: boolean;
+  /** True once a Car Damage packet has been ingested for this car. Until then
+   *  the damage fields are default zeroes, not real readings. */
+  damageSeen: boolean;
   /** 2026-format feed: show override/aero instead of the 25 deploy strip. */
   is26: boolean;
   corners: CornerCell[];
@@ -155,6 +158,9 @@ export function toDashboardData(snap: RaceSnapshot, driverIndex: number): Dashbo
     // the player's own feed still carries their real numbers, so their own
     // dashboard must never blank itself over their own privacy choice.
     restricted: !d.telemetryPublic && !isPlayer,
+    // tyreWear fills from the same Car Damage packet as the damage fields, so
+    // an empty array means those zeroes are defaults, not readings.
+    damageSeen: d.tyreWear.length > 0,
     is26,
     corners: CORNERS.map(([pos, w]) => {
       const wear = Math.round(d.tyreWear[w] ?? 0);
@@ -234,8 +240,11 @@ export function advanceAlerts(
 
   // Damage baselines: first sight latches silently (joining mid-session isn't
   // a hit); repairs lower the base so the next real hit measures from there.
+  // Nothing latches before the first Car Damage packet — a car can appear
+  // frames earlier with default zeroes, and latching those would report its
+  // pre-existing damage as a fresh collision.
   let freshHit: { label: string; pct: number; delta: number } | null = null;
-  for (const part of data.damage) {
+  for (const part of data.damageSeen ? data.damage : []) {
     const base = next.damageBase[part.key];
     if (base === undefined || part.pct < base) {
       next.damageBase[part.key] = part.pct;
@@ -277,7 +286,7 @@ export function advanceAlerts(
       alert = { kind: "battery-on", text: "BATTERY LEFT ON — OVERTAKE ENGAGED", tone: "caution" };
     }
   }
-  if (!alert && next.damageHold) {
+  if (!alert && !data.restricted && next.damageHold) {
     alert = { kind: "damage", text: next.damageHold.text, tone: "danger" };
   }
   if (!alert && !data.restricted && next.batteryLowLatched) {
