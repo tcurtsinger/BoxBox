@@ -58,6 +58,10 @@ export interface DashboardData {
   /** True once a Car Damage packet has been ingested for this car. Until then
    *  the damage fields are default zeroes, not real readings. */
   damageSeen: boolean;
+  /** True once a Car Status packet has been ingested — battery, deploy mode,
+   *  compound and fuel are default zeroes before it, and a default zero must
+   *  not read as "BATTERY 0%". */
+  statusSeen: boolean;
   /** 2026-format feed: show override/aero instead of the 25 DRS tile. */
   is26: boolean;
   corners: CornerCell[];
@@ -155,6 +159,9 @@ export function toDashboardData(snap: RaceSnapshot, driverIndex: number): Dashbo
     // tyreWear fills from the same Car Damage packet as the damage fields, so
     // an empty array means those zeroes are defaults, not readings.
     damageSeen: d.tyreWear.length > 0,
+    // The visual compound is never 0 once Car Status has arrived, so it doubles
+    // as the readiness signal for battery/deploy/fuel.
+    statusSeen: d.tyreVisual !== 0,
     is26,
     corners: CORNERS.map(([pos, w]) => {
       const wear = Math.round(d.tyreWear[w] ?? 0);
@@ -169,7 +176,9 @@ export function toDashboardData(snap: RaceSnapshot, driverIndex: number): Dashbo
     tyreAgeLaps: d.tyreAgeLaps,
     energy: {
       batteryPct: Math.round(d.batteryPct),
-      batteryState: batteryState(d.batteryPct),
+      // Severity stays quiet until Car Status arrives — the pre-status default
+      // of zero must not paint (or announce) "critical".
+      batteryState: d.tyreVisual !== 0 ? batteryState(d.batteryPct) : "ok",
       deployMode: d.ersDeployMode,
       boostAvailable: d.overtakeAvailable ?? false,
       boostActive: d.overtakeActive,
@@ -208,8 +217,23 @@ export function toDamageStrip(damage: DamageCell[]): DamageStripCell[] {
     state: c.state,
     clean: false,
   }));
-  const restLabel = shown.length === 0 ? "ALL" : "REST";
-  cells.push({ label: restLabel, value: "CLEAN", state: "ok", clean: true });
+  const omitted = hit.slice(3);
+  if (omitted.length > 0) {
+    // Never call hidden damage "clean": summarise what didn't fit honestly.
+    cells.push({
+      label: `+${omitted.length} MORE`,
+      value: `≤${omitted[0].pct}%`,
+      state: omitted[0].state,
+      clean: false,
+    });
+  } else {
+    cells.push({
+      label: shown.length === 0 ? "ALL" : "REST",
+      value: "CLEAN",
+      state: "ok",
+      clean: true,
+    });
+  }
   return cells;
 }
 
@@ -244,10 +268,11 @@ const PENALTY_DETAIL: Record<number, string> = {
 export function raceControlEvent(snap: RaceSnapshot, driverIndex: number): DashEvent | null {
   const d = snap.drivers.find((x) => x.index === driverIndex);
   if (d?.fiaFlags === 4) return { text: "RED FLAG", tone: "danger" };
+  // Ages must be non-negative: a flashback rewinds the clock, and an incident
+  // from the abandoned future must not resurrect its banner.
   const clock = snap.sessionTime ?? 0;
-  const redFlagged = snap.incidents.some(
-    (i) => i.code === "RDFL" && clock - i.sessionTime < 30,
-  );
+  const freshFor = (t: number, window: number) => clock - t >= 0 && clock - t < window;
+  const redFlagged = snap.incidents.some((i) => i.code === "RDFL" && freshFor(i.sessionTime, 30));
   if (redFlagged) return { text: "RED FLAG", tone: "danger" };
 
   const sc = snap.session?.safetyCarStatus ?? 0;
@@ -263,7 +288,7 @@ export function raceControlEvent(snap: RaceSnapshot, driverIndex: number): DashE
       i.code === "PENA" &&
       i.detail["vehicleIdx"] === snap.playerCarIndex &&
       driverIndex === snap.playerCarIndex &&
-      clock - i.sessionTime < PENALTY_BANNER_SECS,
+      freshFor(i.sessionTime, PENALTY_BANNER_SECS),
   );
   if (pen) {
     const detail = PENALTY_DETAIL[pen.detail["penaltyType"] ?? -1];
@@ -322,15 +347,25 @@ export function toTowerRows(snap: RaceSnapshot): TowerRow[] {
   const leader = rows[0] != null ? byIndex.get(rows[0].index) : undefined;
   return rows.map((r) => {
     const d = byIndex.get(r.index);
+    // The player's own wear is always real — their privacy setting only hides
+    // it from other viewers, so never blank their own row.
+    const restricted = r.restricted && r.index !== snap.playerCarIndex;
     const wear =
-      r.restricted || !d || d.tyreWear.length === 0
+      restricted || !d || d.tyreWear.length === 0
         ? null
         : Math.round(Math.max(...d.tyreWear, 0));
-    // Lapped cars show laps down, never a fabricated time gap. The feed's
-    // leader delta caps out for lapped cars, so lap count is the honest read.
+    // Lapped cars show laps down, never a fabricated time gap — but a bare
+    // lap-number difference isn't evidence: the leader's lap increments at the
+    // line while everyone else is still finishing theirs, which would flash
+    // the whole field as "+1 L" every lap. One lap down needs the time gap to
+    // actually exceed the leader's lap time; two or more is unambiguous.
+    const lapDiff = leader && d ? leader.currentLapNum - d.currentLapNum : 0;
     const lapsDown =
-      leader && d && leader.currentLapNum - d.currentLapNum > 0 && r.pos > 1
-        ? leader.currentLapNum - d.currentLapNum
+      r.pos > 1 &&
+      lapDiff > 0 &&
+      (lapDiff >= 2 ||
+        (leader != null && leader.lastLapMS > 0 && (d?.deltaToLeaderMS ?? 0) >= leader.lastLapMS))
+        ? lapDiff
         : 0;
     const gap =
       r.pos === 1

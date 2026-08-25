@@ -52,7 +52,13 @@ function car(i: number): LiveDriver {
     lastLapMS: 92_431 + vary(i, 400, 700),
     bestLapMS: 91_874 + vary(i, 300, 500),
     currentLapNum: 23 - lapsDown,
-    deltaToLeaderMS: pos === 1 ? 0 : 1200 * (pos - 1) + vary(i, 800, 1200),
+    // Lapped cars sit more than a leader's lap time (~92s) behind.
+    deltaToLeaderMS:
+      pos === 1
+        ? 0
+        : lapsDown > 0
+          ? 95_000 * lapsDown + vary(i, 3000, 4000)
+          : 1200 * (pos - 1) + vary(i, 800, 1200),
     deltaToCarAheadMS: pos === 1 ? 0 : 1100 + vary(i, 300, 500),
     pitStatus: 0,
     numPitStops: 1,

@@ -154,6 +154,9 @@ export function DashboardView() {
   const lap = watchedDriver?.currentLapNum ?? 0;
   const totalLaps = snap?.session?.totalLaps ?? 0;
   const e = data?.energy;
+  // Battery/deploy/fuel are honest only once Car Status has arrived, and never
+  // for a restricted (non-player) car — until then the register reads quiet.
+  const energyReady = data != null && !data.restricted && data.statusSeen;
   const damageByKey = Object.fromEntries((data?.damage ?? []).map((c) => [c.key, c]));
   const strip = toDamageStrip(data?.damage ?? []);
   const lastDelta = data ? fmtDeltaToBest(data.lastLapMS, data.bestLapMS) : null;
@@ -189,11 +192,6 @@ export function DashboardView() {
 
         {data == null ? (
           <div className="dash-empty">Waiting for car data…</div>
-        ) : data.restricted ? (
-          <div className="dash-empty">
-            <strong>{data.name}</strong> — this lobby restricts car telemetry, so tyres, damage
-            and battery aren&apos;t shared for this car.
-          </div>
         ) : (
           <>
             {/* Row 2 — tower | car | weather & stint */}
@@ -216,27 +214,39 @@ export function DashboardView() {
               <div className="dash-carhead">
                 <span className="dash-label">Tyres &amp; damage</span>
                 <span className="dash-carhead-tyre">
-                  {data.compound} · {data.tyreAgeLaps} laps
+                  {data.restricted ? "—" : `${data.compound} · ${data.tyreAgeLaps} laps`}
                 </span>
               </div>
-              <div className="dash-carstage">
-                <CarDiagram damage={damageByKey} />
-                <Corner c={data.corners[0]} side="left" end="front" />
-                <Corner c={data.corners[1]} side="right" end="front" />
-                <Corner c={data.corners[2]} side="left" end="rear" />
-                <Corner c={data.corners[3]} side="right" end="rear" />
-              </div>
-              <div className="dash-dmgstrip">
-                {strip.map((c) => (
-                  <div
-                    key={c.label}
-                    className={`dash-dmgcell${c.clean ? " is-clean" : ` is-${c.state}`}`}
-                  >
-                    <span className="dash-dmgcell-label">{c.label}</span>
-                    <span className="dash-dmgcell-val">{c.value}</span>
+              {data.restricted ? (
+                // Only THIS car's telemetry is private — the tower, weather and
+                // session panels around it stay live (spectating a private
+                // leader must not blank the whole screen).
+                <div className="dash-carstage dash-priv">
+                  <strong>{data.name}</strong> restricts their telemetry, so tyres, damage and
+                  battery aren&apos;t shared.
+                </div>
+              ) : (
+                <>
+                  <div className="dash-carstage">
+                    <CarDiagram damage={damageByKey} />
+                    <Corner c={data.corners[0]} side="left" end="front" />
+                    <Corner c={data.corners[1]} side="right" end="front" />
+                    <Corner c={data.corners[2]} side="left" end="rear" />
+                    <Corner c={data.corners[3]} side="right" end="rear" />
                   </div>
-                ))}
-              </div>
+                  <div className="dash-dmgstrip">
+                    {strip.map((c) => (
+                      <div
+                        key={c.label}
+                        className={`dash-dmgcell${c.clean ? " is-clean" : ` is-${c.state}`}`}
+                      >
+                        <span className="dash-dmgcell-label">{c.label}</span>
+                        <span className="dash-dmgcell-val">{c.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </section>
 
             <section className="dash-side" aria-label="Weather and stint">
@@ -337,10 +347,14 @@ export function DashboardView() {
               <div className="dash-stats">
                 <div className="dash-stat">
                   <span className="dash-label">Fuel</span>
-                  <span className={`dash-stat-val is-${e?.fuelState ?? "ok"}`}>
-                    {e != null ? `${e.fuelLaps >= 0 ? "+" : ""}${e.fuelLaps.toFixed(1)}` : "—"}
+                  <span className={`dash-stat-val is-${energyReady ? (e?.fuelState ?? "ok") : "ok"}`}>
+                    {energyReady && e != null
+                      ? `${e.fuelLaps >= 0 ? "+" : ""}${e.fuelLaps.toFixed(1)}`
+                      : "—"}
                   </span>
-                  <span className="dash-stat-cap">laps spare · {e?.fuelMixLabel ?? "—"}</span>
+                  <span className="dash-stat-cap">
+                    {energyReady ? `laps spare · ${e?.fuelMixLabel ?? "—"}` : "no data"}
+                  </span>
                 </div>
                 <div className="dash-stat">
                   <span className="dash-label">Last lap</span>
@@ -358,19 +372,29 @@ export function DashboardView() {
                 <>
                   <div
                     className={`dash-tile is-boost${
-                      e?.boostActive ? " is-active" : e?.boostAvailable ? " is-avail" : ""
+                      energyReady && e?.boostActive
+                        ? " is-active"
+                        : energyReady && e?.boostAvailable
+                          ? " is-avail"
+                          : ""
                     }`}
                   >
                     BOOST
                   </div>
-                  <div className={`dash-tile is-smode${e?.aeroStraight ? " is-active" : ""}`}>
+                  <div
+                    className={`dash-tile is-smode${energyReady && e?.aeroStraight ? " is-active" : ""}`}
+                  >
                     S MODE
                   </div>
                 </>
               ) : (
                 <div
                   className={`dash-tile is-drs${
-                    e?.drsOpen ? " is-active" : e?.drsAllowed ? " is-avail" : ""
+                    energyReady && e?.drsOpen
+                      ? " is-active"
+                      : energyReady && e?.drsAllowed
+                        ? " is-avail"
+                        : ""
                   }`}
                 >
                   DRS
@@ -381,18 +405,23 @@ export function DashboardView() {
             <section className="dash-battery" aria-label="Battery">
               <div className="dash-batt-group">
                 <span className="dash-label">Battery</span>
-                <span className={`dash-batt-num is-${e?.batteryState ?? "ok"}`}>
-                  {e?.batteryPct ?? 0}
-                  <small>%</small>
+                <span className={`dash-batt-num is-${energyReady ? (e?.batteryState ?? "ok") : "ok"}`}>
+                  {energyReady ? e?.batteryPct : "—"}
+                  {energyReady && <small>%</small>}
                 </span>
               </div>
               <div className="dash-batt-scale">
                 <div
                   className="dash-batt-track"
                   role="img"
-                  aria-label={`Battery ${e?.batteryPct ?? 0} percent`}
+                  aria-label={
+                    energyReady ? `Battery ${e?.batteryPct ?? 0} percent` : "Battery unavailable"
+                  }
                 >
-                  <span className="dash-batt-fill" style={{ width: `${e?.batteryPct ?? 0}%` }} />
+                  <span
+                    className="dash-batt-fill"
+                    style={{ width: `${energyReady ? (e?.batteryPct ?? 0) : 0}%` }}
+                  />
                   {[25, 50, 75].map((t) => (
                     <span
                       key={t}
@@ -416,9 +445,9 @@ export function DashboardView() {
                 {DEPLOY_MODES.map((m, i) => (
                   <span
                     key={m}
-                    className={`dash-deploy-seg${i === e?.deployMode ? " is-active" : ""}${
-                      i === 3 && i === e?.deployMode ? " is-ot" : ""
-                    }`}
+                    className={`dash-deploy-seg${
+                      energyReady && i === e?.deployMode ? " is-active" : ""
+                    }${energyReady && i === 3 && i === e?.deployMode ? " is-ot" : ""}`}
                   >
                     {m}
                   </span>

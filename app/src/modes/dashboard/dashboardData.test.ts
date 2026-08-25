@@ -119,6 +119,18 @@ describe("toDashboardData", () => {
     });
     expect(toDashboardData(s, 1)!.restricted).toBe(true);
   });
+
+  it("stays quiet about the battery until Car Status arrives", () => {
+    // tyreVisual 0 = no Car Status packet yet: the default 0% battery must not
+    // read as critical.
+    const s = snap({ drivers: [driver({ tyreVisual: 0, batteryPct: 0 })] });
+    const d = toDashboardData(s, 0)!;
+    expect(d.statusSeen).toBe(false);
+    expect(d.energy.batteryState).toBe("ok");
+    const ready = toDashboardData(snap({ drivers: [driver({ batteryPct: 0 })] }), 0)!;
+    expect(ready.statusSeen).toBe(true);
+    expect(ready.energy.batteryState).toBe("bad");
+  });
 });
 
 describe("toDamageStrip", () => {
@@ -138,6 +150,26 @@ describe("toDamageStrip", () => {
     const strip = toDamageStrip(d.damage);
     expect(strip).toHaveLength(1);
     expect(strip[0]).toMatchObject({ label: "ALL", value: "CLEAN" });
+  });
+
+  it("never calls hidden damage clean: 4+ hits summarise the omitted parts", () => {
+    const d = toDashboardData(
+      snap({
+        drivers: [
+          driver({
+            frontWingDamage: 40,
+            rearWingDamage: 30,
+            floorDamage: 20,
+            diffuserDamage: 12,
+            sidepodDamage: 5,
+          }),
+        ],
+      }),
+      0,
+    )!;
+    const strip = toDamageStrip(d.damage);
+    expect(strip[3]).toMatchObject({ label: "+2 MORE", value: "≤12%", clean: false });
+    expect(strip[3].state).toBe("warn");
   });
 });
 
@@ -199,6 +231,29 @@ describe("raceControlEvent priority", () => {
   it("a quiet race shows no banner", () => {
     expect(raceControlEvent(snap(), 0)).toBeNull();
   });
+
+  it("a flashback never resurrects a future incident's banner", () => {
+    // Red flag recorded at t=1100, then the clock rewinds to 1000: negative
+    // age must not pass the freshness window.
+    const s = snap({
+      incidents: [
+        {
+          id: "r1",
+          source: "auto",
+          sessionTime: 1100,
+          lapNum: 20,
+          code: "RDFL",
+          label: "Red flag",
+          carIndices: [],
+          detail: {},
+          status: "open",
+          note: "",
+          ruling: null,
+        },
+      ],
+    } as unknown as Partial<RaceSnapshot>);
+    expect(raceControlEvent(s, 0)).toBeNull();
+  });
 });
 
 describe("toTowerRows", () => {
@@ -233,6 +288,31 @@ describe("toTowerRows", () => {
     expect(rows[2].gap).toBe("+1 L");
   });
 
+  it("the leader crossing the line first doesn't flash the field as lapped", () => {
+    // Leader on lap 24, P2 still finishing lap 23, only 1.2s behind: the bare
+    // lap-number difference is not lapped evidence.
+    const s = snap({
+      drivers: [
+        driver({ index: 0, position: 1, currentLapNum: 24, lastLapMS: 90_000 }),
+        driver({
+          index: 1,
+          position: 2,
+          currentLapNum: 23,
+          deltaToLeaderMS: 1200,
+        }),
+      ],
+    });
+    expect(toTowerRows(s)[1].gap).toBe("+1.2");
+    // Two laps down is unambiguous even without a usable delta.
+    const far = snap({
+      drivers: [
+        driver({ index: 0, position: 1, currentLapNum: 24, lastLapMS: 0 }),
+        driver({ index: 1, position: 2, currentLapNum: 22, deltaToLeaderMS: 500 }),
+      ],
+    });
+    expect(toTowerRows(far)[1].gap).toBe("+2 L");
+  });
+
   it("marks the player and carries worst-corner wear", () => {
     const rows = toTowerRows(grid());
     expect(rows[1].isPlayer).toBe(true);
@@ -243,6 +323,14 @@ describe("toTowerRows", () => {
   it("restricted cars show no wear instead of fake zeros", () => {
     const rows = toTowerRows(grid());
     expect(rows[3].worstWear).toBeNull();
+  });
+
+  it("the player's own tower wear survives their privacy setting", () => {
+    const s = snap({
+      playerCarIndex: 0,
+      drivers: [driver({ telemetryPublic: false, tyreWear: [10, 12, 20, 44] })],
+    });
+    expect(toTowerRows(s)[0].worstWear).toBe(44);
   });
 });
 
