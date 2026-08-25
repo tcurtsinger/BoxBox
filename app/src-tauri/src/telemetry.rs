@@ -342,10 +342,21 @@ fn spawn_listener(
         }
     };
     // Steering-signature evidence log (input detection Phase 0), beside the
-    // diagnostic log so a league admin can grab both from one folder.
+    // diagnostic log so a league admin can grab both from one folder. Writes
+    // happen on a dedicated thread: the UDP loop must never block on storage
+    // (a stalled open under antivirus contention would overflow the socket
+    // buffer and lose the very telemetry being evidenced). try_send drops rows
+    // if the writer falls behind — live beats complete.
     let inputsig_path = log_path
         .as_ref()
         .map(|p| p.with_file_name("inputsig.jsonl"));
+    let (inputsig_tx, inputsig_rx) = std::sync::mpsc::sync_channel::<Vec<String>>(64);
+    std::thread::spawn(move || {
+        // Exits when the listener worker drops its sender.
+        while let Ok(lines) = inputsig_rx.recv() {
+            append_inputsig(&inputsig_path, &lines);
+        }
+    });
     let forwards = Arc::new(Mutex::new(forwards));
     let forwards_worker = forwards.clone();
 
@@ -698,11 +709,11 @@ fn spawn_listener(
                                         discord_tx.try_send(DiscordJob::Incidents(announcements));
                                 }
                             }
-                            // Completed steering-signature epochs -> the JSONL
-                            // evidence log (input-device detection Phase 0), appended
-                            // off the race lock. A line a minute per car — negligible.
+                            // Completed steering-signature epochs -> the background
+                            // writer (input-device detection Phase 0). Never file IO
+                            // on this loop; a full queue drops the rows.
                             if !inputsig_lines.is_empty() {
-                                append_inputsig(&inputsig_path, &inputsig_lines);
+                                let _ = inputsig_tx.try_send(inputsig_lines);
                             }
                             // A result was staged (official classification, or the
                             // provisional fallback): archive it (off the race lock) so

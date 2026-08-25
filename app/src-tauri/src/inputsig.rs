@@ -39,7 +39,9 @@ pub struct EpochCounters {
     /// (assisted steering shows eerily low d2 relative to d1).
     pub sum_d1: f64,
     pub sum_d2: f64,
-    /// Session-clock span the epoch actually covered.
+    /// ELIGIBLE on-track seconds the epoch covered — pit visits and other
+    /// continuity breaks contribute nothing, so per-second rates derived from
+    /// these rows are honest.
     pub span_secs: f64,
 }
 
@@ -55,9 +57,11 @@ struct CarAcc {
     dwell_max: u32,
     sum_d1: f64,
     sum_d2: f64,
+    /// Eligible on-track time accumulated (the epoch clock — wall gaps and
+    /// pit visits never advance it).
+    eligible_secs: f64,
     prev_steer: Option<f32>,
     prev_delta: Option<f32>,
-    epoch_start: Option<f64>,
     last_clock: f64,
 }
 
@@ -74,7 +78,7 @@ impl CarAcc {
                 dwell_max: self.dwell_max.max(self.dwell_run),
                 sum_d1: self.sum_d1,
                 sum_d2: self.sum_d2,
-                span_secs: self.epoch_start.map_or(0.0, |s| self.last_clock - s),
+                span_secs: self.eligible_secs,
             })
         } else {
             None
@@ -127,9 +131,11 @@ impl InputSigTracker {
         let acc = &mut self.cars[idx];
 
         if !eligible {
-            // Continuity broken: deltas across a pit visit are meaningless.
+            // Continuity broken: deltas across a pit visit are meaningless,
+            // and a dwell run must not bridge two disconnected traces.
             acc.prev_steer = None;
             acc.prev_delta = None;
+            acc.dwell_run = 0;
             return;
         }
 
@@ -138,7 +144,12 @@ impl InputSigTracker {
             let _ = acc.finish();
         }
 
-        let start = *acc.epoch_start.get_or_insert(clock);
+        // The epoch clock counts ELIGIBLE time only: it advances by the gap to
+        // the previous sample when continuity held, capped so a stalled feed
+        // can't count dead air as trace time.
+        if acc.prev_steer.is_some() {
+            acc.eligible_secs += (clock - acc.last_clock).clamp(0.0, 1.0);
+        }
         acc.last_clock = clock;
         acc.samples += 1;
         if steer == 0.0 {
@@ -172,7 +183,7 @@ impl InputSigTracker {
         }
         acc.prev_steer = Some(steer);
 
-        if clock - start >= EPOCH_SECS {
+        if acc.eligible_secs >= EPOCH_SECS {
             if let Some(c) = acc.finish() {
                 self.pending.push((idx, c));
             }
@@ -270,6 +281,73 @@ mod tests {
         assert!(
             wj > pj,
             "wheel micro-corrections out-flip pad ({wj} vs {pj})"
+        );
+    }
+
+    #[test]
+    fn a_pit_stop_never_counts_toward_the_epoch_or_its_span() {
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        // 12s on track, a 60s pit stop, then more running: without eligible-
+        // time accounting the wall clock alone would close a bogus epoch.
+        for i in 0..240 {
+            t.sample(0, (i as f32 * 0.1).sin() * 0.4, true, clock);
+            clock += 0.05;
+        }
+        clock += 60.0; // in the pits — no samples at all
+        for i in 0..300 {
+            t.sample(0, (i as f32 * 0.1).sin() * 0.4, true, clock);
+            clock += 0.05;
+        }
+        assert!(
+            t.drain().is_empty(),
+            "only ~27s of eligible trace exists — no epoch may emit"
+        );
+        // Keep running: the epoch completes on eligible time, and its span
+        // reports eligible seconds, not the wall clock (which includes 60s of
+        // pit stop).
+        for i in 0..800 {
+            t.sample(0, (i as f32 * 0.1).sin() * 0.4, true, clock);
+            clock += 0.05;
+        }
+        let rows = t.drain();
+        assert_eq!(rows.len(), 1);
+        let span = rows[0].1.span_secs;
+        assert!(
+            (59.0..62.0).contains(&span),
+            "span {span} must exclude the pit stop"
+        );
+    }
+
+    #[test]
+    fn a_continuity_break_resets_the_dwell_run() {
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        // Constant steer held 30 samples, a pit visit, constant again 30:
+        // the two runs must not join into one 60-sample dwell.
+        for _ in 0..30 {
+            t.sample(0, 0.25, true, clock);
+            clock += 0.05;
+        }
+        for _ in 0..20 {
+            t.sample(0, 0.0, false, clock);
+            clock += 0.05;
+        }
+        for _ in 0..30 {
+            t.sample(0, 0.25, true, clock);
+            clock += 0.05;
+        }
+        // Finish the epoch to read the counters.
+        for i in 0..1300 {
+            t.sample(0, (i as f32 * 0.1).sin() * 0.4, true, clock);
+            clock += 0.05;
+        }
+        let rows = t.drain();
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].1.dwell_max < 40,
+            "dwell {} bridged the pit visit",
+            rows[0].1.dwell_max
         );
     }
 
