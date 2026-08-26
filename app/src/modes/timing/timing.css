@@ -1,7 +1,8 @@
 /* Timing tower — Race Control's densest surface, columns matching the BoxBox
    mockup (Pos · ± · Driver · Status · Int · Gap · Last · Best · Sectors · ERS ·
-   Tyre · Fuel · Pits) in the dark instrument theme. Flat by default; teal only
-   for selection; semantic colour only for timing meaning. Consumes tokens.css. */
+   Tyre · Fuel · Pits · Input) in the dark instrument theme. Flat by default;
+   teal only for selection; semantic colour only for timing meaning. Consumes
+   tokens.css. */
 
 .tt {
   display: flex;
@@ -13,12 +14,12 @@
      the columns into a sparse smear. Pen sits between Driver and Status: the
      penalty total is a number stewards scan, so it gets a fixed column instead
      of jostling with the status chips. */
-  --tt-cols: 34px 40px minmax(132px, 1.5fr) 60px minmax(96px, 184px) 72px 80px 84px 84px 70px 100px 58px 58px 46px;
-  /* Must cover the columns at their MINIMUMS (1014px) + 13 gaps (156px) +
-     horizontal padding (32px) = 1202px, or the grid overflows its row and
+  --tt-cols: 34px 40px minmax(132px, 1.5fr) 60px minmax(96px, 184px) 72px 80px 84px 84px 70px 100px 58px 58px 46px 66px;
+  /* Must cover the columns at their MINIMUMS (1080px) + 14 gaps (168px) +
+     horizontal padding (32px) = 1280px, or the grid overflows its row and
      sticky-header boxes and the rightmost columns lose hover/selection paint. */
-  --tt-min: 1210px;
-  --tt-max: 1480px;
+  --tt-min: 1290px;
+  --tt-max: 1560px;
 }
 
 /* ---- Top bar: session + lap counter ------------------------------------- */
@@ -523,4 +524,48 @@
   .tt-table {
     animation: none;
   }
+}
+
+/* ---- INPUT column: estimated input device (steward evidence, never a
+   conviction — the title copy always says "estimated"). The device itself is
+   not a crime, so wheel/pad sit in neutral ink; ASSISTED is a league
+   violation and wears the caution colour; "?" stays faint. */
+.tt-c-input {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tt-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tt-input svg {
+  flex: none;
+}
+
+.tt-input.is-assisted {
+  color: var(--data-caution);
+}
+
+.tt-input-ast {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+/* A verdict that changed mid-session — itself worth a steward's eye. */
+.tt-input-flip {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--data-caution);
+}
+
+.tt-input-unknown {
+  color: var(--faint);
 }

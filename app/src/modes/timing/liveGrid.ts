@@ -89,6 +89,16 @@ export interface LiveDriver {
   telemetryPublic: boolean;
   showOnlineNames: boolean;
   liveryColours: { r: number; g: number; b: number }[];
+  /** AI-controlled car (Participants). Optional: older snapshots. */
+  aiControlled?: boolean;
+  /** Estimated input device (inputsig Phase 1). Absent until the classifier's
+   *  gates pass; always absent for AI and telemetry-restricted cars. */
+  inputSig?: {
+    verdict: "wheel" | "pad" | "assisted";
+    confidence: number;
+    sampleSecs?: number;
+    flippedThisSession?: boolean;
+  } | null;
 }
 
 /** The authoritative end-of-session result (Final Classification, packet 8). The
@@ -306,6 +316,7 @@ function stackedRow(c: ClassRow): DriverRow {
     flag: null,
     restricted: true,
     namePrivate: false,
+    inputSig: null,
   };
 }
 
@@ -407,6 +418,14 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
       // shown name is the game's redaction — surface a lock rather than passing it
       // off as their real name (P2.6).
       namePrivate: !d.showOnlineNames && d.nameOverride == null,
+      ai: d.aiControlled ?? false,
+      inputSig: d.inputSig
+        ? {
+            verdict: d.inputSig.verdict,
+            confidence: d.inputSig.confidence,
+            flipped: d.inputSig.flippedThisSession ?? false,
+          }
+        : null,
       // `?? []` / `?? 0`: snapshots saved to History before these fields existed
       // replay through this same mapper.
       live: {

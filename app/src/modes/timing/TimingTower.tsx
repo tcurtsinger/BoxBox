@@ -1,7 +1,7 @@
 import { useShell } from "../../shell/shell-context";
 import { useSharedRaceState } from "./RaceStateContext";
 import { useRovingGrid, type RovingRowProps } from "../../shell/useRovingGrid";
-import { LockIcon } from "../../shell/icons";
+import { GamepadIcon, LockIcon, SteeringWheelIcon } from "../../shell/icons";
 import {
   fmtLap,
   fmtSec,
@@ -108,6 +108,7 @@ export function TimingTower() {
             <span className="tt-h tt-a-c" role="columnheader">Tyre</span>
             <span className="tt-h tt-a-r" role="columnheader">Fuel</span>
             <span className="tt-h tt-a-c" role="columnheader">Pits</span>
+            <span className="tt-h tt-a-c" role="columnheader" aria-label="Estimated input device" title="Estimated input device">Input</span>
           </div>
 
           <div className="tt-body" role="rowgroup">
@@ -277,7 +278,60 @@ function Row({
       <span className="tt-c-pits tt-a-c" role="gridcell">
         <span className="tt-pit-badge mono">{d.pits}</span>
       </span>
+
+      <span className="tt-c-input tt-a-c" role="gridcell">
+        <InputSig d={d} />
+      </span>
     </div>
+  );
+}
+
+/** Estimated input device: icon + confidence. Never a conviction — the title
+ *  always says "estimated", and honest non-answers stay distinct: "—" when
+ *  there is no trace to judge (AI, restricted), "?" while the classifier's
+ *  gates (enough clean trace, 85% confidence, feed fidelity) aren't passed. */
+function InputSig({ d }: { d: DriverRow }) {
+  const sig = d.inputSig;
+  if (sig == null) {
+    if (d.ai || d.restricted) {
+      const why = d.ai ? "AI driver" : "telemetry restricted by driver";
+      return (
+        <span className="tt-restricted mono" aria-label={`No input estimate — ${why}`} title={`No input estimate — ${why}`}>
+          —
+        </span>
+      );
+    }
+    return (
+      <span
+        className="tt-input-unknown mono"
+        aria-label="Input device not yet estimated"
+        title="Estimated input: not enough clean trace yet"
+      >
+        ?
+      </span>
+    );
+  }
+  const pct = Math.round(sig.confidence * 100);
+  const device =
+    sig.verdict === "wheel" ? "wheel" : sig.verdict === "pad" ? "controller" : "assisted steering";
+  const label = `Estimated: ${device}, ${pct}%${sig.flipped ? " — changed mid-session" : ""}`;
+  return (
+    <span
+      className={`tt-input is-${sig.verdict}${sig.flipped ? " is-flipped" : ""}`}
+      role="img"
+      aria-label={label}
+      title={label}
+    >
+      {sig.verdict === "wheel" ? (
+        <SteeringWheelIcon size={14} />
+      ) : sig.verdict === "pad" ? (
+        <GamepadIcon size={14} />
+      ) : (
+        <span className="tt-input-ast">AST</span>
+      )}
+      <span className="mono">{pct}%</span>
+      {sig.flipped && <span className="tt-input-flip" aria-hidden="true" />}
+    </span>
   );
 }
 
