@@ -246,10 +246,42 @@ export function LeagueView() {
     );
   };
 
+  /** The record vanished (or won't pin) mid-attach — superseded by a newer
+   *  capture, most likely. Drop back to a FRESH session list so the steward
+   *  re-picks; their old fix-ups pointed at a snapshot that no longer exists. */
+  const failAttach = async (a: AttachState, message: string) => {
+    const sessions = await historyList();
+    setAttach({
+      ...a,
+      sessions: [...sessions].sort((x, y) => y.savedAtMs - x.savedAtMs),
+      sessionId: null,
+      proposals: null,
+      chosen: {},
+      warning: null,
+      error: message,
+    });
+  };
+
   const confirmAttach = async (a: AttachState) => {
     if (!league || !season || a.sessionId == null) return;
     const record = await historyGet(a.sessionId);
-    if (!record) return;
+    if (!record) {
+      await failAttach(a, "That archive no longer exists — it was likely replaced by a newer capture. Pick again.");
+      return;
+    }
+    // Pin BEFORE recording the id: pinned sessions survive retention pruning
+    // and supersede-replacement. An unpinned attach would recreate the
+    // silent source-loss problem, so a failed pin aborts the attach.
+    let pinned = false;
+    try {
+      pinned = await setSessionPinned(a.sessionId, true);
+    } catch {
+      pinned = false;
+    }
+    if (!pinned) {
+      await failAttach(a, `Couldn't pin "${record.name}" in History, so the attach was not saved. Pick again.`);
+      return;
+    }
     const rows = sessionResults(record.snapshot as unknown as RaceSnapshot);
     update((l) => {
       const s = l.seasons[0];
@@ -264,10 +296,6 @@ export function LeagueView() {
       l.roster = learnAliases(l.roster, a.chosen);
       return l;
     });
-    // Pin the record: pinned sessions survive both retention pruning and the
-    // archiver's supersede-replacement, so a round's source can't silently
-    // vanish out from under it.
-    void setSessionPinned(a.sessionId, true);
     setAttach(null);
   };
 
@@ -276,7 +304,16 @@ export function LeagueView() {
     if (value !== undefined && !Number.isFinite(value)) return;
     update((l) => {
       const r = l.seasons[0].rounds.find((x) => x.id === roundId);
-      if (r) r.points[driverId] = { ...r.points[driverId], [key]: value };
+      if (!r) return l;
+      const cells = { ...r.points[driverId], [key]: value };
+      // Clearing the last cell removes the entry entirely: an empty object
+      // would still read as "scored this round" (a zero, and a droppable
+      // round under best-N) instead of absent.
+      if (cells.quali === undefined && cells.race === undefined && cells.bonus === undefined && !cells.note) {
+        delete r.points[driverId];
+      } else {
+        r.points[driverId] = cells;
+      }
       return l;
     });
   };

@@ -104,6 +104,28 @@ describe("autoMatch", () => {
     expect(duplicateAssignments({ a: "max", b: "lando" }).size).toBe(0);
   });
 
+  it("a name shared by two roster drivers is resolved by race number, not finishing order", () => {
+    // Two league drivers whose online names both redact to "Player": if row
+    // order decided, a P1/P2 swap between sessions would silently swap their
+    // points while both rows look "exact".
+    const l = sampleLeague();
+    l.roster[0].aliases.push("Player"); // max, #1
+    l.roster[1].aliases.push("Player"); // lando, #4
+    const m = autoMatch(l.roster, [row(1, 4, "Player"), row(2, 1, "Player")]);
+    expect(m[0]).toMatchObject({ driverId: "lando", certainty: "exact" });
+    expect(m[1]).toMatchObject({ driverId: "max", certainty: "exact" });
+  });
+
+  it("a shared name with no number to split it stays unassigned", () => {
+    const l = sampleLeague();
+    l.roster[0].aliases.push("Player");
+    l.roster[1].aliases.push("Player");
+    // Row numbers match neither candidate: guessing would be silent-swap risk.
+    const m = autoMatch(l.roster, [row(1, 90, "Player"), row(2, 91, "Player")]);
+    expect(m[0]).toMatchObject({ driverId: null, certainty: "none" });
+    expect(m[1]).toMatchObject({ driverId: null, certainty: "none" });
+  });
+
   it("matches learned aliases case-insensitively", () => {
     const l = sampleLeague();
     l.roster[1].aliases.push("l4ndo_official");
@@ -198,6 +220,19 @@ describe("prefillPoints", () => {
     const matches = { [matchKey(1, 1, "VERSTAPPEN")]: "max" };
     const filled = prefillPoints(round, l.roster, rows, matches, F1_POINTS, "quali");
     expect(filled.points["max"]).toEqual({ race: 25, bonus: 1, quali: 0 });
+  });
+
+  it("stores matches per slot, so a race attach cannot overwrite quali attributions", () => {
+    // Positions repeat across sessions, so quali and race produce colliding
+    // keys with different (even opposite) assignments.
+    const l = sampleLeague();
+    let round = newRound(l.seasons[0]);
+    const quali = { [matchKey(1, 0, "Player")]: "max", [matchKey(2, 0, "Player")]: "lando" };
+    const race = { [matchKey(1, 0, "Player")]: "lando", [matchKey(2, 0, "Player")]: "max" };
+    round = prefillPoints(round, l.roster, [row(1, 0, "Player"), row(2, 0, "Player")], quali, F1_POINTS, "quali");
+    round = prefillPoints(round, l.roster, [row(1, 0, "Player"), row(2, 0, "Player")], race, F1_POINTS, "race");
+    expect(round.matches.quali[matchKey(1, 0, "Player")]).toBe("max");
+    expect(round.matches.race[matchKey(1, 0, "Player")]).toBe("lando");
   });
 });
 

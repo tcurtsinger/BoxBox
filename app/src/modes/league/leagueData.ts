@@ -48,8 +48,11 @@ export interface Round {
   label: string;
   qualiSessionId: string | null;
   raceSessionId: string | null;
-  /** matchKey ("pos|no|NAME") → league driver id, or null = not in league. */
-  matches: Record<string, string | null>;
+  /** Confirmed matches PER SLOT: matchKey ("pos|no|NAME") → league driver id,
+   *  or null = not in league. Keys are only collision-free within one session
+   *  (positions repeat across quali and race), so the two sessions must never
+   *  share a map — merged, a race attach would overwrite quali attributions. */
+  matches: { quali: Record<string, string | null>; race: Record<string, string | null> };
   /** The ledger: league driver id → manually-owned points cells. */
   points: Record<string, RoundPoints>;
 }
@@ -105,7 +108,7 @@ export function newRound(season: Season): Round {
     label: `Round ${number}`,
     qualiSessionId: null,
     raceSessionId: null,
-    matches: {},
+    matches: { quali: {}, race: {} },
     points: {},
   };
 }
@@ -160,14 +163,23 @@ export function autoMatch(roster: LeagueDriver[], rows: ClassRow[]): CarMatch[] 
     certainty: "none" as MatchCertainty,
   }));
 
-  // Pass 1: name claims (the strong signal) in row order.
+  // Pass 1: name claims (the strong signal) in row order. A name shared by
+  // several roster drivers (identical redacted online names) is only a claim
+  // when the race number singles one out — otherwise finishing order would
+  // pick between them, silently swapping people race to race, while looking
+  // "exact". Ambiguity stays unassigned for the steward.
   for (const [i, r] of rows.entries()) {
     const name = norm(r.name);
-    const byName = roster.find(
+    const candidates = roster.filter(
       (d) =>
         !used.has(d.id) &&
         (norm(d.displayName) === name || d.aliases.some((a) => norm(a) === name)),
     );
+    let byName = candidates.length === 1 ? candidates[0] : undefined;
+    if (!byName && candidates.length > 1) {
+      const byNo = candidates.filter((d) => d.raceNumber != null && d.raceNumber === r.no);
+      if (byNo.length === 1) byName = byNo[0];
+    }
     if (byName) {
       used.add(byName.id);
       out[i] = { ...out[i], driverId: byName.id, certainty: "exact" };
@@ -267,7 +279,7 @@ export function prefillPoints(
       column === "race" && r.status == null ? (pointsMap[r.pos - 1] ?? 0) : 0;
     points[driverId] = { ...points[driverId], [column]: value };
   }
-  return { ...round, matches: { ...round.matches, ...matches }, points };
+  return { ...round, matches: { ...round.matches, [column]: { ...matches } }, points };
 }
 
 export function roundTotal(p: RoundPoints | undefined): number {
