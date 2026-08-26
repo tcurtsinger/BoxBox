@@ -320,6 +320,12 @@ struct VerdictState {
     /// Last known AI-control state (None until Participants says). A handover
     /// in either direction voids the car's trace and verdict — see `set_ai`.
     last_ai: Option<bool>,
+    /// Newest session clock observed for this car, on ANY frame (eligible or
+    /// not). The flashback check compares against THIS, not the epoch
+    /// accumulator's clock — `finish()` zeroes that one, so an epoch closing
+    /// on the last eligible frame before a pit stay would otherwise leave a
+    /// rewind during the stay undetectable while the verdict lives on.
+    last_clock_seen: f64,
 }
 
 impl VerdictState {
@@ -402,20 +408,31 @@ impl InputSigTracker {
         // A rewound clock (flashback) invalidates the epoch in progress —
         // and the verdict with it: the current verdict, flip candidate and
         // lifetime clock were earned on a timeline that partially no longer
-        // exists. Checked BEFORE the eligibility gate: a rewind observed
-        // while the car sits in the pits/garage (ineligible frames) must
-        // still void its state, or the session clock catches back up during
-        // the stay and the erased timeline's verdict survives. `last_clock`
-        // only moves on eligible samples, so the comparison is valid on any
-        // frame. Honest cost: the car re-earns its verdict in 45s of clean
-        // trace. The margin keeps out-of-order datagrams (slightly stale
-        // session_time, no flashback) from voiding an earned verdict.
-        if clock < acc.last_clock - REWIND_MIN_SECS {
+        // exists. Checked BEFORE the eligibility gate (a rewind observed
+        // while the car sits in the pits must still void its state), against
+        // the verdict state's own clock — which, unlike the epoch
+        // accumulator's, survives epoch rollovers and advances on ineligible
+        // frames too. Honest cost: the car re-earns its verdict in 45s.
+        //
+        // A backwards step WITHIN the margin is an out-of-order datagram,
+        // not a flashback: the stale frame is dropped entirely — recording
+        // it would walk the accounting clock backwards and the next fresh
+        // frame would re-add the reordered interval, inflating eligible
+        // time and every per-second feature.
+        let seen = self.verdicts[idx].last_clock_seen;
+        if clock < seen - REWIND_MIN_SECS {
             let _ = acc.finish();
             self.verdicts[idx] = VerdictState {
                 last_ai: self.verdicts[idx].last_ai,
+                // The rewound timeline is the new reference — keeping the old
+                // one would read every post-flashback frame as "stale".
+                last_clock_seen: clock,
                 ..VerdictState::default()
             };
+        } else if clock < seen {
+            return;
+        } else {
+            self.verdicts[idx].last_clock_seen = clock;
         }
         let acc = &mut self.cars[idx];
 
@@ -974,6 +991,60 @@ mod tests {
         assert!(
             t.signature(0).is_some(),
             "a 200ms reorder is skew, not a flashback"
+        );
+    }
+
+    #[test]
+    fn a_pit_flashback_right_after_an_epoch_rollover_is_still_caught() {
+        // The epoch closes on the very last eligible frame (its accumulator
+        // clock resets to zero), the car enters the pits, and a flashback
+        // lands mid-stay. Detection must run off the verdict state's own
+        // clock — the accumulator's is gone with the rollover.
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        for i in 0..3620 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert_eq!(t.drain().len(), 1, "epoch closed just before the pits");
+        assert!(t.signature(0).is_some(), "verdict earned before the pits");
+        clock -= 20.0;
+        for _ in 0..1500 {
+            t.sample(0, 0.0, false, clock);
+            clock += 1.0 / 60.0; // 25s of pit frames — clock passes the old mark
+        }
+        assert!(
+            t.signature(0).is_none(),
+            "the rewind must be seen even though the epoch clock was reset"
+        );
+    }
+
+    #[test]
+    fn recurring_reorder_does_not_inflate_eligible_time() {
+        // Every other datagram arrives 200ms stale. Dropped, they contribute
+        // nothing; recorded, each stale/fresh pair would re-add the reordered
+        // interval and the 45s gate would pass in a fraction of real time.
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        for i in 0..2640 {
+            let s = (i as f32 * 0.9).sin() * 0.05 + 0.0007;
+            t.sample(0, s, true, clock);
+            t.sample(0, s, true, clock - 0.2); // reordered duplicate
+            clock += 1.0 / 60.0;
+        }
+        // 44s of REAL eligible time: under the gate — any signature here
+        // means stale frames inflated the clock.
+        assert!(
+            t.signature(0).is_none(),
+            "stale frames must not count toward the 45s gate"
+        );
+        for i in 0..240 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(
+            t.signature(0).is_some(),
+            "honest time still earns the verdict"
         );
     }
 
