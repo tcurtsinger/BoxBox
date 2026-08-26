@@ -394,19 +394,15 @@ impl InputSigTracker {
         }
         let acc = &mut self.cars[idx];
 
-        if !eligible {
-            // Continuity broken: deltas across a pit visit are meaningless,
-            // and a dwell run must not bridge two disconnected traces.
-            acc.prev_steer = None;
-            acc.prev_delta = None;
-            acc.dwell_run = 0;
-            return;
-        }
-
         // A rewound clock (flashback) invalidates the epoch in progress —
         // and the verdict with it: the current verdict, flip candidate and
         // lifetime clock were earned on a timeline that partially no longer
-        // exists. Honest cost: the car re-earns its verdict in 45s of clean
+        // exists. Checked BEFORE the eligibility gate: a rewind observed
+        // while the car sits in the pits/garage (ineligible frames) must
+        // still void its state, or the session clock catches back up during
+        // the stay and the erased timeline's verdict survives. `last_clock`
+        // only moves on eligible samples, so the comparison is valid on any
+        // frame. Honest cost: the car re-earns its verdict in 45s of clean
         // trace.
         if clock < acc.last_clock {
             let _ = acc.finish();
@@ -414,6 +410,16 @@ impl InputSigTracker {
                 last_ai: self.verdicts[idx].last_ai,
                 ..VerdictState::default()
             };
+        }
+        let acc = &mut self.cars[idx];
+
+        if !eligible {
+            // Continuity broken: deltas across a pit visit are meaningless,
+            // and a dwell run must not bridge two disconnected traces.
+            acc.prev_steer = None;
+            acc.prev_delta = None;
+            acc.dwell_run = 0;
+            return;
         }
 
         // The epoch clock counts ELIGIBLE time only: it advances by the gap to
@@ -944,6 +950,31 @@ mod tests {
         assert!(
             t.signature(0).is_none(),
             "the verdict was earned on a timeline that no longer exists"
+        );
+    }
+
+    #[test]
+    fn a_flashback_during_a_pit_stay_still_voids_the_verdict() {
+        // The rewind lands while the car is INELIGIBLE (pits). By the time it
+        // is back on track the session clock has caught up past the old
+        // last_clock — the rewind must have been caught on the ineligible
+        // frames, or the erased timeline's verdict survives.
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        for i in 0..3000 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(t.signature(0).is_some(), "verdict earned pre-flashback");
+        // Into the pits, then a flashback rewinds 20s mid-stay.
+        clock -= 20.0;
+        for _ in 0..1500 {
+            t.sample(0, 0.0, false, clock);
+            clock += 1.0 / 60.0; // 25s of pit frames — clock passes the old mark
+        }
+        assert!(
+            t.signature(0).is_none(),
+            "the rewind during ineligible frames must void the verdict"
         );
     }
 
