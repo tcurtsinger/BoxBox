@@ -40,6 +40,25 @@ pub fn session_category_of(session_type: Option<u8>) -> SessionCategory {
     }
 }
 
+/// Whether qualifying session type `prev` finishing is PROVEN by session type
+/// `next` starting at the same track: only the genuine next knockout segment
+/// (Q1→Q2, Q2→Q3, SS1→SS2, SS2→SS3), or a FINAL qualifying segment giving way
+/// to the race. A repeat, a rewind (Q2→Q1) or a format change is a restart or
+/// a separate event — no evidence at all.
+pub fn quali_advance_confirms(prev: u8, next: u8) -> bool {
+    matches!((prev, next), (5, 6) | (6, 7) | (10, 11) | (11, 12))
+        || (matches!(prev, 7..=9 | 12..=14)
+            && session_category_of(Some(next)) == SessionCategory::Race)
+}
+
+/// Intermediate knockout segments never receive their own final-classification
+/// packet — the cutover to the next segment is their natural end. Every other
+/// qualifying type (Q3, short, one-shot, SS3) does get a packet 8, so a
+/// missing one there really is provisional.
+pub fn intermediate_quali_segment(session_type: u8) -> bool {
+    matches!(session_type, 5 | 6 | 10 | 11)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum IncidentStatus {
@@ -540,16 +559,22 @@ impl SessionState {
             // Boundary churn: packets from the session we just left keep
             // arriving for a while after an online cutover. Re-entering would
             // wipe the new session and stage junk captures of the old uid —
-            // drop them instead, harvesting the one thing a stale packet can
-            // still prove: the departed session's chequered flag upgrades its
-            // held capture from silent just-in-case to announceable result.
+            // drop them instead, harvesting what a stale packet can still
+            // prove about the departed session: its chequered flag upgrades
+            // the held capture to announceable, and a late-arriving official
+            // classification (packet 8 interleaved behind the cutover) is
+            // adopted into the capture rather than lost.
             if self.recent_prior_uid.as_ref().is_some_and(|(uid, at)| {
                 *uid == h.session_uid && at_ms - at < UID_REENTRY_DEBOUNCE_MS
             }) {
-                if let Some(Body::Event(e)) = &pkt.data {
-                    if e.code == "SEND" || e.code == "CHQF" {
+                match &pkt.data {
+                    Some(Body::Event(e)) if e.code == "SEND" || e.code == "CHQF" => {
                         self.confirm_pending_capture(&h.session_uid);
                     }
+                    Some(Body::FinalClassification(f)) => {
+                        self.adopt_stale_classification(&h.session_uid, f);
+                    }
+                    _ => {}
                 }
                 return;
             }
@@ -607,30 +632,26 @@ impl SessionState {
                     }
                 }
                 // The new session's identity is itself finish evidence for the
-                // held capture: qualifying advancing to another segment (or the
-                // race) at the same track means the departed segment completed,
-                // even when its SEND was lost at the cutover. A RESTART (same
-                // segment type) proves the opposite — an abandoned attempt —
-                // and stays silent.
+                // held capture: qualifying advancing to the NEXT knockout
+                // segment (or a final segment giving way to the race) at the
+                // same track means the departed segment completed, even when
+                // its SEND was lost at the cutover. Anything else — a restart
+                // of the same type, a rewind (Q2→Q1), a format change — is a
+                // restarted or separate event and stays silent.
                 if let Some(pending) = self.pending_auto_archive.as_deref() {
                     let pending_is_recent_prior = self
                         .recent_prior_uid
                         .as_ref()
                         .is_some_and(|(uid, _)| *uid == pending.session_uid);
-                    let pending_quali =
-                        session_category_of(pending.session.as_ref().map(|x| x.session_type))
-                            == SessionCategory::Qualifying;
                     let same_track = pending
                         .session
                         .as_ref()
                         .is_some_and(|p| p.track_id == s.track_id);
-                    let advanced = pending.session.as_ref().map(|p| p.session_type)
-                        != Some(s.session_type)
-                        && matches!(
-                            session_category_of(Some(s.session_type)),
-                            SessionCategory::Qualifying | SessionCategory::Race
-                        );
-                    if pending_is_recent_prior && pending_quali && same_track && advanced {
+                    let advanced = pending
+                        .session
+                        .as_ref()
+                        .is_some_and(|p| quali_advance_confirms(p.session_type, s.session_type));
+                    if pending_is_recent_prior && same_track && advanced {
                         let uid = pending.session_uid.clone();
                         self.confirm_pending_capture(&uid);
                     }
@@ -815,6 +836,22 @@ impl SessionState {
         {
             self.pending_archive_announce = true;
             self.pending_archive_hold_until = 0.0;
+        }
+    }
+
+    /// A packet 8 interleaved behind the cutover (stale uid) is still THE
+    /// official classification of the departed session: fold it into the held
+    /// capture — positions, DSQs and all — instead of archiving live timing.
+    fn adopt_stale_classification(&mut self, uid: &str, f: &FinalClassificationData) {
+        if f.classification.is_empty() {
+            return;
+        }
+        if let Some(snap) = self.pending_auto_archive.as_deref_mut() {
+            if snap.session_uid == uid && snap.final_classification.is_none() {
+                snap.final_classification = Some(f.clone());
+                self.pending_archive_announce = true;
+                self.pending_archive_hold_until = 0.0;
+            }
         }
     }
 
@@ -2690,6 +2727,95 @@ mod tests {
             )
             .expect("hold elapsed - archive proceeds");
         assert!(!announce, "still no evidence: archived silently");
+    }
+
+    #[test]
+    fn rewind_or_format_change_does_not_confirm_the_held_capture() {
+        // Q2 abandoned mid-run; the host rewinds to a fresh Q1 at the same
+        // track. That is a restart of the event, not proof Q2 finished — the
+        // capture must stay silent.
+        let mut st = SessionState::new();
+        st.ingest(&session("Q2", 6), 0.0);
+        st.ingest(&participants("Q2", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("Q2", vec![lap_entry(0, 1, 1, 79_000, 2)]), 0.0);
+        st.ingest(&session("Q1B", 5), 1_000.0);
+        assert!(
+            st.take_pending_auto_archive_with_announce(1_100.0, false)
+                .is_none(),
+            "held - a rewind is not finish evidence"
+        );
+        let (_, announce, _) = st
+            .take_pending_auto_archive_with_announce(
+                1_000.0 + PENDING_ANNOUNCE_HOLD_MS + 1.0,
+                false,
+            )
+            .expect("archives after the hold");
+        assert!(!announce, "never announced without real evidence");
+    }
+
+    #[test]
+    fn final_segment_to_race_confirms_the_held_capture() {
+        // Q3 giving way to the race at the same track proves Q3 completed.
+        let mut st = SessionState::new();
+        st.ingest(&session("Q3", 7), 0.0);
+        st.ingest(&participants("Q3", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("Q3", vec![lap_entry(0, 1, 1, 77_500, 2)]), 0.0);
+        st.ingest(&session("R", 15), 1_000.0);
+        let (snap, announce, _) = st
+            .take_pending_auto_archive_with_announce(1_100.0, false)
+            .expect("Q3 capture staged");
+        assert_eq!(snap.session_uid, "Q3");
+        assert!(announce, "the race starting is finish evidence for Q3");
+    }
+
+    #[test]
+    fn stale_classification_is_adopted_into_the_held_capture() {
+        // Packet 8 interleaved BEHIND the cutover: the official result of the
+        // departed session must upgrade the held capture, not be dropped with
+        // the stale packet.
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&session("B", 15), 1_000.0);
+        assert!(st
+            .take_pending_auto_archive_with_announce(1_100.0, false)
+            .is_none());
+        let official = pkt(
+            8,
+            "A",
+            Body::FinalClassification(FinalClassificationData {
+                num_cars: 1,
+                classification: vec![FinalClassificationEntry {
+                    index: 0,
+                    position: 1,
+                    num_laps: 20,
+                    grid_position: 1,
+                    points: 25,
+                    num_pit_stops: 1,
+                    result_status: 3,
+                    result_reason: 0,
+                    best_lap_time_in_ms: 80_000,
+                    total_race_time: 5_400.0,
+                    penalties_time: 0,
+                    num_penalties: 0,
+                    num_tyre_stints: 1,
+                    tyre_stints_actual: vec![],
+                    tyre_stints_visual: vec![],
+                    tyre_stints_end_laps: vec![],
+                }],
+            }),
+        );
+        st.ingest(&official, 1_500.0);
+        let (snap, announce, _) = st
+            .take_pending_auto_archive_with_announce(1_600.0, false)
+            .expect("adoption releases the hold");
+        assert_eq!(snap.session_uid, "A");
+        assert!(announce, "an official classification announces");
+        assert!(
+            snap.final_classification.is_some(),
+            "the capture carries the official result, not just live timing"
+        );
     }
 
     #[test]

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::packets::FinalClassificationEntry;
-use crate::racecontrol::state::SessionCategory;
+use crate::racecontrol::state::{intermediate_quali_segment, SessionCategory};
 use crate::racecontrol::{MajorIncident, SessionSnapshot};
 
 // Embed accent colours (BoxBox teal for results, red for incidents).
@@ -451,22 +451,20 @@ fn build_provisional_results_embed(snap: &SessionSnapshot, quali: bool) -> Optio
         })
         .collect();
 
+    let stype = snap.session.as_ref().map(|s| s.session_type).unwrap_or(0);
     let what = if quali {
-        format!(
-            "{} result",
-            session_name(snap.session.as_ref().map(|s| s.session_type).unwrap_or(0))
-        )
+        format!("{} result", session_name(stype))
     } else {
         "Race result".to_string()
     };
-    // Only a RACE without packet 8 is genuinely provisional — the official
-    // classification can still reorder it (post-race penalties, DSQs). A
-    // qualifying segment never gets a per-segment classification from the
-    // game at all (Q1→Q2 just cuts over; packet 8 covers only the final
-    // segment, and online even that is routinely lost), and quali times are
-    // final the moment the flag falls — so the flag standings ARE the result
-    // and the post says so plainly instead of crying wolf every segment.
-    let (title, footer) = if quali {
+    // Only an INTERMEDIATE knockout segment gets the calm treatment: the game
+    // never sends it a per-segment classification (Q1→Q2 just cuts over), and
+    // its times are final at the flag — the flag standings ARE the result.
+    // Everything else without packet 8 is genuinely provisional: a race's
+    // official classification can reorder it (penalties, DSQs), and a FINAL
+    // qualifying segment (Q3, short, one-shot, SS3) does get its own packet 8
+    // carrying classification-only outcomes the live order can't know.
+    let (title, footer) = if quali && intermediate_quali_segment(stype) {
         (
             match &snap.track_name {
                 Some(track) => format!("{what} — {track}"),
@@ -758,6 +756,32 @@ mod tests {
         assert!(!footer.contains("never arrived"), "{footer}");
         let d = description(&v);
         assert!(d.lines().nth(1).unwrap().contains("+0.500"), "{d}");
+    }
+
+    #[test]
+    fn final_segment_fallback_stays_provisional() {
+        // Q3 DOES get its own packet 8 — a missing one may hide DSQs and
+        // classification-only outcomes, so the fallback must keep the alarm.
+        use crate::racecontrol::state::DriverState;
+        let mut s = snap(7, vec![]);
+        s.final_classification = None;
+        s.session = Some(SessionData {
+            session_type: 7,
+            ..Default::default()
+        });
+        s.session_category = session_category_of(Some(7));
+        let mut d = DriverState::default();
+        d.index = 0;
+        d.name = "Rossi".into();
+        d.race_number = 16;
+        d.best_lap_ms = 80_000;
+        s.drivers = vec![d];
+
+        let v = build_results_embed(&s).expect("Q3 fallback");
+        let title = v["embeds"][0]["title"].as_str().unwrap();
+        assert!(title.contains("(provisional)"), "{title}");
+        let footer = v["embeds"][0]["footer"]["text"].as_str().unwrap();
+        assert!(footer.contains("never arrived"), "{footer}");
     }
 
     #[test]
