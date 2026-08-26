@@ -2,7 +2,7 @@
  * The Dashboard's demo frame for sample mode / the browser preview: a full
  * 22-car race with a little of everything on show — worn fronts, a scuffed
  * wing, a fresh penalty on the banner, a pit window, weather rolling in, and
- * boost in range so the tile lights.
+ * active aero in straight mode so the S MODE tile lights.
  */
 import type { RaceSnapshot, LiveDriver } from "../timing/liveGrid";
 
@@ -85,10 +85,12 @@ function car(i: number): LiveDriver {
     ersDeployMode: 1,
     fuelMix: 2,
     fiaFlags: 0,
+    // Mid-straight frame: boost armed but not held (quiet READY), active aero
+    // open in straight mode so the S MODE tile shows its lit state.
     overtakeActive: false,
     overtakeAvailable: isPlayer,
-    activeAeroMode: 0,
-    activeAeroAvailable: false,
+    activeAeroMode: 1,
+    activeAeroAvailable: isPlayer,
     drsAllowed: false,
     drs: false,
     telemetryPublic: true,

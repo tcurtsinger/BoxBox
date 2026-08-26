@@ -870,7 +870,12 @@
   --dash-tile-tint: var(--data-good-tint);
 }
 
-.dash-tile.is-ready {
+/* READY colours only the DRS tile (2025 cars): a DRS zone is a momentary
+   window worth catching the eye for. The 2026 systems arm near-constantly
+   (boost is driver-discretion, aero straights are every straight), so a
+   coloured READY would keep both tiles lit all race — they stay in the
+   inactive look and take their HUD colour only while genuinely ACTIVE. */
+.dash-tile.is-drs.is-ready {
   border-color: var(--dash-tile-color);
   background: var(--dash-tile-tint);
   color: var(--dash-tile-color);
