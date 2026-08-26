@@ -21,6 +21,7 @@ import {
   fmtDeltaToBest,
   systemAvailabilityState,
   DEPLOY_MODES,
+  DEPLOY_MODES_26,
   type CornerCell,
   type TowerRow,
   type WeatherGlyph,
@@ -436,13 +437,13 @@ export function DashboardView() {
             </section>
 
             {/* Row 3 — bottom register */}
-            <section className="dash-tiles" aria-label="Boost and S mode">
+            <section className="dash-tiles" aria-label="Overtake and S mode">
               {data.is26 ? (
                 <>
                   <div
-                    className={`dash-tile is-boost is-${boostState}`}
+                    className={`dash-tile is-overtake is-${boostState}`}
                   >
-                    <span className="dash-tile-name">BOOST</span>
+                    <span className="dash-tile-name">OVERTAKE</span>
                     <span className="dash-tile-state">{SYSTEM_STATE_LABEL[boostState]}</span>
                   </div>
                   <div
@@ -502,7 +503,7 @@ export function DashboardView() {
             <section className="dash-deploy-panel" aria-label="Deployment">
               <span className="dash-label">Deploy</span>
               <div className="dash-deploy" role="list" aria-label="ERS deploy mode">
-                {DEPLOY_MODES.map((m, i) => (
+                {(data.is26 ? DEPLOY_MODES_26 : DEPLOY_MODES).map((m, i) => (
                   <span
                     key={m}
                     role="listitem"
