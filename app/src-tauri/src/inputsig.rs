@@ -312,9 +312,20 @@ struct VerdictState {
     /// Session-lifetime eligible seconds (epochs reset; this doesn't).
     total_eligible: f64,
     last_eval: f64,
+    /// Last known AI-control state (None until Participants says). A handover
+    /// in either direction voids the car's trace and verdict — see `set_ai`.
+    last_ai: Option<bool>,
 }
 
 impl VerdictState {
+    /// An evaluation ran but produced no qualified verdict (fidelity dip,
+    /// confidence under the gate): a flip candidate's hold is broken — the
+    /// competing class must hold CONTINUOUSLY for a full window, not merely
+    /// bracket a stretch of UNKNOWN with two matching sightings.
+    fn note_unqualified(&mut self) {
+        self.candidate = None;
+    }
+
     fn observe(&mut self, verdict: InputVerdict, confidence: f32, f: SigFeatures, secs: f64) {
         let sig = |flipped| InputSignature {
             verdict,
@@ -392,9 +403,17 @@ impl InputSigTracker {
             return;
         }
 
-        // A rewound clock (flashback) invalidates the epoch in progress.
+        // A rewound clock (flashback) invalidates the epoch in progress —
+        // and the verdict with it: the current verdict, flip candidate and
+        // lifetime clock were earned on a timeline that partially no longer
+        // exists. Honest cost: the car re-earns its verdict in 45s of clean
+        // trace.
         if clock < acc.last_clock {
             let _ = acc.finish();
+            self.verdicts[idx] = VerdictState {
+                last_ai: self.verdicts[idx].last_ai,
+                ..VerdictState::default()
+            };
         }
 
         // The epoch clock counts ELIGIBLE time only: it advances by the gap to
@@ -447,14 +466,23 @@ impl InputSigTracker {
         if vs.last_eval > acc.eligible_secs {
             vs.last_eval = 0.0;
         }
-        if acc.eligible_secs >= VERDICT_MIN_SECS
+        // While the game's AI drives the car, its trace must never earn a
+        // verdict — an ASSISTED verdict from a disconnect period would
+        // resurface as "evidence" the moment the human takes the car back.
+        // (Counters still accumulate: Phase-0 logging labels rows with
+        // aiControlled at drain time, and AI epochs are tuning data.)
+        if vs.last_ai != Some(true)
+            && acc.eligible_secs >= VERDICT_MIN_SECS
             && acc.eligible_secs - vs.last_eval >= EVAL_PERIOD_SECS
         {
             vs.last_eval = acc.eligible_secs;
             if let Some(counters) = acc.peek() {
-                if let Some((v, conf, f)) = classify(&counters) {
-                    let secs = acc.eligible_secs;
-                    vs.observe(v, conf, f, secs);
+                match classify(&counters) {
+                    Some((v, conf, f)) => {
+                        let secs = acc.eligible_secs;
+                        vs.observe(v, conf, f, secs);
+                    }
+                    None => vs.note_unqualified(),
                 }
             }
         }
@@ -463,6 +491,28 @@ impl InputSigTracker {
             if let Some(c) = acc.finish() {
                 self.pending.push((idx, c));
             }
+        }
+    }
+
+    /// Note the car's AI-control state (from Participants) before sampling.
+    /// A handover in EITHER direction voids the epoch in progress and the
+    /// sticky verdict: a verdict must never span a control change, or the
+    /// AI's trace becomes "evidence" against the human who takes the car
+    /// back (and vice versa).
+    pub fn set_ai(&mut self, idx: usize, ai: bool) {
+        if idx >= 64 {
+            return;
+        }
+        if self.cars.len() <= idx {
+            self.cars.resize_with(idx + 1, CarAcc::default);
+            self.verdicts.resize_with(idx + 1, VerdictState::default);
+        }
+        if self.verdicts[idx].last_ai != Some(ai) {
+            if self.verdicts[idx].last_ai.is_some() {
+                self.cars[idx] = CarAcc::default();
+                self.verdicts[idx] = VerdictState::default();
+            }
+            self.verdicts[idx].last_ai = Some(ai);
         }
     }
 
@@ -820,6 +870,81 @@ mod tests {
         vs.total_eligible = 160.0;
         vs.observe(InputVerdict::Pad, 0.92, f, 50.0);
         assert!(vs.candidate.is_none());
+    }
+
+    #[test]
+    fn an_unknown_gap_breaks_a_flip_candidates_hold() {
+        let mut vs = VerdictState::default();
+        let f = derive_features(&controller_epoch());
+        vs.total_eligible = 60.0;
+        vs.observe(InputVerdict::Wheel, 0.9, f.clone(), 60.0);
+        // A competing sighting starts a candidate…
+        vs.total_eligible = 90.0;
+        vs.observe(InputVerdict::Pad, 0.9, f.clone(), 45.0);
+        assert!(vs.candidate.is_some());
+        // …then 60s of UNKNOWN (fidelity dip): the hold is broken.
+        vs.total_eligible = 155.0;
+        vs.note_unqualified();
+        assert!(vs.candidate.is_none());
+        // One later matching sighting must START OVER, not complete a "hold"
+        // that bracketed a minute of nothing.
+        vs.observe(InputVerdict::Pad, 0.9, f, 45.0);
+        assert_eq!(
+            vs.current.as_ref().unwrap().verdict,
+            InputVerdict::Wheel,
+            "no flip without a continuously-held competing window"
+        );
+    }
+
+    #[test]
+    fn ai_handover_voids_trace_and_verdict() {
+        // AI drives first (disconnect / pit-assist scenario): machine dither
+        // that would classify ASSISTED — but AI trace must never become a
+        // verdict the human inherits on taking the car back.
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        t.set_ai(0, true);
+        for i in 0..3300 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(t.signature(0).is_none(), "AI trace earns no verdict");
+        // The human takes over — the epoch AND verdict state restart, so
+        // nothing shows until 45s of the HUMAN's own trace exists.
+        t.set_ai(0, false);
+        for i in 0..1200 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(
+            t.signature(0).is_none(),
+            "20s after the handover: the AI's 55s must not count"
+        );
+        for i in 0..1800 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(
+            t.signature(0).is_some(),
+            "the human's own 50s of (assist-like) trace earns its verdict"
+        );
+    }
+
+    #[test]
+    fn a_flashback_voids_the_verdict_with_the_epoch() {
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        for i in 0..3000 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(t.signature(0).is_some(), "verdict earned pre-flashback");
+        clock -= 20.0;
+        t.sample(0, 0.01, true, clock);
+        assert!(
+            t.signature(0).is_none(),
+            "the verdict was earned on a timeline that no longer exists"
+        );
     }
 
     #[test]
