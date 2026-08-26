@@ -3,6 +3,7 @@ mod engineer;
 mod export;
 mod history;
 mod inputsig;
+mod league;
 mod packets;
 mod persist;
 mod racecontrol;
@@ -32,6 +33,7 @@ pub fn run() {
         .manage(RaceStore::default())
         .manage(TuneLibraryState::default())
         .manage(HistoryState::default())
+        .manage(league::LeagueState::default())
         .setup(|app| {
             // Resolve the per-install data files in the app config dir and load them
             // into the in-memory engines, sharing each store with the listener +
@@ -66,6 +68,13 @@ pub fn run() {
                 history.load_into(&mut a, telemetry::now_ms());
             }
             app.manage(HistoryStoreState(history));
+
+            let leagues = Arc::new(league::LeagueStore::new(resolve("leagues.json")));
+            let book = app.state::<league::LeagueState>().0.clone();
+            if let Ok(mut b) = book.lock() {
+                leagues.load_into(&mut b);
+            }
+            app.manage(league::LeagueStoreState(leagues));
 
             // Discord webhook posts: load the saved config and start the poster
             // thread (idle until a job arrives; config re-checked per job).
@@ -118,6 +127,9 @@ pub fn run() {
             telemetry::rename_session,
             telemetry::set_history_retention,
             telemetry::history_retention,
+            league::league_list,
+            league::league_save,
+            league::league_delete,
             discord::discord_config,
             discord::set_discord_config,
             discord::discord_test,

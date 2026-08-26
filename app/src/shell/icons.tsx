@@ -83,6 +83,17 @@ export function DashboardIcon({ size = 16, className }: IconProps) {
   );
 }
 
+/** Trophy: the League section (standings, rounds, roster). */
+export function TrophyIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M8 4h8v5a4 4 0 0 1-8 0z" />
+      <path d="M8 5H5.5a0 0 0 0 0 0 0c0 2.5 1 4 2.5 4.5M16 5h2.5c0 2.5-1 4-2.5 4.5" />
+      <path d="M12 13v3.5M9 20h6M10.5 16.5h3" />
+    </svg>
+  );
+}
+
 export function StopwatchIcon({ size = 16, className }: IconProps) {
   return (
     <svg {...base(size)} className={className}>

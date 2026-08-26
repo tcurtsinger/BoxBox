@@ -835,6 +835,9 @@ fn spawn_listener(
 /// it — and leaves evidence in the log.
 /// Archive a drained session result (official or provisional) and queue its
 /// Discord post. Shared by the packet path, the idle tick and the stop path.
+// Wide by design: it's the one convergence point of three drain sites, and its
+// arguments are the listener's whole shared-state set.
+#[allow(clippy::too_many_arguments)]
 fn process_staged_result(
     app: &AppHandle,
     race: &Arc<Mutex<SessionState>>,
@@ -1524,7 +1527,16 @@ pub fn set_session_pinned(
 ) -> Result<bool, String> {
     let mut a = archive.0.lock().unwrap_or_else(|p| p.into_inner());
     let ok = a.set_pinned(&id, pinned);
-    store.0.save_if_changed(&a);
+    // A pin is a durability promise — League attaches rely on it to keep a
+    // round's source alive across restarts. If the disk write failed, roll the
+    // in-memory flag back and say so instead of returning a phantom success
+    // that evaporates on restart. (`is_current` distinguishes "nothing to
+    // write" — e.g. the flag was already in the requested state — from a
+    // failed write.)
+    if ok && !store.0.save_if_changed(&a) && !store.0.is_current(&a) {
+        a.set_pinned(&id, !pinned);
+        return Err("couldn't write history.json — the pin is not saved to disk".into());
+    }
     Ok(ok)
 }
 

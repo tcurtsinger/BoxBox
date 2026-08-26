@@ -122,18 +122,21 @@ pub fn spawn_poster(config: Arc<Mutex<DiscordConfig>>) -> SyncSender<DiscordJob>
 /// POST one webhook payload; retry once after Discord's 429 window.
 fn post(url: &str, body: &Value) -> Result<(), String> {
     match send(url, body) {
-        Err(ureq::Error::Status(429, _)) => {
+        Err(e) if matches!(*e, ureq::Error::Status(429, _)) => {
             std::thread::sleep(RETRY_AFTER_429);
-            send(url, body).map(|_| ()).map_err(short_err)
+            send(url, body).map(|_| ()).map_err(|e| short_err(*e))
         }
-        other => other.map(|_| ()).map_err(short_err),
+        other => other.map(|_| ()).map_err(|e| short_err(*e)),
     }
 }
 
-fn send(url: &str, body: &Value) -> Result<ureq::Response, ureq::Error> {
+// The error is boxed because ureq's is ~272 bytes — carried by value it would
+// bloat every Result on the happy path (clippy::result_large_err).
+fn send(url: &str, body: &Value) -> Result<ureq::Response, Box<ureq::Error>> {
     ureq::post(url)
         .timeout(Duration::from_secs(10))
         .send_json(body.clone())
+        .map_err(Box::new)
 }
 
 // Error strings must never embed the URL (it contains the webhook token), but

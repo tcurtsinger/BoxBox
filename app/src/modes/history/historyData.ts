@@ -23,6 +23,11 @@ export interface SessionRecord {
   name: string;
   savedAtMs: number;
   pinned: boolean;
+  /** Auto-created by the archiver (vs user-saved). */
+  auto?: boolean;
+  /** A just-in-case boundary capture with NO finish evidence — possibly an
+   *  abandoned attempt; may later be superseded by a real result. */
+  unconfirmed?: boolean;
   snapshot: RaceSnapshot;
 }
 
