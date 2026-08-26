@@ -855,6 +855,9 @@ pub struct CarStatusEntry {
     pub ers_deploy_mode: u8,
     pub ers_deployed_this_lap: f32,
     pub battery_pct: f32,
+    /// This car's player has the game paused (online): telemetry keeps
+    /// repeating frozen frames that must not count as trace evidence.
+    pub network_paused: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -896,7 +899,7 @@ fn parse_car_status(rd: &mut Reader, header: &PacketHeader) -> CarStatusData {
             rd.f32(); // ersHarvestLimitPerLap (2026 only)
         }
         let ers_deployed_this_lap = rd.f32();
-        rd.u8(); // networkPaused
+        let network_paused = rd.u8();
 
         let battery_pct = ((ers_store_energy / ERS_MAX_JOULES) * 100.0).clamp(0.0, 100.0);
 
@@ -919,6 +922,7 @@ fn parse_car_status(rd: &mut Reader, header: &PacketHeader) -> CarStatusData {
             ers_deploy_mode,
             ers_deployed_this_lap,
             battery_pct,
+            network_paused: network_paused == 1,
         });
     }
 

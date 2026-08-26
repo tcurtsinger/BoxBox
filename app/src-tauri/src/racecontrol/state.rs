@@ -232,6 +232,10 @@ pub struct DriverState {
     /// Assists (CarStatus): weak input-device priors for the signature log.
     pub traction_control: u8,
     pub anti_lock_brakes: bool,
+    /// This car's player has the game paused (CarStatus networkPaused):
+    /// telemetry repeats frozen frames that must not count as trace evidence.
+    #[serde(skip)]
+    pub network_paused: bool,
     pub fia_flags: i8,
     pub drs_allowed: bool,
     // 2026 active-aero / overtake (CarTelemetry2; replaces DRS)
@@ -1156,6 +1160,7 @@ impl SessionState {
             d.fuel_mix = c.fuel_mix;
             d.traction_control = c.traction_control;
             d.anti_lock_brakes = c.anti_lock_brakes;
+            d.network_paused = c.network_paused;
             d.fia_flags = c.vehicle_fia_flags;
             d.drs_allowed = c.drs_allowed;
         }
@@ -1173,9 +1178,11 @@ impl SessionState {
                 d.tyre_surface_temp = c.tyres_surface_temperature.clone();
                 d.tyre_inner_temp = c.tyres_inner_temperature.clone();
                 // Signature samples only count while genuinely running on
-                // track: pits, garage and crawling laps pollute the trace.
+                // track: pits, garage, crawling laps and a paused game (which
+                // repeats frozen frames) all pollute the trace.
                 eligible = d.pit_status == 0
                     && matches!(d.driver_status, 1 | 4)
+                    && !d.network_paused
                     && c.speed >= crate::inputsig::SPEED_MIN_KMH;
             }
             self.input_sig
@@ -1207,6 +1214,9 @@ impl SessionState {
                     "name": d.name_override.clone().unwrap_or_else(|| d.name.clone()),
                     "raceNumber": d.race_number,
                     "telemetryPublic": d.telemetry_public,
+                    // AI steering resembles the ASSISTED class — the tuner
+                    // must be able to filter (or study) these rows.
+                    "aiControlled": d.ai_controlled,
                     "tractionControl": d.traction_control,
                     "absOn": d.anti_lock_brakes,
                     "counters": c,
