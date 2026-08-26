@@ -1211,7 +1211,14 @@ impl SessionState {
                     "sessionType": self.session.as_ref().map(|s| s.session_type),
                     "weather": self.session.as_ref().map(|s| s.weather),
                     "carIndex": idx,
-                    "name": d.name_override.clone().unwrap_or_else(|| d.name.clone()),
+                    // Resolve overrides from the race-number map like the
+                    // snapshot path does — the per-driver copy is stale after
+                    // a session reset, and this name is the ground-truth key.
+                    "name": self
+                        .name_overrides
+                        .get(&d.race_number)
+                        .cloned()
+                        .unwrap_or_else(|| d.name.clone()),
                     "raceNumber": d.race_number,
                     "telemetryPublic": d.telemetry_public,
                     // AI steering resembles the ASSISTED class — the tuner
