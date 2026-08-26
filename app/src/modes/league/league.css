@@ -478,6 +478,26 @@
   cursor: not-allowed;
 }
 
+/* A failed disk write: loud, persistent, with the way out on the banner. */
+.lg-savefail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  background: var(--data-danger-tint);
+  border: 1px solid var(--data-danger);
+  border-radius: var(--radius-md);
+  color: var(--data-danger);
+  font-size: var(--text-body);
+  font-weight: 600;
+  padding: 10px 14px;
+}
+
+.lg-savefail-detail {
+  font-weight: 450;
+  opacity: 0.85;
+}
+
 .lg-matchcar {
   font-size: var(--text-body);
   font-weight: 600;

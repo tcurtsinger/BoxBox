@@ -48,7 +48,7 @@ export interface Round {
   label: string;
   qualiSessionId: string | null;
   raceSessionId: string | null;
-  /** carIdentity ("no|NAME") → league driver id, or null = not in league. */
+  /** matchKey ("pos|no|NAME") → league driver id, or null = not in league. */
   matches: Record<string, string | null>;
   /** The ledger: league driver id → manually-owned points cells. */
   points: Record<string, RoundPoints>;
@@ -112,15 +112,26 @@ export function newRound(season: Season): Round {
 
 // --- Identity matching ---------------------------------------------------------
 
-/** The stable per-session identity: race number + name (indices re-pack). */
-export function carIdentity(no: number, name: string): string {
-  return `${no}|${name}`;
+/** The per-session match key. Classified position leads because it is the one
+ *  field guaranteed unique per session — two cars can share a race number AND
+ *  a (redacted) name online, and colliding keys would couple their
+ *  assignments and overwrite each other's points. */
+export function matchKey(pos: number, no: number, name: string): string {
+  return `${pos}|${no}|${name}`;
+}
+
+/** The name portion of a match key (position and number lead it). */
+export function matchKeyName(key: string): string {
+  const parts = key.split("|");
+  return parts.slice(2).join("|");
 }
 
 export type MatchCertainty = "exact" | "probable" | "none";
 
 export interface CarMatch {
-  identity: string;
+  /** Collision-free working key (see matchKey). */
+  key: string;
+  pos: number;
   no: number;
   name: string;
   /** Proposed roster driver (null = not in league). */
@@ -141,7 +152,8 @@ const norm = (s: string) => s.trim().toLowerCase();
 export function autoMatch(roster: LeagueDriver[], rows: ClassRow[]): CarMatch[] {
   const used = new Set<string>();
   const out: CarMatch[] = rows.map((r) => ({
-    identity: carIdentity(r.no, r.name),
+    key: matchKey(r.pos, r.no, r.name),
+    pos: r.pos,
     no: r.no,
     name: r.name,
     driverId: null,
@@ -196,9 +208,9 @@ export function learnAliases(
   matches: Record<string, string | null>,
 ): LeagueDriver[] {
   const next = roster.map((d) => ({ ...d, aliases: [...d.aliases] }));
-  for (const [identity, driverId] of Object.entries(matches)) {
+  for (const [key, driverId] of Object.entries(matches)) {
     if (driverId == null) continue;
-    const name = identity.slice(identity.indexOf("|") + 1);
+    const name = matchKeyName(key);
     const d = next.find((x) => x.id === driverId);
     if (!d) continue;
     const known =
@@ -245,7 +257,7 @@ export function prefillPoints(
 ): Round {
   const points: Record<string, RoundPoints> = { ...round.points };
   for (const r of rows) {
-    const driverId = matches[carIdentity(r.no, r.name)];
+    const driverId = matches[matchKey(r.pos, r.no, r.name)];
     if (driverId == null) continue;
     const driver = roster.find((d) => d.id === driverId);
     if (!driver || driver.wildcard) continue;

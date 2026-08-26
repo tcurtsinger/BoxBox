@@ -34,8 +34,10 @@ interface AttachState {
   sessionId: string | null;
   /** Proposed matches once a session is loaded. */
   proposals: CarMatch[] | null;
-  /** Steward's working copy: identity → driverId | null. */
+  /** Steward's working copy: match key → driverId | null. */
   chosen: Record<string, string | null>;
+  /** Wrong-category pick (quali archive on the race slot or vice versa). */
+  error: string | null;
 }
 
 function AttachDialog({
@@ -54,13 +56,29 @@ function AttachDialog({
     const record = await historyGet(id);
     if (!record) return;
     const snap = record.snapshot as unknown as RaceSnapshot;
+    // The slot names what it expects — a qualifying archive on the race slot
+    // would award race points from the qualifying order.
+    const cat = snap.sessionCategory;
+    const mismatch =
+      (attach.slot === "race" && cat === "qualifying") ||
+      (attach.slot === "quali" && cat === "race");
+    if (mismatch) {
+      setAttach({
+        ...attach,
+        error: `"${record.name}" is a ${cat} session — pick a ${
+          attach.slot === "quali" ? "qualifying" : "race"
+        } archive for this slot.`,
+      });
+      return;
+    }
     const rows = sessionResults(snap);
     const proposals = autoMatch(league.roster, rows);
     setAttach({
       ...attach,
+      error: null,
       sessionId: id,
       proposals,
-      chosen: Object.fromEntries(proposals.map((p) => [p.identity, p.driverId])),
+      chosen: Object.fromEntries(proposals.map((p) => [p.key, p.driverId])),
     });
   };
 
@@ -73,6 +91,11 @@ function AttachDialog({
         {attach.proposals == null ? (
           <>
             <p className="lg-hint">Pick the archived session from History.</p>
+            {attach.error && (
+              <p className="lg-dupewarn" role="alert">
+                {attach.error}
+              </p>
+            )}
             <div className="lg-sessionlist">
               {(attach.sessions ?? []).map((s) => (
                 <button key={s.id} type="button" className="lg-sessionrow" onClick={() => void pick(s.id)}>
@@ -95,22 +118,22 @@ function AttachDialog({
             </p>
             <div className="lg-matchlist">
               {attach.proposals.map((p) => {
-                const chosenId = attach.chosen[p.identity];
+                const chosenId = attach.chosen[p.key];
                 const isDupe = chosenId != null && dupes.has(chosenId);
                 return (
                 <label
-                  key={p.identity}
+                  key={p.key}
                   className={`lg-matchrow is-${p.certainty}${isDupe ? " is-dupe" : ""}`}
                 >
                   <span className="lg-matchcar">
                     <span className="lg-matchno">{p.no}</span> {p.name}
                   </span>
                   <select
-                    value={attach.chosen[p.identity] ?? ""}
+                    value={attach.chosen[p.key] ?? ""}
                     onChange={(e) =>
                       setAttach({
                         ...attach,
-                        chosen: { ...attach.chosen, [p.identity]: e.target.value || null },
+                        chosen: { ...attach.chosen, [p.key]: e.target.value || null },
                       })
                     }
                   >
@@ -156,7 +179,7 @@ function AttachDialog({
 // ---------------------------------------------------------------- main view
 
 export function LeagueView() {
-  const { leagues, loaded, save } = useLeagues();
+  const { leagues, loaded, save, saveError, retrySave } = useLeagues();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState("");
   const [attach, setAttach] = useState<AttachState | null>(null);
@@ -183,7 +206,15 @@ export function LeagueView() {
   };
 
   const startAttach = async (roundId: string, slot: "quali" | "race") => {
-    setAttach({ roundId, slot, sessions: null, sessionId: null, proposals: null, chosen: {} });
+    setAttach({
+      roundId,
+      slot,
+      sessions: null,
+      sessionId: null,
+      proposals: null,
+      chosen: {},
+      error: null,
+    });
     const sessions = await historyList();
     setAttach((a) =>
       a && a.roundId === roundId && a.slot === slot
@@ -254,6 +285,17 @@ export function LeagueView() {
   return (
     <div className="rc-content">
       <div className="lg">
+        {saveError != null && (
+          <div className="lg-savefail" role="alert">
+            <span>
+              Saving to disk failed — your latest change is on screen but NOT stored.
+              <span className="lg-savefail-detail"> {saveError}</span>
+            </span>
+            <button type="button" className="lg-btn" onClick={retrySave}>
+              Retry save
+            </button>
+          </div>
+        )}
         <header className="lg-bar">
           <select
             value={league.id}

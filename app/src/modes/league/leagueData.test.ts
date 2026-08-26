@@ -8,7 +8,7 @@ import {
   prefillPoints,
   sessionResults,
   standings,
-  carIdentity,
+  matchKey,
   roundTotal,
   F1_POINTS,
   type League,
@@ -79,6 +79,14 @@ describe("autoMatch", () => {
     expect(m[1]).toMatchObject({ driverId: null, certainty: "none" });
   });
 
+  it("identical redacted names still get independent match keys", () => {
+    // Two "Player" cars with the same number online: keys must not collide,
+    // or their dropdowns couple and one car's points overwrite the other's.
+    const l = sampleLeague();
+    const m = autoMatch(l.roster, [row(5, 0, "Player"), row(6, 0, "Player")]);
+    expect(m[0].key).not.toBe(m[1].key);
+  });
+
   it("a name claim beats an earlier row's number hint for the same driver", () => {
     const l = sampleLeague();
     const m = autoMatch(l.roster, [
@@ -108,8 +116,8 @@ describe("learnAliases", () => {
   it("absorbs confirmed session names so next round matches exactly", () => {
     const l = sampleLeague();
     const learned = learnAliases(l.roster, {
-      [carIdentity(4, "l4ndo_official")]: "lando",
-      [carIdentity(99, "RANDOM GUY")]: null, // not in league — nothing learned
+      [matchKey(2, 4, "l4ndo_official")]: "lando",
+      [matchKey(3, 99, "RANDOM GUY")]: null, // not in league — nothing learned
     });
     expect(learned.find((d) => d.id === "lando")!.aliases).toContain("l4ndo_official");
     // Pure: the original roster is untouched.
@@ -119,7 +127,7 @@ describe("learnAliases", () => {
   it("does not duplicate known names", () => {
     const l = sampleLeague();
     const learned = learnAliases(l.roster, {
-      [carIdentity(1, "verstappen")]: "max",
+      [matchKey(1, 1, "verstappen")]: "max",
     });
     expect(learned.find((d) => d.id === "max")!.aliases).toHaveLength(0);
   });
@@ -174,7 +182,7 @@ describe("prefillPoints", () => {
       row(4, 81, "PIASTRI", "DNF"),
     ];
     const matches = Object.fromEntries(
-      autoMatch(l.roster, rows).map((m) => [m.identity, m.driverId]),
+      autoMatch(l.roster, rows).map((m) => [m.key, m.driverId]),
     );
     const filled = prefillPoints(round, l.roster, rows, matches, l.settings.pointsMap, "race");
     expect(filled.points["max"].race).toBe(25);
@@ -187,7 +195,7 @@ describe("prefillPoints", () => {
     const l = sampleLeague();
     const round = { ...newRound(l.seasons[0]), points: { max: { race: 25, bonus: 1 } } };
     const rows = [row(1, 1, "VERSTAPPEN")];
-    const matches = { [carIdentity(1, "VERSTAPPEN")]: "max" };
+    const matches = { [matchKey(1, 1, "VERSTAPPEN")]: "max" };
     const filled = prefillPoints(round, l.roster, rows, matches, F1_POINTS, "quali");
     expect(filled.points["max"]).toEqual({ race: 25, bonus: 1, quali: 0 });
   });
