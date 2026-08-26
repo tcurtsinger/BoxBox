@@ -30,7 +30,7 @@ export interface Feed {
   formatWarning?: number;
 }
 
-export type RaceSection = "timing" | "incidents" | "review" | "history";
+export type RaceSection = "timing" | "incidents" | "review" | "history" | "league";
 
 /** One telemetry-repeater destination: BoxBox sends a verbatim copy of the
  *  game's feed here so a wheel/SimHub dashboard can listen without contending

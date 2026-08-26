@@ -7,6 +7,7 @@ import { TimingSection } from "./timing/TimingSection";
 import { ReviewQueue } from "./review/ReviewQueue";
 import { IncidentsFeed } from "./incidents/IncidentsFeed";
 import { HistoryView } from "./history/HistoryView";
+import { LeagueView } from "./league/LeagueView";
 import { RaceStateProvider } from "./timing/RaceStateContext";
 
 // Sections with a real, built interface that fills the content area; the rest
@@ -45,6 +46,12 @@ const SECTION_META: Record<
     items: ["Sessions", "Snapshots", "Decisions", "Export"],
     context: "Saved session history",
   },
+  league: {
+    title: "League",
+    lead: "Season standings, rounds, and the points ledger.",
+    items: ["Standings", "Rounds", "Roster", "Points"],
+    context: "The league",
+  },
 };
 
 /** Race Control mode: shared app rail + content area (density tuned tighter). */
@@ -62,6 +69,9 @@ export function RaceControlView() {
         {feed.state === "standby" && <StandbyBanner />}
         {raceSection === "history" ? (
           <HistoryView />
+        ) : raceSection === "league" ? (
+          // League admin works with or without a live feed, like History.
+          <LeagueView />
         ) : hasFeed && built ? (
           built()
         ) : (

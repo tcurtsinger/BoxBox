@@ -9,6 +9,7 @@ import {
   ReviewIcon,
   SetupsIcon,
   StopwatchIcon,
+  TrophyIcon,
   TunerIcon,
 } from "./icons";
 
@@ -29,6 +30,7 @@ const RACE_ITEMS: Item<RaceSection>[] = [
   { id: "incidents", label: "Incidents", Icon: IncidentsIcon },
   { id: "review", label: "Review", Icon: ReviewIcon },
   { id: "history", label: "History", Icon: HistoryIcon },
+  { id: "league", label: "League", Icon: TrophyIcon },
 ];
 
 /**

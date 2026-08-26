@@ -1,0 +1,489 @@
+/* League — steward admin tooling. Operate density: panels, the data-readout
+   atom (label + tabular mono), quiet ghost buttons; teal only on "act here". */
+
+.lg {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-lg) var(--space-xl) var(--space-2xl);
+  overflow-y: auto;
+  height: 100%;
+  min-height: 0;
+}
+
+.lg-empty {
+  max-width: 52ch;
+  margin: 10vh auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.lg-empty h2 {
+  font-size: var(--text-headline);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+
+.lg-empty p {
+  color: var(--muted);
+  font-size: var(--text-body);
+  line-height: 1.5;
+}
+
+/* ---- Header bar ----------------------------------------------------------- */
+.lg-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.lg-bar select,
+.lg-createrow input,
+.lg-bestn input {
+  background: var(--inset);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  font: inherit;
+  font-size: var(--text-body);
+}
+
+.lg-bar select:focus-visible,
+.lg input:focus-visible,
+.lg select:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.lg-season {
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.lg-bar-spacer {
+  flex: 1;
+}
+
+.lg-bestn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-body);
+  color: var(--muted);
+}
+
+.lg-bestn input {
+  width: 64px;
+  font-family: var(--font-mono);
+}
+
+.lg-createrow {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+/* ---- Buttons -------------------------------------------------------------- */
+.lg-btn {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px 14px;
+  font: inherit;
+  font-size: var(--text-body);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lg-btn:hover {
+  background: var(--surface-raised);
+}
+
+.lg-btn.is-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+
+.lg-btn.is-primary:hover {
+  background: var(--primary-strong);
+}
+
+/* ---- Panels ---------------------------------------------------------------- */
+.lg-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-lg) 18px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.lg-panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.lg-panel-head .lg-panel-title {
+  margin-right: auto;
+}
+
+.lg-panel-title {
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+
+.lg-hint {
+  color: var(--faint);
+  font-size: var(--text-body);
+  line-height: 1.5;
+}
+
+/* ---- Tables ----------------------------------------------------------------- */
+.lg-scroll {
+  overflow-x: auto;
+}
+
+.lg-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.lg-table th {
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+  text-align: left;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.lg-table td {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: var(--text-body);
+}
+
+.lg-table tr:last-child td {
+  border-bottom: none;
+}
+
+.lg-th-num,
+.lg-td-num {
+  text-align: right;
+}
+
+.lg-td-num,
+.lg-td-pos {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.lg-td-name {
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.lg-td-total {
+  color: var(--ink);
+}
+
+.lg-table-teams {
+  max-width: 420px;
+}
+
+.lg-dropchip {
+  margin-left: 8px;
+  font-size: var(--text-label);
+  font-family: var(--font-mono);
+  color: var(--faint);
+  background: var(--inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+}
+
+/* ---- Rounds ----------------------------------------------------------------- */
+.lg-round {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.lg-roundhead {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  background: var(--inset);
+  border: none;
+  color: var(--ink);
+  padding: 10px 14px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lg-roundhead:hover {
+  background: var(--surface-raised);
+}
+
+.lg-roundmeta {
+  font-size: var(--text-label);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.lg-roundbody {
+  padding: var(--space-md) 14px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.lg-attachrow {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.lg-roundname {
+  background: var(--inset);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  font: inherit;
+  font-weight: 600;
+  flex: 1;
+  min-width: 160px;
+}
+
+.lg-points .lg-cell {
+  width: 64px;
+  background: var(--inset);
+  color: var(--ink);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-body);
+  text-align: right;
+}
+
+.lg-points .lg-cell:focus-visible {
+  border-color: var(--primary);
+}
+
+/* ---- Roster ----------------------------------------------------------------- */
+.lg-teams {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.lg-teamname,
+.lg-drivername {
+  background: var(--inset);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  font: inherit;
+  font-size: var(--text-body);
+}
+
+.lg-roster {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.lg-driver {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.lg-drivername {
+  min-width: 180px;
+  font-weight: 600;
+}
+
+.lg-driverno {
+  width: 70px;
+  background: var(--inset);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--text-body);
+}
+
+.lg-driver select {
+  background: var(--inset);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  font: inherit;
+  font-size: var(--text-body);
+}
+
+.lg-wildcard {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-body);
+  color: var(--muted);
+}
+
+.lg-aliases {
+  font-size: var(--text-label);
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+
+/* ---- Attach dialog ----------------------------------------------------------- */
+.lg-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: oklch(0.1 0.005 235 / 0.6);
+  display: grid;
+  place-items: center;
+  z-index: var(--z-modal-backdrop);
+}
+
+.lg-dialog {
+  width: min(560px, calc(100vw - 48px));
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-floating);
+  padding: var(--space-lg) 18px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  z-index: var(--z-modal);
+}
+
+.lg-dialog-title {
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+
+.lg-sessionlist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.lg-sessionrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
+  background: var(--inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  color: var(--ink);
+  padding: 8px 12px;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.lg-sessionrow:hover {
+  background: var(--surface-raised);
+}
+
+.lg-sessionname {
+  font-weight: 600;
+}
+
+.lg-sessionmeta {
+  font-size: var(--text-label);
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.lg-matchlist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.lg-matchrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-soft);
+}
+
+/* Uncertain rows ask for eyes; exact ones stay quiet. */
+.lg-matchrow.is-probable {
+  border-color: var(--data-caution);
+  background: var(--data-caution-tint);
+}
+
+.lg-matchrow.is-none {
+  border-color: var(--border);
+  background: var(--inset);
+}
+
+.lg-matchcar {
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+.lg-matchno {
+  font-family: var(--font-mono);
+  color: var(--muted);
+  margin-right: 6px;
+}
+
+.lg-matchrow select {
+  background: var(--inset);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: var(--text-body);
+}
+
+.lg-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
