@@ -21,20 +21,23 @@
 //!   signature, not the driver's, so `moving_frac < 0.25` refuses to classify
 //!   (UNKNOWN) — the alternative is convicting wheel drivers who happen to be
 //!   far from the recording seat.
-//! - A real wheel at full fidelity (39 moves/s observed): continuous small
-//!   deltas (d50 ≈ 0.02), human-rate micro-corrections (~1.8 sign flips/s in
-//!   the centre band), low second-derivative energy (smooth unwinding).
+//! - The one full-fidelity human in the log (39 moves/s) turned out — by the
+//!   league's own ground truth — to be a CONTROLLER: continuous small deltas
+//!   (d50 ≈ 0.02), human-rate corrections (~1.8 sign flips/s in the centre
+//!   band), low second-derivative energy. The game's modern pad filter
+//!   outputs smooth continuous ramps, NOT the folkloric deadzone-park-and-
+//!   snap signature. The one known wheel driver was decimated (correctly
+//!   UNKNOWN), so no full-fidelity wheel trace exists yet — meaning
+//!   wheel-vs-pad separation is UNPROVEN, and device verdicts are
+//!   SUPPRESSED (`DEVICE_TEMPLATES_CALIBRATED = false`) until the league
+//!   test race labels both devices at full fidelity.
 //! - The game's own AI steering (the ASSISTED template — steering assist IS
 //!   the AI controller): machine-rate dither, ~10 flips/s, never holds a
-//!   value (dwell ≈ 0), rarely parks at zero.
+//!   value (dwell ≈ 0), rarely parks at zero. This template is armed: it is
+//!   confirmed against 24/24 AI epochs, hard to fake by hand, and the assist
+//!   ban is its own league violation.
 //! - Exact-zero fraction is a WEAK discriminator here: the game deadzones
-//!   everyone (humans ~25-33% zero regardless of device), so it carries only
-//!   half weight in the pad score.
-//! - The high-fidelity PAD template (parking at exact zero, pinned full lock,
-//!   near-zero jitter, rate-limited ramps) is from the plan's signature
-//!   table, validated only synthetically so far: tonight's data contained no
-//!   local pad. The league test race supplies that ground truth; weights get
-//!   revisited before verdicts are treated as evidence.
+//!   everyone (humans ~25-33% zero regardless of device).
 
 /// One epoch spans this much on-track session time before it emits.
 const EPOCH_SECS: f64 = 60.0;
@@ -147,6 +150,14 @@ const FIDELITY_MIN_MOVING_FRAC: f32 = 0.25;
 const FLIP_HOLD_SECS: f64 = EPOCH_SECS;
 /// Re-evaluate a car at most once per eligible second.
 const EVAL_PERIOD_SECS: f64 = 1.0;
+/// Whether the WHEEL and PAD templates have been calibrated against labeled
+/// full-fidelity traces of BOTH devices. They have not: the only labeled
+/// full-fidelity human trace so far is a controller, and it matches the
+/// "continuous human input" template that was drafted as wheel-like — so
+/// until the league test race provides both devices, a device verdict would
+/// be a coin flip wearing 90% confidence. While false, classify() emits only
+/// ASSISTED (confirmed, and hard to fake); everything else is UNKNOWN.
+const DEVICE_TEMPLATES_CALIBRATED: bool = false;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -222,9 +233,22 @@ fn delta_p50(c: &EpochCounters) -> f32 {
 }
 
 /// Classify one window of counters, or None when no honest verdict exists:
-/// too little trace, a decimated feed, or no class clearing the confidence
-/// gate. Pure — the sticky/flip policy lives in the tracker.
+/// too little trace, a decimated feed, no class clearing the confidence
+/// gate — or a device verdict while the device templates are uncalibrated
+/// (see DEVICE_TEMPLATES_CALIBRATED). Pure — the sticky/flip policy lives in
+/// the tracker.
 pub fn classify(c: &EpochCounters) -> Option<(InputVerdict, f32, SigFeatures)> {
+    let (verdict, confidence, f) = classify_uncalibrated(c)?;
+    if !DEVICE_TEMPLATES_CALIBRATED && verdict != InputVerdict::Assisted {
+        return None;
+    }
+    Some((verdict, confidence, f))
+}
+
+/// The full three-way scoring, before the calibration gate. Kept separate so
+/// the template machinery stays tested while device verdicts are suppressed —
+/// arming them later is a one-constant change, not a rewrite.
+fn classify_uncalibrated(c: &EpochCounters) -> Option<(InputVerdict, f32, SigFeatures)> {
     if c.span_secs < VERDICT_MIN_SECS {
         return None;
     }
@@ -622,9 +646,12 @@ mod tests {
     // The first three fixtures are REAL epochs from the 2026-08-25
     // Hungaroring online qualifying log (60 Hz feed) — the tuning data.
 
-    /// A human on a wheel, high-fidelity sync: continuous small deltas,
-    /// ~1.8 micro-corrections/s, smooth unwinding.
-    fn wheel_epoch() -> EpochCounters {
+    /// A human at high-fidelity sync: continuous small deltas, ~1.8
+    /// corrections/s, smooth unwinding. Drafted as the wheel template —
+    /// then the league's ground truth revealed this driver was on a
+    /// CONTROLLER. Kept verbatim as the reason device verdicts stay
+    /// suppressed until both devices are labeled at full fidelity.
+    fn controller_epoch() -> EpochCounters {
         EpochCounters {
             samples: 3601,
             zero: 927,
@@ -694,11 +721,19 @@ mod tests {
     }
 
     #[test]
-    fn real_wheel_epoch_classifies_wheel() {
-        let (v, conf, f) = classify(&wheel_epoch()).expect("verdict");
+    fn device_verdicts_are_suppressed_until_calibrated() {
+        // The full scoring matches this real trace to the continuous-human
+        // template (drafted as "wheel") at high confidence…
+        let (v, conf, f) = classify_uncalibrated(&controller_epoch()).expect("template match");
         assert_eq!(v, InputVerdict::Wheel);
         assert!(conf >= VERDICT_MIN_CONF, "{conf}");
         assert!(f.moving_frac > 0.5);
+        // …but the driver was on a CONTROLLER (league ground truth), which is
+        // exactly why an uncalibrated device verdict must never reach the UI.
+        assert!(
+            classify(&controller_epoch()).is_none(),
+            "a confident wrong verdict is the one unforgivable output"
+        );
     }
 
     #[test]
@@ -716,15 +751,20 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_pad_classifies_pad() {
-        let (v, conf, _) = classify(&pad_epoch()).expect("verdict");
+    fn synthetic_pad_template_scores_pad_but_stays_suppressed() {
+        let (v, conf, _) = classify_uncalibrated(&pad_epoch()).expect("template match");
         assert_eq!(v, InputVerdict::Pad);
         assert!(conf >= VERDICT_MIN_CONF, "{conf}");
+        assert!(
+            classify(&pad_epoch()).is_none(),
+            "uncalibrated: no device verdicts"
+        );
     }
 
     #[test]
     fn no_verdict_below_the_sample_gate() {
-        let mut c = wheel_epoch();
+        // Even the armed ASSISTED template needs enough trace first.
+        let mut c = assist_epoch();
         c.span_secs = 30.0; // under VERDICT_MIN_SECS
         assert!(classify(&c).is_none());
     }
@@ -752,7 +792,7 @@ mod tests {
     #[test]
     fn verdict_is_sticky_and_flips_only_after_a_held_window() {
         let mut vs = VerdictState::default();
-        let f = derive_features(&wheel_epoch());
+        let f = derive_features(&controller_epoch());
         vs.total_eligible = 60.0;
         vs.observe(InputVerdict::Wheel, 0.9, f.clone(), 60.0);
         assert_eq!(vs.current.as_ref().unwrap().verdict, InputVerdict::Wheel);
@@ -783,21 +823,26 @@ mod tests {
     }
 
     #[test]
-    fn live_tracker_issues_a_wheel_verdict_from_a_wheel_trace() {
-        // End-to-end: a wheel-like stream (micro-corrections around centre,
-        // continuous motion) earns a WHEEL signature once the gate passes.
+    fn live_tracker_issues_only_assisted_while_uncalibrated() {
         let mut t = InputSigTracker::default();
         let mut clock = 0.0;
         for i in 0..3000 {
-            // Time-based waves so the correction rate stays human (~1.3
-            // sign flips/s) regardless of the 60 Hz sample rate.
+            // Car 0: a continuous human trace (human-rate corrections) — a
+            // device verdict the calibration gate must keep suppressed.
             let secs = i as f32 / 60.0;
-            let s = (secs * 4.0).sin() * 0.02 + (secs * 0.65).sin() * 0.05 + 0.0011;
-            t.sample(0, s, true, clock);
+            let human = (secs * 4.0).sin() * 0.02 + (secs * 0.65).sin() * 0.05 + 0.0011;
+            t.sample(0, human, true, clock);
+            // Car 1: machine-rate dither — the armed ASSISTED template.
+            let dither = (i as f32 * 0.9).sin() * 0.05 + 0.0007;
+            t.sample(1, dither, true, clock);
             clock += 1.0 / 60.0;
         }
-        let sig = t.signature(0).expect("gate passed at 45s of 50s fed");
-        assert_eq!(sig.verdict, InputVerdict::Wheel);
+        assert!(
+            t.signature(0).is_none(),
+            "no device verdict while wheel/pad are uncalibrated"
+        );
+        let sig = t.signature(1).expect("assisted verdict issued");
+        assert_eq!(sig.verdict, InputVerdict::Assisted);
         assert!(sig.confidence >= VERDICT_MIN_CONF);
         assert!(!sig.flipped_this_session);
     }
