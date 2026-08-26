@@ -855,7 +855,7 @@
   line-height: 1;
 }
 
-.dash-tile.is-boost {
+.dash-tile.is-overtake {
   --dash-tile-color: var(--hud-boost);
   --dash-tile-tint: var(--hud-boost-tint);
 }
@@ -870,15 +870,20 @@
   --dash-tile-tint: var(--data-good-tint);
 }
 
-/* READY colours only the DRS tile (2025 cars): a DRS zone is a momentary
-   window worth catching the eye for. The 2026 systems arm near-constantly
-   (boost is driver-discretion, aero straights are every straight), so a
-   coloured READY would keep both tiles lit all race — they stay in the
-   inactive look and take their HUD colour only while genuinely ACTIVE. */
+/* READY has two intensities. The DRS tile (2025 cars) colours fully — a DRS
+   zone is a momentary window worth catching the eye for. The 2026 systems
+   light only their EDGE when armed (Overtake Mode in detection range, aero
+   window open): a glanceable "it's there if you want it" that leaves the
+   full HUD colour to mean one thing — deploying right now. */
 .dash-tile.is-drs.is-ready {
   border-color: var(--dash-tile-color);
   background: var(--dash-tile-tint);
   color: var(--dash-tile-color);
+}
+
+.dash-tile.is-overtake.is-ready,
+.dash-tile.is-smode.is-ready {
+  border-color: var(--dash-tile-color);
 }
 
 .dash-tile.is-active {
@@ -1019,7 +1024,7 @@
   color: var(--ink);
 }
 
-/* OVERTAKE active reads in the game's deploy-mode yellow. */
+/* Mode 3 (BOOST on 2026 cars, OVERTAKE on 25) reads in the game's yellow. */
 .dash-deploy-seg.is-ot {
   background: var(--data-flag);
   color: var(--on-primary);

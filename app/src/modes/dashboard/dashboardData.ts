@@ -87,6 +87,9 @@ export interface DashboardData {
 }
 
 export const DEPLOY_MODES = ["NONE", "MEDIUM", "HOTLAP", "OVERTAKE"] as const;
+/** The 2026 spec names mode 3 "boost" (the held-button deploy); "Overtake
+ *  Mode" is the separate proximity-armed system with its own tile. */
+export const DEPLOY_MODES_26 = ["NONE", "MEDIUM", "HOTLAP", "BOOST"] as const;
 
 const FUEL_MIX = ["LEAN", "STANDARD", "RICH", "MAX"] as const;
 

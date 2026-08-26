@@ -85,8 +85,8 @@ function car(i: number): LiveDriver {
     ersDeployMode: 1,
     fuelMix: 2,
     fiaFlags: 0,
-    // Mid-straight frame: boost armed but not held (quiet READY), active aero
-    // open in straight mode so the S MODE tile shows its lit state.
+    // Mid-straight frame: Overtake Mode armed (edge-lit READY, boost not
+    // held), active aero open in straight mode so S MODE shows its lit state.
     overtakeActive: false,
     overtakeAvailable: isPlayer,
     activeAeroMode: 1,
