@@ -2,6 +2,7 @@ mod discord;
 mod engineer;
 mod export;
 mod history;
+mod inputsig;
 mod packets;
 mod persist;
 mod racecontrol;

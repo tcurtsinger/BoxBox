@@ -265,6 +265,22 @@ fn bind_listen(port: u16) -> std::io::Result<UdpSocket> {
 
 /// Append one timestamped line to the diagnostic log (best-effort; never panics
 /// or blocks the caller meaningfully). `None` path disables logging.
+/// Append input-signature JSONL rows beside the diagnostic log. Best-effort:
+/// a failed write must never disturb the UDP loop.
+fn append_inputsig(path: &Option<PathBuf>, lines: &[String]) {
+    let Some(p) = path else { return };
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(p)
+    {
+        for line in lines {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+}
+
 fn log_event(path: &Option<PathBuf>, msg: &str) {
     let Some(p) = path else { return };
     use std::io::Write;
@@ -325,6 +341,22 @@ fn spawn_listener(
             None
         }
     };
+    // Steering-signature evidence log (input detection Phase 0), beside the
+    // diagnostic log so a league admin can grab both from one folder. Writes
+    // happen on a dedicated thread: the UDP loop must never block on storage
+    // (a stalled open under antivirus contention would overflow the socket
+    // buffer and lose the very telemetry being evidenced). try_send drops rows
+    // if the writer falls behind — live beats complete.
+    let inputsig_path = log_path
+        .as_ref()
+        .map(|p| p.with_file_name("inputsig.jsonl"));
+    let (inputsig_tx, inputsig_rx) = std::sync::mpsc::sync_channel::<Vec<String>>(64);
+    std::thread::spawn(move || {
+        // Exits when the listener worker drops its sender.
+        while let Ok(lines) = inputsig_rx.recv() {
+            append_inputsig(&inputsig_path, &lines);
+        }
+    });
     let forwards = Arc::new(Mutex::new(forwards));
     let forwards_worker = forwards.clone();
 
@@ -626,6 +658,7 @@ fn spawn_listener(
                             let mut session_changed = None;
                             let auto_archive_snap;
                             let announcements;
+                            let inputsig_lines;
                             let engineer_snap = {
                                 let mut r = race.lock().unwrap_or_else(|p| {
                                     if !race_poison_logged {
@@ -644,6 +677,7 @@ fn spawn_listener(
                                 }
                                 auto_archive_snap = r.take_pending_auto_archive_with_announce();
                                 announcements = r.take_pending_announcements();
+                                inputsig_lines = r.take_inputsig_lines();
                                 if engineer_enabled.load(Ordering::Relaxed)
                                     && last_engineer_eval.elapsed() >= ENGINEER_EVAL
                                 {
@@ -674,6 +708,12 @@ fn spawn_listener(
                                     let _ =
                                         discord_tx.try_send(DiscordJob::Incidents(announcements));
                                 }
+                            }
+                            // Completed steering-signature epochs -> the background
+                            // writer (input-device detection Phase 0). Never file IO
+                            // on this loop; a full queue drops the rows.
+                            if !inputsig_lines.is_empty() {
+                                let _ = inputsig_tx.try_send(inputsig_lines);
                             }
                             // A result was staged (official classification, or the
                             // provisional fallback): archive it (off the race lock) so

@@ -229,6 +229,13 @@ pub struct DriverState {
     pub battery_pct: f32,
     pub ers_deploy_mode: u8,
     pub fuel_mix: u8,
+    /// Assists (CarStatus): weak input-device priors for the signature log.
+    pub traction_control: u8,
+    pub anti_lock_brakes: bool,
+    /// This car's player has the game paused (CarStatus networkPaused):
+    /// telemetry repeats frozen frames that must not count as trace evidence.
+    #[serde(skip)]
+    pub network_paused: bool,
     pub fia_flags: i8,
     pub drs_allowed: bool,
     // 2026 active-aero / overtake (CarTelemetry2; replaces DRS)
@@ -323,6 +330,9 @@ pub struct SessionState {
     player_car_index: u8,
     num_active_cars: u8,
     drivers: HashMap<u8, DriverState>,
+    /// Silent steering-signature accumulator (input-device detection Phase 0);
+    /// drained to a JSONL log by the telemetry loop, never serialized.
+    input_sig: crate::inputsig::InputSigTracker,
     incidents: Vec<Incident>,
     // Bounded per-session event counts (spoof-guarded by KNOWN_EVENT_CODES).
     // Internal diagnostics only — deliberately NOT serialized into the 4 Hz
@@ -782,6 +792,8 @@ impl SessionState {
     }
 
     fn reset_for_session(&mut self, uid: String, first_clock: f64, at_ms: f64) {
+        // Steering-signature epochs never straddle a session boundary.
+        self.input_sig.reset();
         // Preserve the outgoing qualifying segment's final standings before the wipe:
         // the next segment's packets contain only the survivors, so this is the only
         // chance to keep knocked-out drivers' times for the stacked qualifying
@@ -1146,6 +1158,9 @@ impl SessionState {
             d.battery_pct = c.battery_pct;
             d.ers_deploy_mode = c.ers_deploy_mode;
             d.fuel_mix = c.fuel_mix;
+            d.traction_control = c.traction_control;
+            d.anti_lock_brakes = c.anti_lock_brakes;
+            d.network_paused = c.network_paused;
             d.fia_flags = c.vehicle_fia_flags;
             d.drs_allowed = c.drs_allowed;
         }
@@ -1153,14 +1168,69 @@ impl SessionState {
 
     fn ingest_telemetry(&mut self, t: &CarTelemetryData) {
         for c in &t.cars {
-            let d = self.driver_mut(c.index as u8);
-            d.speed = c.speed;
-            d.gear = c.gear;
-            d.drs = c.drs;
-            d.rpm = c.engine_rpm;
-            d.tyre_surface_temp = c.tyres_surface_temperature.clone();
-            d.tyre_inner_temp = c.tyres_inner_temperature.clone();
+            let eligible;
+            {
+                let d = self.driver_mut(c.index as u8);
+                d.speed = c.speed;
+                d.gear = c.gear;
+                d.drs = c.drs;
+                d.rpm = c.engine_rpm;
+                d.tyre_surface_temp = c.tyres_surface_temperature.clone();
+                d.tyre_inner_temp = c.tyres_inner_temperature.clone();
+                // Signature samples only count while genuinely running on
+                // track: pits, garage, crawling laps and a paused game (which
+                // repeats frozen frames) all pollute the trace.
+                eligible = d.pit_status == 0
+                    && matches!(d.driver_status, 1 | 4)
+                    && !d.network_paused
+                    && c.speed >= crate::inputsig::SPEED_MIN_KMH;
+            }
+            self.input_sig
+                .sample(c.index, c.steer, eligible, self.session_time);
         }
+    }
+
+    /// Drain completed input-signature epochs as ready-to-append JSONL lines,
+    /// stamped with everything offline tuning needs: session identity, driver
+    /// identity (the ground-truth join key), assists, and conditions.
+    pub fn take_inputsig_lines(&mut self) -> Vec<String> {
+        let rows = self.input_sig.drain();
+        if rows.is_empty() {
+            return Vec::new();
+        }
+        rows.into_iter()
+            .filter_map(|(idx, c)| {
+                let d = self.drivers.get(&(idx as u8))?;
+                serde_json::to_string(&serde_json::json!({
+                    "sessionUid": self.session_uid,
+                    "format": self.format,
+                    "track": self
+                        .session
+                        .as_ref()
+                        .and_then(|s| crate::tuner::labels::track_name(s.track_id as i32)),
+                    "sessionType": self.session.as_ref().map(|s| s.session_type),
+                    "weather": self.session.as_ref().map(|s| s.weather),
+                    "carIndex": idx,
+                    // Resolve overrides from the race-number map like the
+                    // snapshot path does — the per-driver copy is stale after
+                    // a session reset, and this name is the ground-truth key.
+                    "name": self
+                        .name_overrides
+                        .get(&d.race_number)
+                        .cloned()
+                        .unwrap_or_else(|| d.name.clone()),
+                    "raceNumber": d.race_number,
+                    "telemetryPublic": d.telemetry_public,
+                    // AI steering resembles the ASSISTED class — the tuner
+                    // must be able to filter (or study) these rows.
+                    "aiControlled": d.ai_controlled,
+                    "tractionControl": d.traction_control,
+                    "absOn": d.anti_lock_brakes,
+                    "counters": c,
+                }))
+                .ok()
+            })
+            .collect()
     }
 
     fn ingest_telemetry2(&mut self, t: &CarTelemetry2Data) {

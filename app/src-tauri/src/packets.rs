@@ -837,6 +837,9 @@ fn parse_car_telemetry(rd: &mut Reader, header: &PacketHeader) -> CarTelemetryDa
 #[serde(rename_all = "camelCase")]
 pub struct CarStatusEntry {
     pub index: usize,
+    /// 0 off, 1 medium, 2 full. Weak input-device prior (assists lean pad).
+    pub traction_control: u8,
+    pub anti_lock_brakes: bool,
     pub fuel_mix: u8,
     pub fuel_in_tank: f32,
     pub fuel_capacity: f32,
@@ -852,6 +855,9 @@ pub struct CarStatusEntry {
     pub ers_deploy_mode: u8,
     pub ers_deployed_this_lap: f32,
     pub battery_pct: f32,
+    /// This car's player has the game paused (online): telemetry keeps
+    /// repeating frozen frames that must not count as trace evidence.
+    pub network_paused: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -866,8 +872,8 @@ fn parse_car_status(rd: &mut Reader, header: &PacketHeader) -> CarStatusData {
     let mut cars = Vec::with_capacity(max_cars);
 
     for i in 0..max_cars {
-        rd.u8(); // tractionControl
-        rd.u8(); // antiLockBrakes
+        let traction_control = rd.u8();
+        let anti_lock_brakes = rd.u8();
         let fuel_mix = rd.u8();
         rd.u8(); // frontBrakeBias
         rd.u8(); // pitLimiterStatus
@@ -893,12 +899,14 @@ fn parse_car_status(rd: &mut Reader, header: &PacketHeader) -> CarStatusData {
             rd.f32(); // ersHarvestLimitPerLap (2026 only)
         }
         let ers_deployed_this_lap = rd.f32();
-        rd.u8(); // networkPaused
+        let network_paused = rd.u8();
 
         let battery_pct = ((ers_store_energy / ERS_MAX_JOULES) * 100.0).clamp(0.0, 100.0);
 
         cars.push(CarStatusEntry {
             index: i,
+            traction_control,
+            anti_lock_brakes: anti_lock_brakes == 1,
             fuel_mix,
             fuel_in_tank,
             fuel_capacity,
@@ -914,6 +922,7 @@ fn parse_car_status(rd: &mut Reader, header: &PacketHeader) -> CarStatusData {
             ers_deploy_mode,
             ers_deployed_this_lap,
             battery_pct,
+            network_paused: network_paused == 1,
         });
     }
 
