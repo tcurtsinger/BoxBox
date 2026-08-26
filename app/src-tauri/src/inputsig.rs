@@ -150,6 +150,11 @@ const FIDELITY_MIN_MOVING_FRAC: f32 = 0.25;
 const FLIP_HOLD_SECS: f64 = EPOCH_SECS;
 /// Re-evaluate a car at most once per eligible second.
 const EVAL_PERIOD_SECS: f64 = 1.0;
+/// A clock step backwards must exceed this to count as a flashback. UDP
+/// datagrams can arrive slightly out of order (tens of ms of skew), and a
+/// transient reorder must not void a verdict that took 45s to earn; a real
+/// flashback rewinds several seconds. Same margin the engineer uses.
+const REWIND_MIN_SECS: f64 = 1.0;
 /// Whether the WHEEL and PAD templates have been calibrated against labeled
 /// full-fidelity traces of BOTH devices. They have not: the only labeled
 /// full-fidelity human trace so far is a controller, and it matches the
@@ -403,8 +408,9 @@ impl InputSigTracker {
         // the stay and the erased timeline's verdict survives. `last_clock`
         // only moves on eligible samples, so the comparison is valid on any
         // frame. Honest cost: the car re-earns its verdict in 45s of clean
-        // trace.
-        if clock < acc.last_clock {
+        // trace. The margin keeps out-of-order datagrams (slightly stale
+        // session_time, no flashback) from voiding an earned verdict.
+        if clock < acc.last_clock - REWIND_MIN_SECS {
             let _ = acc.finish();
             self.verdicts[idx] = VerdictState {
                 last_ai: self.verdicts[idx].last_ai,
@@ -950,6 +956,24 @@ mod tests {
         assert!(
             t.signature(0).is_none(),
             "the verdict was earned on a timeline that no longer exists"
+        );
+    }
+
+    #[test]
+    fn an_out_of_order_datagram_does_not_void_the_verdict() {
+        // UDP reorder: one sample arrives 200ms stale. That is not a
+        // flashback, and a verdict that took 45s to earn must survive it.
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        for i in 0..3000 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(t.signature(0).is_some());
+        t.sample(0, 0.01, true, clock - 0.2);
+        assert!(
+            t.signature(0).is_some(),
+            "a 200ms reorder is skew, not a flashback"
         );
     }
 
