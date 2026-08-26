@@ -302,6 +302,29 @@
   gap: var(--space-sm);
 }
 
+.lg-teamchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lg-remove {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--faint);
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px 7px;
+  cursor: pointer;
+}
+
+.lg-remove:hover {
+  color: var(--data-danger);
+  background: var(--data-danger-tint);
+  border-color: var(--data-danger);
+}
+
 .lg-teamname,
 .lg-drivername {
   background: var(--inset);

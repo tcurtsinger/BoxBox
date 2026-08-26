@@ -346,7 +346,9 @@ export function LeagueView() {
               placeholder="all"
               onChange={(e) =>
                 update((l) => {
-                  l.settings.bestN = e.target.value === "" ? null : Math.max(1, Number(e.target.value));
+                  // Best-N is a COUNT: floor decimals, floor at 1.
+                  const n = Math.floor(Number(e.target.value));
+                  l.settings.bestN = e.target.value === "" || !Number.isFinite(n) ? null : Math.max(1, n);
                   return l;
                 })
               }
@@ -561,19 +563,35 @@ export function LeagueView() {
           {league.teams.length > 0 && (
             <div className="lg-teams">
               {league.teams.map((t) => (
-                <input
-                  key={t.id}
-                  className="lg-teamname"
-                  value={t.name}
-                  aria-label="Team name"
-                  onChange={(e) =>
-                    update((l) => {
-                      const x = l.teams.find((y) => y.id === t.id);
-                      if (x) x.name = e.target.value;
-                      return l;
-                    })
-                  }
-                />
+                <span key={t.id} className="lg-teamchip">
+                  <input
+                    className="lg-teamname"
+                    value={t.name}
+                    aria-label="Team name"
+                    onChange={(e) =>
+                      update((l) => {
+                        const x = l.teams.find((y) => y.id === t.id);
+                        if (x) x.name = e.target.value;
+                        return l;
+                      })
+                    }
+                  />
+                  <button
+                    type="button"
+                    className="lg-remove"
+                    aria-label={`Remove team ${t.name}`}
+                    title="Remove team (its drivers keep their points, just lose the team)"
+                    onClick={() =>
+                      update((l) => {
+                        l.teams = l.teams.filter((y) => y.id !== t.id);
+                        for (const d of l.roster) if (d.teamId === t.id) d.teamId = null;
+                        return l;
+                      })
+                    }
+                  >
+                    ×
+                  </button>
+                </span>
               ))}
             </div>
           )}
@@ -643,6 +661,31 @@ export function LeagueView() {
                     aka {d.aliases.join(", ")}
                   </span>
                 )}
+                <button
+                  type="button"
+                  className="lg-remove"
+                  aria-label={`Remove ${d.displayName}`}
+                  title="Remove driver from the roster"
+                  onClick={() => {
+                    const hasPoints = league.seasons.some((s) =>
+                      s.rounds.some((r) => r.points[d.id] !== undefined),
+                    );
+                    if (
+                      hasPoints &&
+                      !window.confirm(
+                        `${d.displayName} has points in the ledger. Removing them drops those points from every standings table. Remove anyway?`,
+                      )
+                    ) {
+                      return;
+                    }
+                    update((l) => {
+                      l.roster = l.roster.filter((y) => y.id !== d.id);
+                      return l;
+                    });
+                  }}
+                >
+                  ×
+                </button>
               </div>
             ))}
           </div>
