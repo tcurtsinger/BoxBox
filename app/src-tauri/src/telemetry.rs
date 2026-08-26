@@ -443,7 +443,9 @@ fn spawn_listener(
                         let staged = {
                             let mut r = race.lock().unwrap_or_else(|p| p.into_inner());
                             r.stage_provisional_on_stop(now_ms());
-                            r.take_pending_auto_archive_with_announce()
+                            // Force past the announce hold: the listener is
+                            // stopping, so no late evidence can arrive.
+                            r.take_pending_auto_archive_with_announce(now_ms(), true)
                         };
                         if let Some((snap, announce, supersedes)) = staged {
                             process_staged_result(
@@ -675,7 +677,8 @@ fn spawn_listener(
                                 if !prev_uid.is_empty() && prev_uid != r.session_uid() {
                                     session_changed = Some(r.session_uid().to_string());
                                 }
-                                auto_archive_snap = r.take_pending_auto_archive_with_announce();
+                                auto_archive_snap =
+                                    r.take_pending_auto_archive_with_announce(now_ms(), false);
                                 announcements = r.take_pending_announcements();
                                 inputsig_lines = r.take_inputsig_lines();
                                 if engineer_enabled.load(Ordering::Relaxed)
@@ -751,7 +754,7 @@ fn spawn_listener(
                             let staged = {
                                 let mut r = race.lock().unwrap_or_else(|p| p.into_inner());
                                 r.stage_provisional_if_due(now_ms());
-                                r.take_pending_auto_archive_with_announce()
+                                r.take_pending_auto_archive_with_announce(now_ms(), false)
                             };
                             if let Some((snap, announce, supersedes)) = staged {
                                 process_staged_result(

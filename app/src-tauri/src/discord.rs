@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::packets::FinalClassificationEntry;
-use crate::racecontrol::state::SessionCategory;
+use crate::racecontrol::state::{intermediate_quali_segment, SessionCategory};
 use crate::racecontrol::{MajorIncident, SessionSnapshot};
 
 // Embed accent colours (BoxBox teal for results, red for incidents).
@@ -409,6 +409,16 @@ fn build_provisional_results_embed(snap: &SessionSnapshot, quali: bool) -> Optio
         .iter()
         .map(|d| d.best_lap_ms)
         .find(|&ms| ms > 0);
+    // Knockout cutoff from the FULL field, before display truncation — the
+    // flag-standings post marks eliminations exactly like the official one.
+    let survivors = if quali {
+        quali_survivors(
+            snap.session.as_ref().map(|s| s.session_type).unwrap_or(0),
+            snap.drivers.len(),
+        )
+    } else {
+        None
+    };
     let lines: Vec<String> = snap
         .drivers
         .iter()
@@ -433,21 +443,43 @@ fn build_provisional_results_embed(snap: &SessionSnapshot, quali: bool) -> Optio
             } else {
                 format!("best {}", fmt_lap_ms(d.best_lap_ms))
             };
-            format!("`P{:<2}` **{who}** — `{timing}`", i + 1)
+            let mut line = format!("`P{:<2}` **{who}** — `{timing}`", i + 1);
+            if survivors.is_some_and(|cut| i + 1 > cut) {
+                line.push_str(" · **OUT**");
+            }
+            line
         })
         .collect();
 
+    let stype = snap.session.as_ref().map(|s| s.session_type).unwrap_or(0);
     let what = if quali {
-        format!(
-            "{} result",
-            session_name(snap.session.as_ref().map(|s| s.session_type).unwrap_or(0))
-        )
+        format!("{} result", session_name(stype))
     } else {
         "Race result".to_string()
     };
-    let title = match &snap.track_name {
-        Some(track) => format!("{what} — {track} (provisional)"),
-        None => format!("{what} (provisional)"),
+    // Only an INTERMEDIATE knockout segment gets the calm treatment: the game
+    // never sends it a per-segment classification (Q1→Q2 just cuts over), and
+    // its times are final at the flag — the flag standings ARE the result.
+    // Everything else without packet 8 is genuinely provisional: a race's
+    // official classification can reorder it (penalties, DSQs), and a FINAL
+    // qualifying segment (Q3, short, one-shot, SS3) does get its own packet 8
+    // carrying classification-only outcomes the live order can't know.
+    let (title, footer) = if quali && intermediate_quali_segment(stype) {
+        (
+            match &snap.track_name {
+                Some(track) => format!("{what} — {track}"),
+                None => what,
+            },
+            "BoxBox Race Control · standings at the flag",
+        )
+    } else {
+        (
+            match &snap.track_name {
+                Some(track) => format!("{what} — {track} (provisional)"),
+                None => format!("{what} (provisional)"),
+            },
+            "BoxBox Race Control · official classification never arrived — standings from live timing at the flag",
+        )
     };
 
     Some(json!({
@@ -455,7 +487,7 @@ fn build_provisional_results_embed(snap: &SessionSnapshot, quali: bool) -> Optio
             "title": title,
             "description": lines.join("\n"),
             "color": COLOR_RESULTS,
-            "footer": { "text": "BoxBox Race Control · official classification never arrived — standings from live timing at the flag" },
+            "footer": { "text": footer },
         }]
     }))
 }
@@ -706,16 +738,80 @@ mod tests {
         assert!(lines[0].contains("best 1:20.000"), "{d}");
         assert!(lines[1].contains("7 Vane"), "{d}");
 
-        // Qualifying flavour: gaps to the provisional pole.
+        // Qualifying flavour: gaps to the pole, and NO provisional alarm — a
+        // segment never gets its own packet 8, so flag standings are the
+        // result, not a caveat.
         let mut q = s.clone();
         q.session = Some(SessionData {
             session_type: 6,
             ..Default::default()
         });
         q.session_category = session_category_of(Some(6));
-        let v = build_results_embed(&q).expect("quali provisional");
+        let v = build_results_embed(&q).expect("quali flag standings");
+        let title = v["embeds"][0]["title"].as_str().unwrap();
+        assert!(!title.contains("(provisional)"), "{title}");
+        assert!(title.starts_with("Q2 result"), "{title}");
+        let footer = v["embeds"][0]["footer"]["text"].as_str().unwrap();
+        assert!(footer.contains("standings at the flag"), "{footer}");
+        assert!(!footer.contains("never arrived"), "{footer}");
         let d = description(&v);
         assert!(d.lines().nth(1).unwrap().contains("+0.500"), "{d}");
+    }
+
+    #[test]
+    fn final_segment_fallback_stays_provisional() {
+        // Q3 DOES get its own packet 8 — a missing one may hide DSQs and
+        // classification-only outcomes, so the fallback must keep the alarm.
+        use crate::racecontrol::state::DriverState;
+        let mut s = snap(7, vec![]);
+        s.final_classification = None;
+        s.session = Some(SessionData {
+            session_type: 7,
+            ..Default::default()
+        });
+        s.session_category = session_category_of(Some(7));
+        let mut d = DriverState::default();
+        d.index = 0;
+        d.name = "Rossi".into();
+        d.race_number = 16;
+        d.best_lap_ms = 80_000;
+        s.drivers = vec![d];
+
+        let v = build_results_embed(&s).expect("Q3 fallback");
+        let title = v["embeds"][0]["title"].as_str().unwrap();
+        assert!(title.contains("(provisional)"), "{title}");
+        let footer = v["embeds"][0]["footer"]["text"].as_str().unwrap();
+        assert!(footer.contains("never arrived"), "{footer}");
+    }
+
+    #[test]
+    fn flag_standings_quali_marks_knockouts() {
+        use crate::racecontrol::state::DriverState;
+        // Q1, 12-car field, no packet 8: the cutoff (11 survive) must be
+        // marked from the live order just like the official post marks it.
+        let mut s = snap(15, vec![]);
+        s.final_classification = None;
+        s.session = Some(SessionData {
+            session_type: 5,
+            ..Default::default()
+        });
+        s.session_category = session_category_of(Some(5));
+        s.drivers = (0..12)
+            .map(|i| {
+                let mut d = DriverState::default();
+                d.index = i;
+                d.name = format!("Car{i}");
+                d.race_number = i + 1;
+                d.best_lap_ms = 80_000 + u32::from(i) * 100;
+                d
+            })
+            .collect();
+
+        let v = build_results_embed(&s).expect("quali flag standings");
+        let d = description(&v);
+        let lines: Vec<&str> = d.lines().collect();
+        assert!(!lines[10].contains("OUT"), "P11 survives: {d}");
+        assert!(lines[11].contains("**OUT**"), "P12 eliminated: {d}");
     }
 
     #[test]
