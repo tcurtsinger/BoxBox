@@ -186,6 +186,11 @@ pub struct DriverState {
     pub ai_controlled: bool,
     pub telemetry_public: bool,
     pub show_online_names: bool,
+    /// Estimated input device (Phase 1, assets/design/input-detection/PLAN.md).
+    /// None until the verdict gate passes — and always None for AI cars and
+    /// telemetry-restricted cars (their steer trace is not theirs to judge).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_sig: Option<crate::inputsig::InputSignature>,
     pub livery_colours: Vec<LiveryColour>,
     pub name_override: Option<String>,
     // timing (LapData)
@@ -2088,6 +2093,16 @@ impl SessionState {
             .collect();
         for d in &mut list {
             d.name_override = self.name_overrides.get(&d.race_number).cloned();
+            // Verdicts attach only where the trace really is the driver's
+            // hand: never AI, never a restricted car (its steer arrives
+            // zeroed — except the player's own, whose feed is always real).
+            d.input_sig = if d.ai_controlled
+                || (!d.telemetry_public && d.index != self.player_car_index)
+            {
+                None
+            } else {
+                self.input_sig.signature(d.index as usize).cloned()
+            };
         }
         let by_position = |a: &DriverState, b: &DriverState| {
             let pa = if a.position == 0 {

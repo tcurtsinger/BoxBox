@@ -1,11 +1,40 @@
-//! Phase 0 of input-device detection (assets/design/input-detection/PLAN.md):
-//! a silent per-car steering-signature accumulator. The game's input pipeline
-//! stamps a device signature onto the steering trace (pads: deadzone-exact
-//! zeroes, pinned full lock, rate-limited ramps; wheels: constant micro-
+//! Input-device detection (assets/design/input-detection/PLAN.md).
+//!
+//! Phase 0: a silent per-car steering-signature accumulator. The game's input
+//! pipeline stamps a device signature onto the steering trace (pads: deadzone-
+//! exact zeroes, pinned full lock, rate-limited ramps; wheels: constant micro-
 //! corrections, smooth deltas), so ~60-second epochs of raw counters per car
 //! are logged as JSONL for offline tuning against the league's known devices.
-//! No classification, no UI — evidence collection only, because steering
-//! traces are NOT archived anywhere else and cannot be recovered after a race.
+//! Steering traces are NOT archived anywhere else and cannot be recovered
+//! after a race.
+//!
+//! Phase 1: the classifier (see the "Classification" section below), tuned
+//! against the 2026-08-25 Hungaroring online qualifying log (57 epochs, 60 Hz
+//! feed). What that data taught us, and the resulting design:
+//!
+//! - The single most important gate is FEED FIDELITY, not device physics.
+//!   Online, the game decimates remote cars' steering sync: some cars' traces
+//!   changed value only ~4×/second while streaming at 60 Hz — long
+//!   bit-identical holds broken by jumps, indistinguishable from a pad's
+//!   deadzone parking. 17 of 41 AI epochs looked exactly like that, as did
+//!   every epoch of one human. A decimated trace carries the NETWORK's
+//!   signature, not the driver's, so `moving_frac < 0.25` refuses to classify
+//!   (UNKNOWN) — the alternative is convicting wheel drivers who happen to be
+//!   far from the recording seat.
+//! - A real wheel at full fidelity (39 moves/s observed): continuous small
+//!   deltas (d50 ≈ 0.02), human-rate micro-corrections (~1.8 sign flips/s in
+//!   the centre band), low second-derivative energy (smooth unwinding).
+//! - The game's own AI steering (the ASSISTED template — steering assist IS
+//!   the AI controller): machine-rate dither, ~10 flips/s, never holds a
+//!   value (dwell ≈ 0), rarely parks at zero.
+//! - Exact-zero fraction is a WEAK discriminator here: the game deadzones
+//!   everyone (humans ~25-33% zero regardless of device), so it carries only
+//!   half weight in the pad score.
+//! - The high-fidelity PAD template (parking at exact zero, pinned full lock,
+//!   near-zero jitter, rate-limited ramps) is from the plan's signature
+//!   table, validated only synthetically so far: tonight's data contained no
+//!   local pad. The league test race supplies that ground truth; weights get
+//!   revisited before verdicts are treated as evidence.
 
 /// One epoch spans this much on-track session time before it emits.
 const EPOCH_SECS: f64 = 60.0;
@@ -66,23 +95,28 @@ struct CarAcc {
 }
 
 impl CarAcc {
+    /// The counters as they stand, without resetting — used both by `finish`
+    /// and by the live classifier peeking at a partial window.
+    fn peek(&self) -> Option<EpochCounters> {
+        if self.samples < MIN_SAMPLES {
+            return None;
+        }
+        Some(EpochCounters {
+            samples: self.samples,
+            zero: self.zero,
+            pin: self.pin,
+            delta_hist: self.delta_hist,
+            jitter_flips: self.jitter_flips,
+            jitter_samples: self.jitter_samples,
+            dwell_max: self.dwell_max.max(self.dwell_run),
+            sum_d1: self.sum_d1,
+            sum_d2: self.sum_d2,
+            span_secs: self.eligible_secs,
+        })
+    }
+
     fn finish(&mut self) -> Option<EpochCounters> {
-        let out = if self.samples >= MIN_SAMPLES {
-            Some(EpochCounters {
-                samples: self.samples,
-                zero: self.zero,
-                pin: self.pin,
-                delta_hist: self.delta_hist,
-                jitter_flips: self.jitter_flips,
-                jitter_samples: self.jitter_samples,
-                dwell_max: self.dwell_max.max(self.dwell_run),
-                sum_d1: self.sum_d1,
-                sum_d2: self.sum_d2,
-                span_secs: self.eligible_secs,
-            })
-        } else {
-            None
-        };
+        let out = self.peek();
         *self = CarAcc::default();
         out
     }
@@ -99,12 +133,199 @@ fn delta_bucket(d: f32) -> usize {
     }
 }
 
+// --- Classification (Phase 1) --------------------------------------------------
+
+/// No verdict until this much eligible trace exists in the current window.
+const VERDICT_MIN_SECS: f64 = 45.0;
+/// Top class must claim this share of the total score to convict.
+const VERDICT_MIN_CONF: f32 = 0.85;
+/// Below this fraction of frames actually changing value, the trace carries
+/// the network's decimation signature, not the driver's — never classify.
+const FIDELITY_MIN_MOVING_FRAC: f32 = 0.25;
+/// A competing verdict must hold for this much further eligible time before
+/// the sticky verdict flips (and the flip itself is flagged).
+const FLIP_HOLD_SECS: f64 = EPOCH_SECS;
+/// Re-evaluate a car at most once per eligible second.
+const EVAL_PERIOD_SECS: f64 = 1.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InputVerdict {
+    Wheel,
+    Pad,
+    Assisted,
+}
+
+/// The derived features behind a verdict, for the steward evidence view.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SigFeatures {
+    pub zero_frac: f32,
+    pub pin_frac: f32,
+    /// Fraction of frames whose value actually changed (the fidelity gate).
+    pub moving_frac: f32,
+    pub jitter_per_sec: f32,
+    pub dwell_frac: f32,
+    /// Second-derivative energy over first (step reversals ≈ 2, smooth ≪ 1).
+    pub smoothness: f32,
+}
+
+/// A live verdict for one car. Every consumer labels this "estimated" — it is
+/// steward evidence, never a conviction.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InputSignature {
+    pub verdict: InputVerdict,
+    pub confidence: f32,
+    pub features: SigFeatures,
+    pub sample_secs: f32,
+    /// The verdict changed mid-session — itself worth a steward's eye.
+    pub flipped_this_session: bool,
+}
+
+fn ramp(x: f32, a: f32, b: f32) -> f32 {
+    ((x - a) / (b - a)).clamp(0.0, 1.0)
+}
+
+fn derive_features(c: &EpochCounters) -> SigFeatures {
+    let n = c.samples.max(1) as f32;
+    let deltas: u32 = c.delta_hist.iter().sum();
+    let moving = deltas - c.delta_hist[0];
+    let span = c.span_secs.max(1.0) as f32;
+    SigFeatures {
+        zero_frac: c.zero as f32 / n,
+        pin_frac: c.pin as f32 / n,
+        moving_frac: moving as f32 / deltas.max(1) as f32,
+        jitter_per_sec: c.jitter_flips as f32 / span,
+        dwell_frac: c.dwell_max as f32 / n,
+        smoothness: if c.sum_d1 > 1e-9 {
+            (c.sum_d2 / c.sum_d1) as f32
+        } else {
+            0.0
+        },
+    }
+}
+
+/// Median |delta| approximated by its histogram bucket's upper edge.
+fn delta_p50(c: &EpochCounters) -> f32 {
+    const EDGES: [f32; 6] = [0.001, 0.005, 0.02, 0.05, 0.1, 0.2];
+    let deltas: u32 = c.delta_hist.iter().sum();
+    let target = deltas.div_ceil(2);
+    let mut cum = 0u32;
+    for (i, b) in c.delta_hist.iter().enumerate() {
+        cum += b;
+        if cum >= target {
+            return EDGES[i];
+        }
+    }
+    EDGES[5]
+}
+
+/// Classify one window of counters, or None when no honest verdict exists:
+/// too little trace, a decimated feed, or no class clearing the confidence
+/// gate. Pure — the sticky/flip policy lives in the tracker.
+pub fn classify(c: &EpochCounters) -> Option<(InputVerdict, f32, SigFeatures)> {
+    if c.span_secs < VERDICT_MIN_SECS {
+        return None;
+    }
+    let f = derive_features(c);
+    if f.moving_frac < FIDELITY_MIN_MOVING_FRAC {
+        return None;
+    }
+    let d50 = delta_p50(c);
+    let jps = f.jitter_per_sec;
+
+    // Hand-set from the 2026-08-25 Hungaroring log (see module docs): each
+    // class sums bounded per-feature affinities; confidence is its share.
+    let pad = 0.5 * ramp(f.zero_frac, 0.15, 0.35)
+        + 1.5 * ramp(f.pin_frac, 0.0005, 0.01)
+        + (1.0 - ramp(jps, 0.05, 0.8))
+        + ramp(f.dwell_frac, 0.02, 0.08);
+    // Human-rate corrections required (× ramp) and machine-rate excluded:
+    // the AI dithers at ~10 flips/s, hands live around 1-3.
+    let wheel = (ramp(jps, 0.3, 1.2)
+        + (1.0 - ramp(f.smoothness, 0.9, 1.6))
+        + (1.0 - ramp(f.dwell_frac, 0.02, 0.08))
+        + ramp(d50, 0.002, 0.012))
+        * ramp(jps, 0.1, 0.3)
+        * (1.0 - ramp(jps, 4.5, 6.5));
+    // Assist REQUIRES its positive marker — machine-rate dither. Without the
+    // × gate, its "never holds / never parks" terms hand free points to any
+    // clean wheel trace and drag real wheel verdicts under the gate.
+    let assist = (ramp(jps, 5.0, 8.0)
+        + (1.0 - ramp(f.dwell_frac, 0.005, 0.03))
+        + (1.0 - ramp(f.zero_frac, 0.10, 0.25))
+        + ramp(f.smoothness, 0.7, 0.95) * (1.0 - ramp(f.smoothness, 1.0, 1.3)))
+        * ramp(jps, 3.5, 5.5);
+
+    let total = pad + wheel + assist;
+    if total <= 0.0 {
+        return None;
+    }
+    let (verdict, top) = if wheel >= pad && wheel >= assist {
+        (InputVerdict::Wheel, wheel)
+    } else if pad >= assist {
+        (InputVerdict::Pad, pad)
+    } else {
+        (InputVerdict::Assisted, assist)
+    };
+    let confidence = top / total;
+    if confidence < VERDICT_MIN_CONF {
+        return None;
+    }
+    Some((verdict, confidence, f))
+}
+
+/// Sticky per-car verdict state: once issued, a verdict only flips after the
+/// competing class holds for another FLIP_HOLD_SECS of eligible time — and
+/// the flip is flagged (a device change mid-session is itself suspicious).
+#[derive(Default, Clone)]
+struct VerdictState {
+    current: Option<InputSignature>,
+    /// A competing verdict and the eligible-time stamp it first appeared at.
+    candidate: Option<(InputVerdict, f64)>,
+    flipped: bool,
+    /// Session-lifetime eligible seconds (epochs reset; this doesn't).
+    total_eligible: f64,
+    last_eval: f64,
+}
+
+impl VerdictState {
+    fn observe(&mut self, verdict: InputVerdict, confidence: f32, f: SigFeatures, secs: f64) {
+        let sig = |flipped| InputSignature {
+            verdict,
+            confidence,
+            features: f.clone(),
+            sample_secs: secs as f32,
+            flipped_this_session: flipped,
+        };
+        match &mut self.current {
+            None => self.current = Some(sig(self.flipped)),
+            Some(cur) if cur.verdict == verdict => {
+                *cur = sig(self.flipped);
+                self.candidate = None;
+            }
+            Some(_) => match self.candidate {
+                Some((cand, since)) if cand == verdict => {
+                    if self.total_eligible - since >= FLIP_HOLD_SECS {
+                        self.flipped = true;
+                        self.current = Some(sig(true));
+                        self.candidate = None;
+                    }
+                }
+                _ => self.candidate = Some((verdict, self.total_eligible)),
+            },
+        }
+    }
+}
+
 /// Per-session tracker for the whole grid. Owned by the session state, reset
 /// on session change; completed epochs queue in `pending` until drained by the
 /// telemetry loop and appended to the JSONL log.
 #[derive(Default)]
 pub struct InputSigTracker {
     cars: Vec<CarAcc>,
+    verdicts: Vec<VerdictState>,
     pending: Vec<(usize, EpochCounters)>,
 }
 
@@ -114,8 +335,15 @@ impl InputSigTracker {
         // identities) is stamped at drain time, and stamping the old session's
         // trace with the new session's labels would poison the tuning data.
         // Losing under a minute of pre-boundary trace is the cheap option.
+        // Verdicts are per-session too — a new session earns its own evidence.
         self.cars.clear();
+        self.verdicts.clear();
         self.pending.clear();
+    }
+
+    /// The current estimated verdict for a car, if one has been earned.
+    pub fn signature(&self, idx: usize) -> Option<&InputSignature> {
+        self.verdicts.get(idx)?.current.as_ref()
     }
 
     /// Feed one steering sample. `eligible` = genuinely running on track
@@ -127,6 +355,7 @@ impl InputSigTracker {
         }
         if self.cars.len() <= idx {
             self.cars.resize_with(idx + 1, CarAcc::default);
+            self.verdicts.resize_with(idx + 1, VerdictState::default);
         }
         let acc = &mut self.cars[idx];
 
@@ -148,7 +377,9 @@ impl InputSigTracker {
         // the previous sample when continuity held, capped so a stalled feed
         // can't count dead air as trace time.
         if acc.prev_steer.is_some() {
-            acc.eligible_secs += (clock - acc.last_clock).clamp(0.0, 1.0);
+            let step = (clock - acc.last_clock).clamp(0.0, 1.0);
+            acc.eligible_secs += step;
+            self.verdicts[idx].total_eligible += step;
         }
         acc.last_clock = clock;
         acc.samples += 1;
@@ -182,6 +413,27 @@ impl InputSigTracker {
             acc.prev_delta = Some(delta);
         }
         acc.prev_steer = Some(steer);
+
+        // Live classification: at most once per eligible second, once the
+        // window has enough trace. A handful of float ops — negligible even
+        // at 60 Hz × 22 cars.
+        let vs = &mut self.verdicts[idx];
+        // A finished or flashback-discarded epoch reset the window clock —
+        // heal a marker pointing past it.
+        if vs.last_eval > acc.eligible_secs {
+            vs.last_eval = 0.0;
+        }
+        if acc.eligible_secs >= VERDICT_MIN_SECS
+            && acc.eligible_secs - vs.last_eval >= EVAL_PERIOD_SECS
+        {
+            vs.last_eval = acc.eligible_secs;
+            if let Some(counters) = acc.peek() {
+                if let Some((v, conf, f)) = classify(&counters) {
+                    let secs = acc.eligible_secs;
+                    vs.observe(v, conf, f, secs);
+                }
+            }
+        }
 
         if acc.eligible_secs >= EPOCH_SECS {
             if let Some(c) = acc.finish() {
@@ -364,6 +616,190 @@ mod tests {
         assert_eq!(rows.len(), 1);
         // Only eligible samples counted.
         assert!(rows[0].1.samples < 1400);
+    }
+
+    // ---- Classification -------------------------------------------------
+    // The first three fixtures are REAL epochs from the 2026-08-25
+    // Hungaroring online qualifying log (60 Hz feed) — the tuning data.
+
+    /// A human on a wheel, high-fidelity sync: continuous small deltas,
+    /// ~1.8 micro-corrections/s, smooth unwinding.
+    fn wheel_epoch() -> EpochCounters {
+        EpochCounters {
+            samples: 3601,
+            zero: 927,
+            pin: 0,
+            delta_hist: [1179, 333, 1771, 302, 15, 0],
+            jitter_flips: 110,
+            jitter_samples: 2300,
+            dwell_max: 120,
+            sum_d1: 29.933,
+            sum_d2: 15.819,
+            span_secs: 60.0,
+        }
+    }
+
+    /// The game's own AI steering (= the steering-assist controller):
+    /// machine-rate dither, ~10 flips/s, never holds a value.
+    fn assist_epoch() -> EpochCounters {
+        EpochCounters {
+            samples: 3602,
+            zero: 189,
+            pin: 0,
+            delta_hist: [777, 1387, 1176, 220, 31, 10],
+            jitter_flips: 597,
+            jitter_samples: 2501,
+            dwell_max: 6,
+            sum_d1: 24.710,
+            sum_d2: 21.813,
+            span_secs: 60.0,
+        }
+    }
+
+    /// A DECIMATED remote car: value changes only ~3/s at a 60 Hz feed —
+    /// long bit-identical holds broken by jumps. Looks exactly like a pad,
+    /// but the signature belongs to the network, not the driver. This was a
+    /// real human whose device is unknowable from this seat.
+    fn decimated_epoch() -> EpochCounters {
+        EpochCounters {
+            samples: 3602,
+            zero: 1179,
+            pin: 0,
+            delta_hist: [3414, 0, 0, 131, 51, 5],
+            jitter_flips: 0,
+            jitter_samples: 2301,
+            dwell_max: 419,
+            sum_d1: 8.437,
+            sum_d2: 16.875,
+            span_secs: 60.0,
+        }
+    }
+
+    /// A high-fidelity pad per the plan's signature table (synthetic — the
+    /// tuning log had no local pad; the league test race supplies that).
+    /// Parks at exact zero, pins full lock, rate-limited ramps, no jitter.
+    fn pad_epoch() -> EpochCounters {
+        EpochCounters {
+            samples: 3600,
+            zero: 1800,
+            pin: 108,
+            delta_hist: [1700, 100, 200, 1400, 140, 60],
+            jitter_flips: 5,
+            jitter_samples: 2000,
+            dwell_max: 400,
+            sum_d1: 50.0,
+            sum_d2: 55.0,
+            span_secs: 60.0,
+        }
+    }
+
+    #[test]
+    fn real_wheel_epoch_classifies_wheel() {
+        let (v, conf, f) = classify(&wheel_epoch()).expect("verdict");
+        assert_eq!(v, InputVerdict::Wheel);
+        assert!(conf >= VERDICT_MIN_CONF, "{conf}");
+        assert!(f.moving_frac > 0.5);
+    }
+
+    #[test]
+    fn real_ai_dither_classifies_assisted() {
+        let (v, conf, _) = classify(&assist_epoch()).expect("verdict");
+        assert_eq!(v, InputVerdict::Assisted);
+        assert!(conf >= VERDICT_MIN_CONF, "{conf}");
+    }
+
+    #[test]
+    fn a_decimated_feed_never_convicts() {
+        // The false-accusation case that matters most: a far car's decimated
+        // trace is pad-shaped, and the driver may well be on a wheel.
+        assert!(classify(&decimated_epoch()).is_none());
+    }
+
+    #[test]
+    fn synthetic_pad_classifies_pad() {
+        let (v, conf, _) = classify(&pad_epoch()).expect("verdict");
+        assert_eq!(v, InputVerdict::Pad);
+        assert!(conf >= VERDICT_MIN_CONF, "{conf}");
+    }
+
+    #[test]
+    fn no_verdict_below_the_sample_gate() {
+        let mut c = wheel_epoch();
+        c.span_secs = 30.0; // under VERDICT_MIN_SECS
+        assert!(classify(&c).is_none());
+    }
+
+    #[test]
+    fn restricted_zeroed_steer_never_convicts() {
+        // A telemetry-restricted car's steer arrives as constant zero: no
+        // movement at all — the fidelity gate refuses it long before any
+        // pad-shaped score could.
+        let c = EpochCounters {
+            samples: 3600,
+            zero: 3600,
+            pin: 0,
+            delta_hist: [3599, 0, 0, 0, 0, 0],
+            jitter_flips: 0,
+            jitter_samples: 3599,
+            dwell_max: 3599,
+            sum_d1: 0.0,
+            sum_d2: 0.0,
+            span_secs: 60.0,
+        };
+        assert!(classify(&c).is_none());
+    }
+
+    #[test]
+    fn verdict_is_sticky_and_flips_only_after_a_held_window() {
+        let mut vs = VerdictState::default();
+        let f = derive_features(&wheel_epoch());
+        vs.total_eligible = 60.0;
+        vs.observe(InputVerdict::Wheel, 0.9, f.clone(), 60.0);
+        assert_eq!(vs.current.as_ref().unwrap().verdict, InputVerdict::Wheel);
+
+        // A competing verdict appears — no flip yet.
+        vs.total_eligible = 90.0;
+        vs.observe(InputVerdict::Pad, 0.9, f.clone(), 45.0);
+        assert_eq!(
+            vs.current.as_ref().unwrap().verdict,
+            InputVerdict::Wheel,
+            "one contrary window is not a flip"
+        );
+        // Held for less than the flip window: still no flip.
+        vs.total_eligible = 120.0;
+        vs.observe(InputVerdict::Pad, 0.9, f.clone(), 45.0);
+        assert_eq!(vs.current.as_ref().unwrap().verdict, InputVerdict::Wheel);
+        // Held past a full window: flips, and the flip is flagged.
+        vs.total_eligible = 151.0;
+        vs.observe(InputVerdict::Pad, 0.9, f.clone(), 45.0);
+        let cur = vs.current.as_ref().unwrap();
+        assert_eq!(cur.verdict, InputVerdict::Pad);
+        assert!(cur.flipped_this_session, "the flip itself is evidence");
+
+        // Agreement clears any stale candidate.
+        vs.total_eligible = 160.0;
+        vs.observe(InputVerdict::Pad, 0.92, f, 50.0);
+        assert!(vs.candidate.is_none());
+    }
+
+    #[test]
+    fn live_tracker_issues_a_wheel_verdict_from_a_wheel_trace() {
+        // End-to-end: a wheel-like stream (micro-corrections around centre,
+        // continuous motion) earns a WHEEL signature once the gate passes.
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        for i in 0..3000 {
+            // Time-based waves so the correction rate stays human (~1.3
+            // sign flips/s) regardless of the 60 Hz sample rate.
+            let secs = i as f32 / 60.0;
+            let s = (secs * 4.0).sin() * 0.02 + (secs * 0.65).sin() * 0.05 + 0.0011;
+            t.sample(0, s, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        let sig = t.signature(0).expect("gate passed at 45s of 50s fed");
+        assert_eq!(sig.verdict, InputVerdict::Wheel);
+        assert!(sig.confidence >= VERDICT_MIN_CONF);
+        assert!(!sig.flipped_this_session);
     }
 
     #[test]

@@ -48,14 +48,15 @@ interface Car {
   pit?: boolean; // in the pit lane this tick
   pen?: number; // outstanding time penalty, seconds
   flag?: FlagKey;
+  input?: { verdict: InputSigRow["verdict"]; confidence: number; flipped?: boolean };
 }
 
 const RAW: Car[] = [
-  { no: 16, name: "Mateo Rossi", team: 0, grid: 1, tyre: "M", age: 18, batt: 64, fuel: 1.2, pits: 1, pitLap: 23, interval: 0, last: 80412, best: 80123 },
-  { no: 55, name: "Lars Henning", team: 5, grid: 3, tyre: "S", age: 6, batt: 71, fuel: 0.8, pits: 1, pitLap: 24, interval: 0.512, last: 80355, best: 80288 },
-  { no: 4, name: "Kenji Sato", team: 2, grid: 2, tyre: "M", age: 17, batt: 58, fuel: 1.4, pits: 1, pitLap: 22, interval: 0.255, last: 80760, best: 80341 },
-  { no: 11, name: "Diego Marval", team: 3, grid: 6, tyre: "S", age: 4, batt: 80, fuel: 2.1, pits: 2, pitLap: 25, interval: 1.43, last: 80601, best: 80512, boost: true },
-  { no: 63, name: "Owen Pryce", team: 6, grid: 5, tyre: "M", age: 19, batt: 49, fuel: 1.0, pits: 1, pitLap: 21, interval: 0.318, last: 80540, best: 80498 },
+  { no: 16, name: "Mateo Rossi", team: 0, grid: 1, tyre: "M", age: 18, batt: 64, fuel: 1.2, pits: 1, pitLap: 23, interval: 0, last: 80412, best: 80123, input: { verdict: "wheel", confidence: 0.96 } },
+  { no: 55, name: "Lars Henning", team: 5, grid: 3, tyre: "S", age: 6, batt: 71, fuel: 0.8, pits: 1, pitLap: 24, interval: 0.512, last: 80355, best: 80288, input: { verdict: "pad", confidence: 0.91 } },
+  { no: 4, name: "Kenji Sato", team: 2, grid: 2, tyre: "M", age: 17, batt: 58, fuel: 1.4, pits: 1, pitLap: 22, interval: 0.255, last: 80760, best: 80341, input: { verdict: "wheel", confidence: 0.88 } },
+  { no: 11, name: "Diego Marval", team: 3, grid: 6, tyre: "S", age: 4, batt: 80, fuel: 2.1, pits: 2, pitLap: 25, interval: 1.43, last: 80601, best: 80512, boost: true, input: { verdict: "assisted", confidence: 0.87 } },
+  { no: 63, name: "Owen Pryce", team: 6, grid: 5, tyre: "M", age: 19, batt: 49, fuel: 1.0, pits: 1, pitLap: 21, interval: 0.318, last: 80540, best: 80498, input: { verdict: "pad", confidence: 0.93, flipped: true } },
   { no: 81, name: "Anton Reuss", team: 1, grid: 4, tyre: "M", age: 20, batt: 44, fuel: 0.6, pits: 1, pitLap: 20, interval: 0.402, last: 80622, best: 80555 },
   { no: 23, name: "Bruno Salt", team: 7, grid: 9, tyre: "H", age: 2, batt: 88, fuel: 2.6, pits: 2, pitLap: 26, interval: 4.061, last: 81020, best: 80701 },
   { no: 9, name: "Theo Vance", team: 4, grid: 8, tyre: "M", age: 14, batt: 39, fuel: 0.4, pits: 1, pitLap: 19, interval: 0.52, last: 80760, best: 80744 },
@@ -114,9 +115,25 @@ export interface DriverRow {
   /** Driver has hidden their online name (showOnlineNames off) and no steward
    *  override is set, so the shown name is the game's redaction — flag it (P2.6). */
   namePrivate: boolean;
+  /** Estimated input device (steward evidence, never a conviction): null until
+   *  the classifier's gates pass. Undefined/null with `restricted` or `ai` set
+   *  renders "—" (no trace to judge); otherwise "?" (not enough clean trace). */
+  inputSig?: InputSigRow | null;
+  /** AI-controlled car — input estimation doesn't apply. */
+  ai?: boolean;
   /** Real per-car detail, present only on live rows (never the sample grid). The
    *  driver panel renders this instead of the synthesized placeholder detail. */
   live?: LiveDetail;
+}
+
+/** An estimated input-device verdict for the tower's INPUT column. Every
+ *  surface says "estimated" — this is steward evidence, not a conviction. */
+export interface InputSigRow {
+  verdict: "wheel" | "pad" | "assisted";
+  /** 0..1; the classifier only issues verdicts at ≥ 0.85. */
+  confidence: number;
+  /** The verdict changed mid-session — itself worth a steward's eye. */
+  flipped: boolean;
 }
 
 /** One archived lap from Session History (packet 11) — the authoritative
@@ -201,6 +218,7 @@ export function sampleGrid(): DriverRow[] {
       flag: c.flag ?? null,
       restricted: false,
       namePrivate: false,
+      inputSig: c.input ? { flipped: false, ...c.input } : null,
     };
   });
 }
