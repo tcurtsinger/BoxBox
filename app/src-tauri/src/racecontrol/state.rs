@@ -404,6 +404,16 @@ pub struct SessionState {
     // A provisional capture was already staged for this session, so the two
     // fallback paths (grace timeout, UID rollover) can't stage it twice.
     provisional_staged: bool,
+    // The session uid we most recently rolled away from, and when. Online
+    // lobbies interleave packets from the departed session for a while after
+    // the cutover (observed: ~75s of Q1/Q2 uid flip-flop at a segment
+    // boundary), and re-entering it would wipe the new session's state and
+    // stage junk captures of the old uid over the real one.
+    recent_prior_uid: Option<(String, f64)>,
+    // Wall-clock ms before which an evidence-less pending capture is held back
+    // from the drain, giving late finish evidence (a SEND under the stale uid,
+    // the next segment's Session packet) time to upgrade it to announceable.
+    pending_archive_hold_until: f64,
     // UID of the last session whose result the listener actually enqueued to
     // Discord. NOT cleared on reset: the rollover fallback drains (and posts)
     // the OUTGOING session after the reset already ran.
@@ -418,6 +428,15 @@ const MAX_INCIDENTS: usize = 1000;
 // normally lands within a second of SEND, and it's a single datagram — well
 // past this, it isn't coming.
 const CLASSIFICATION_GRACE_MS: f64 = 10_000.0;
+// How long a departed session's uid stays "stale" — packets carrying it are
+// dropped instead of re-entering the session. Longer than any observed
+// boundary churn (75s), far shorter than a deliberate replay of an event.
+const UID_REENTRY_DEBOUNCE_MS: f64 = 120_000.0;
+// How long an evidence-less boundary capture waits before draining, so late
+// finish evidence can still upgrade it to a posted result. SEND under the
+// stale uid was observed 1.1s after the cutover; the next segment's Session
+// packet arrives within a couple of seconds.
+const PENDING_ANNOUNCE_HOLD_MS: f64 = 10_000.0;
 // A capture superseding a session whose result posted within this window MAY be
 // the game's end-of-race UID churn (same race, new UID at the flag) — confirmed
 // by the session clock not starting near zero. Both signals required.
@@ -518,6 +537,22 @@ impl SessionState {
     pub fn ingest(&mut self, pkt: &ParsedPacket, at_ms: f64) {
         let h = &pkt.header;
         if h.session_uid != self.session_uid {
+            // Boundary churn: packets from the session we just left keep
+            // arriving for a while after an online cutover. Re-entering would
+            // wipe the new session and stage junk captures of the old uid —
+            // drop them instead, harvesting the one thing a stale packet can
+            // still prove: the departed session's chequered flag upgrades its
+            // held capture from silent just-in-case to announceable result.
+            if self.recent_prior_uid.as_ref().is_some_and(|(uid, at)| {
+                *uid == h.session_uid && at_ms - at < UID_REENTRY_DEBOUNCE_MS
+            }) {
+                if let Some(Body::Event(e)) = &pkt.data {
+                    if e.code == "SEND" || e.code == "CHQF" {
+                        self.confirm_pending_capture(&h.session_uid);
+                    }
+                }
+                return;
+            }
             self.reset_for_session(h.session_uid.clone(), f64::from(h.session_time), at_ms);
         }
 
@@ -569,6 +604,35 @@ impl SessionState {
                 if let Some((prev_uid, track, stype)) = self.prior_session.take() {
                     if s.track_id == track && s.session_type == stype {
                         self.replaces_session_uid = Some(prev_uid);
+                    }
+                }
+                // The new session's identity is itself finish evidence for the
+                // held capture: qualifying advancing to another segment (or the
+                // race) at the same track means the departed segment completed,
+                // even when its SEND was lost at the cutover. A RESTART (same
+                // segment type) proves the opposite — an abandoned attempt —
+                // and stays silent.
+                if let Some(pending) = self.pending_auto_archive.as_deref() {
+                    let pending_is_recent_prior = self
+                        .recent_prior_uid
+                        .as_ref()
+                        .is_some_and(|(uid, _)| *uid == pending.session_uid);
+                    let pending_quali =
+                        session_category_of(pending.session.as_ref().map(|x| x.session_type))
+                            == SessionCategory::Qualifying;
+                    let same_track = pending
+                        .session
+                        .as_ref()
+                        .is_some_and(|p| p.track_id == s.track_id);
+                    let advanced = pending.session.as_ref().map(|p| p.session_type)
+                        != Some(s.session_type)
+                        && matches!(
+                            session_category_of(Some(s.session_type)),
+                            SessionCategory::Qualifying | SessionCategory::Race
+                        );
+                    if pending_is_recent_prior && pending_quali && same_track && advanced {
+                        let uid = pending.session_uid.clone();
+                        self.confirm_pending_capture(&uid);
                     }
                 }
                 self.session = Some(s.clone());
@@ -669,7 +733,7 @@ impl SessionState {
     /// `take_pending_auto_archive_with_announce` (it needs the extras).
     #[cfg(test)]
     pub fn take_pending_auto_archive(&mut self) -> Option<Box<SessionSnapshot>> {
-        self.take_pending_auto_archive_with_announce()
+        self.take_pending_auto_archive_with_announce(f64::MAX, false)
             .map(|(s, _, _)| s)
     }
 
@@ -678,9 +742,17 @@ impl SessionState {
     /// session). Archiving always proceeds; announcing requires finish
     /// evidence — a just-in-case boundary capture returns false and stays out
     /// of the webhook.
+    /// An evidence-less capture stays held until its hold elapses (late
+    /// evidence may still upgrade it to a posted result); `force` drains
+    /// regardless (listener stopping — nothing more can arrive).
     pub fn take_pending_auto_archive_with_announce(
         &mut self,
+        now_ms: f64,
+        force: bool,
     ) -> Option<(Box<SessionSnapshot>, bool, Option<String>)> {
+        if !force && !self.pending_archive_announce && now_ms < self.pending_archive_hold_until {
+            return None;
+        }
         let announce = self.pending_archive_announce;
         let supersedes = self.pending_archive_supersedes.clone();
         self.pending_auto_archive
@@ -690,8 +762,8 @@ impl SessionState {
 
     /// Stage the current session as a provisional capture — the shape packet 8
     /// would have staged, marked provisional by its missing classification. At
-    /// most once per session, and only for a race/quali session with real
-    /// content (someone raced, or captured quali segments to preserve).
+    /// most once per session, and only for a race/quali session in which
+    /// someone actually raced.
     /// `announce` says whether the capture may post to Discord: true only with
     /// finish evidence behind it — a just-in-case boundary capture archives
     /// silently.
@@ -704,21 +776,45 @@ impl SessionState {
         }
         let announce = announce && !self.is_flag_churn_repost(now_ms);
         let category = session_category_of(self.session.as_ref().map(|s| s.session_type));
+        // Somebody must actually have RACED in this epoch's driver state. A
+        // non-empty quali vault alone is not content: an epoch whose drivers
+        // were wiped at a churned boundary would stage an empty capture over
+        // the real one (the vault rides along inside whichever real capture
+        // staged it).
         let raced = self
             .drivers
             .values()
             .any(|d| !d.name.is_empty() && (d.best_lap_ms > 0 || d.current_lap_num > 1));
-        let has_content =
-            raced || (category == SessionCategory::Qualifying && !self.quali_segments.is_empty());
         if matches!(
             category,
             SessionCategory::Race | SessionCategory::Qualifying
-        ) && has_content
+        ) && raced
         {
             self.provisional_staged = true;
             self.pending_archive_announce = announce;
             self.pending_archive_supersedes = self.replaces_session_uid.clone();
+            // No finish evidence yet: hold the capture briefly so late
+            // evidence (stale-uid SEND, the next segment's Session packet)
+            // can upgrade it into a posted result before it drains silently.
+            self.pending_archive_hold_until = if announce {
+                0.0
+            } else {
+                now_ms + PENDING_ANNOUNCE_HOLD_MS
+            };
             self.pending_auto_archive = Some(Box::new(self.snapshot()));
+        }
+    }
+
+    /// Late finish evidence for a still-held capture of `uid`: upgrade it from
+    /// silent just-in-case to an announceable result (and release its hold).
+    fn confirm_pending_capture(&mut self, uid: &str) {
+        if self
+            .pending_auto_archive
+            .as_deref()
+            .is_some_and(|s| s.session_uid == uid && s.final_classification.is_none())
+        {
+            self.pending_archive_announce = true;
+            self.pending_archive_hold_until = 0.0;
         }
     }
 
@@ -892,6 +988,11 @@ impl SessionState {
             .as_ref()
             .map(|s| (chain_uid, s.track_id, s.session_type));
         self.replaces_session_uid = None;
+        // Packets still carrying the departed uid are boundary churn from here
+        // on — see the debounce at the top of `ingest`.
+        if !self.session_uid.is_empty() {
+            self.recent_prior_uid = Some((self.session_uid.clone(), at_ms));
+        }
         self.session_uid = uid;
         self.first_session_time = first_clock;
         self.session = None;
@@ -2475,7 +2576,7 @@ mod tests {
         // The lobby cuts over; packet 8 (single datagram) never arrived.
         st.ingest(&session("B", 15), 0.0);
         let (snap, announce, _) = st
-            .take_pending_auto_archive_with_announce()
+            .take_pending_auto_archive_with_announce(f64::MAX, false)
             .expect("provisional staged");
         assert_eq!(snap.session_uid, "A", "the FINISHED session is archived");
         assert!(snap.final_classification.is_none(), "provisional by shape");
@@ -2496,10 +2597,122 @@ mod tests {
         st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
         st.ingest(&session("B", 15), 0.0);
         let (snap, announce, _) = st
-            .take_pending_auto_archive_with_announce()
+            .take_pending_auto_archive_with_announce(f64::MAX, false)
             .expect("just-in-case archive staged");
         assert_eq!(snap.session_uid, "A");
         assert!(!announce, "no finish evidence - never announced");
+    }
+
+    #[test]
+    fn next_quali_segment_confirms_the_held_capture() {
+        // Observed online: Q1's SEND is lost at the cutover, so the boundary
+        // capture stages evidence-less — but Q2 arriving at the same track IS
+        // proof that Q1 completed, and the capture upgrades to a posted result.
+        let mut st = SessionState::new();
+        st.ingest(&session("Q1", 5), 0.0);
+        st.ingest(&participants("Q1", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("Q1", vec![lap_entry(0, 1, 1, 78_109, 2)]), 0.0);
+        st.ingest(&session("Q2", 6), 1_000.0);
+        let (snap, announce, _) = st
+            .take_pending_auto_archive_with_announce(1_100.0, false)
+            .expect("Q1 capture staged");
+        assert_eq!(snap.session_uid, "Q1");
+        assert!(announce, "segment advance is finish evidence");
+        assert_eq!(
+            snap.drivers.len(),
+            1,
+            "the MATURE pre-wipe state, not a rebuild"
+        );
+        assert_eq!(snap.drivers[0].best_lap_ms, 78_109);
+    }
+
+    #[test]
+    fn stale_uid_packets_are_dropped_not_reentered() {
+        // Online lobbies interleave the departed session's packets for a while
+        // after the cutover (observed: ~75s of Q1/Q2 flip-flop). Re-entering
+        // wiped state and staged junk captures over the real one.
+        let mut st = SessionState::new();
+        st.ingest(&session("Q1", 5), 0.0);
+        st.ingest(&participants("Q1", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("Q1", vec![lap_entry(0, 1, 1, 78_109, 2)]), 0.0);
+        st.ingest(&session("Q2", 6), 1_000.0);
+        assert!(st
+            .take_pending_auto_archive_with_announce(1_100.0, false)
+            .is_some());
+        // Stale Q1 packets keep arriving: dropped, no reset, no junk stage.
+        st.ingest(&laps("Q1", vec![lap_entry(0, 1, 1, 82_593, 2)]), 2_000.0);
+        st.ingest(&session("Q1", 5), 6_000.0);
+        assert_eq!(st.session_uid(), "Q2", "never re-entered the stale session");
+        assert!(
+            st.take_pending_auto_archive_with_announce(f64::MAX, false)
+                .is_none(),
+            "no junk capture staged from the churn"
+        );
+    }
+
+    #[test]
+    fn stale_uid_send_upgrades_the_held_race_capture() {
+        // A race's SEND landing just after the uid flipped still upgrades the
+        // held capture instead of being lost with the stale packet.
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&session("B", 15), 1_000.0);
+        // Held: same-type rollover is a restart, not finish evidence.
+        assert!(
+            st.take_pending_auto_archive_with_announce(1_100.0, false)
+                .is_none(),
+            "evidence-less capture is held for late evidence"
+        );
+        st.ingest(&event("A", session_end()), 2_000.0);
+        let (snap, announce, _) = st
+            .take_pending_auto_archive_with_announce(2_100.0, false)
+            .expect("upgrade releases the hold");
+        assert_eq!(snap.session_uid, "A");
+        assert!(announce, "the harvested SEND is finish evidence");
+    }
+
+    #[test]
+    fn evidence_less_capture_drains_silently_after_the_hold() {
+        let mut st = SessionState::new();
+        st.ingest(&session("A", 15), 0.0);
+        st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
+        st.ingest(&session("B", 15), 1_000.0);
+        assert!(st
+            .take_pending_auto_archive_with_announce(1_100.0, false)
+            .is_none());
+        let (_, announce, _) = st
+            .take_pending_auto_archive_with_announce(
+                1_000.0 + PENDING_ANNOUNCE_HOLD_MS + 1.0,
+                false,
+            )
+            .expect("hold elapsed - archive proceeds");
+        assert!(!announce, "still no evidence: archived silently");
+    }
+
+    #[test]
+    fn wiped_epoch_with_a_quali_vault_stages_nothing() {
+        // The vault alone is not content: an epoch whose drivers never raced
+        // (the between-segments lobby) must not stage an empty capture that
+        // would replace the real one in the archive.
+        let mut st = SessionState::new();
+        st.ingest(&session("Q1", 5), 0.0);
+        st.ingest(&participants("Q1", vec![participant(0, "Rossi", 1)]), 0.0);
+        st.ingest(&laps("Q1", vec![lap_entry(0, 1, 1, 78_109, 2)]), 0.0);
+        st.ingest(&session("Q2", 6), 1_000.0);
+        assert!(st
+            .take_pending_auto_archive_with_announce(1_100.0, false)
+            .is_some());
+        assert!(!st.quali_segments.is_empty(), "Q1 vaulted");
+        // Q2 epoch never raced; a third uid arrives (host skipped on).
+        st.ingest(&session("Q3", 7), 5_000.0);
+        assert!(
+            st.take_pending_auto_archive_with_announce(f64::MAX, false)
+                .is_none(),
+            "no drivers raced in the Q2 epoch - nothing staged"
+        );
     }
 
     #[test]
@@ -2601,7 +2814,7 @@ mod tests {
         // (just-in-case), silently.
         st.ingest(&laps("B", vec![]), 1.0);
         let (snap, announce, _) = st
-            .take_pending_auto_archive_with_announce()
+            .take_pending_auto_archive_with_announce(f64::MAX, false)
             .expect("quali archived");
         assert_eq!(snap.session_uid, "A");
         assert!(snap.final_classification.is_none(), "provisional by shape");
@@ -2622,7 +2835,7 @@ mod tests {
         // Q3 again: A's just-in-case capture replaces nothing.
         st.ingest(&session("B", 7), 1.0);
         let (snap, _, supersedes) = st
-            .take_pending_auto_archive_with_announce()
+            .take_pending_auto_archive_with_announce(f64::MAX, false)
             .expect("A archived");
         assert_eq!(snap.session_uid, "A");
         assert_eq!(supersedes, None, "A replaced nothing");
@@ -2632,7 +2845,7 @@ mod tests {
         st.ingest(&laps("B", vec![lap_entry(0, 1, 1, 79_000, 5)]), 1.0);
         st.ingest(&session("C", 7), 2.0);
         let (snap, _, supersedes) = st
-            .take_pending_auto_archive_with_announce()
+            .take_pending_auto_archive_with_announce(f64::MAX, false)
             .expect("B archived");
         assert_eq!(snap.session_uid, "B");
         assert_eq!(supersedes.as_deref(), Some("A"));
@@ -2645,19 +2858,22 @@ mod tests {
         st.ingest(&participants("A", vec![participant(0, "Rossi", 1)]), 0.0);
         st.ingest(&laps("A", vec![lap_entry(0, 1, 1, 80_000, 5)]), 0.0);
         st.ingest(&session("B", 15), 1.0);
-        assert!(st.take_pending_auto_archive_with_announce().is_some());
+        assert!(st
+            .take_pending_auto_archive_with_announce(f64::MAX, false)
+            .is_some());
         // B is restarted before anyone races: it archives nothing, and must
         // not swallow the chain link to A's record.
         st.ingest(&session("C", 15), 2.0);
         assert!(
-            st.take_pending_auto_archive_with_announce().is_none(),
+            st.take_pending_auto_archive_with_announce(f64::MAX, false)
+                .is_none(),
             "an empty attempt stages nothing"
         );
         st.ingest(&participants("C", vec![participant(0, "Rossi", 1)]), 2.0);
         st.ingest(&laps("C", vec![lap_entry(0, 1, 1, 79_000, 5)]), 2.0);
         st.ingest(&session("D", 15), 3.0);
         let (snap, _, supersedes) = st
-            .take_pending_auto_archive_with_announce()
+            .take_pending_auto_archive_with_announce(f64::MAX, false)
             .expect("C archived");
         assert_eq!(snap.session_uid, "C");
         assert_eq!(
@@ -2755,7 +2971,7 @@ mod tests {
         // carries a MID-RACE clock, not a fresh one.
         st.ingest(&tick("B", 400.0), 1_000.0);
         let (snap, announce, _) = st
-            .take_pending_auto_archive_with_announce()
+            .take_pending_auto_archive_with_announce(f64::MAX, false)
             .expect("A staged at the churn boundary");
         assert_eq!(snap.session_uid, "A");
         assert!(announce, "the flagged race posts once");
@@ -2769,7 +2985,7 @@ mod tests {
         st.ingest(&event("B", session_end()), 2_000.0);
         st.ingest(&session("C", 1), 5_000.0);
         let (snap, announce, supersedes) = st
-            .take_pending_auto_archive_with_announce()
+            .take_pending_auto_archive_with_announce(f64::MAX, false)
             .expect("the tail still archives");
         assert_eq!(snap.session_uid, "B");
         assert!(!announce, "same physical race - never posted twice");
@@ -2786,7 +3002,9 @@ mod tests {
         // A genuinely NEW session at the same track+type: its first packet's
         // clock starts at zero, unlike the churn successor's mid-race clock.
         st.ingest(&laps("B", vec![]), 1_000.0);
-        assert!(st.take_pending_auto_archive_with_announce().is_some());
+        assert!(st
+            .take_pending_auto_archive_with_announce(f64::MAX, false)
+            .is_some());
         st.mark_result_posted("A".into(), 1_000.0);
         st.ingest(&session("B", 15), 1_000.0);
         st.ingest(
@@ -2797,7 +3015,7 @@ mod tests {
         st.ingest(&event("B", session_end()), 60_000.0);
         st.ingest(&session("C", 1), 65_000.0);
         let (snap, announce, _) = st
-            .take_pending_auto_archive_with_announce()
+            .take_pending_auto_archive_with_announce(f64::MAX, false)
             .expect("the rerun archives");
         assert_eq!(snap.session_uid, "B");
         assert!(
