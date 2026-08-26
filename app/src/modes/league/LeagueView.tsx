@@ -21,7 +21,13 @@ import {
   type League,
   type Round,
 } from "./leagueData";
-import { historyList, historyGet, fmtSavedAt, type SessionMeta } from "../history/historyData";
+import {
+  historyList,
+  historyGet,
+  fmtSavedAt,
+  setSessionPinned,
+  type SessionMeta,
+} from "../history/historyData";
 import type { RaceSnapshot } from "../timing/liveGrid";
 import "./league.css";
 
@@ -38,6 +44,9 @@ interface AttachState {
   chosen: Record<string, string | null>;
   /** Wrong-category pick (quali archive on the race slot or vice versa). */
   error: string | null;
+  /** Non-blocking caution about the picked session (unconfirmed capture,
+   *  unknown category) shown above the match list. */
+  warning: string | null;
 }
 
 function AttachDialog({
@@ -56,26 +65,34 @@ function AttachDialog({
     const record = await historyGet(id);
     if (!record) return;
     const snap = record.snapshot as unknown as RaceSnapshot;
-    // The slot names what it expects — a qualifying archive on the race slot
-    // would award race points from the qualifying order.
+    // The slot names what it expects: race for the race slot, qualifying for
+    // the quali slot. Practice and time-trial archives are rejected too — a
+    // practice running order prefilled as race points would poison standings.
+    // "unknown" (old or between-segment captures) passes with a caution.
     const cat = snap.sessionCategory;
-    const mismatch =
-      (attach.slot === "race" && cat === "qualifying") ||
-      (attach.slot === "quali" && cat === "race");
-    if (mismatch) {
+    const wanted = attach.slot === "race" ? "race" : "qualifying";
+    if (cat !== wanted && cat !== "unknown") {
       setAttach({
         ...attach,
-        error: `"${record.name}" is a ${cat} session — pick a ${
-          attach.slot === "quali" ? "qualifying" : "race"
-        } archive for this slot.`,
+        error: `"${record.name}" is a ${cat} session — pick a ${wanted} archive for this slot.`,
       });
       return;
+    }
+    const cautions: string[] = [];
+    if (cat === "unknown") {
+      cautions.push(`Its session type is unknown — make sure this really is the ${wanted}.`);
+    }
+    if (record.unconfirmed) {
+      cautions.push(
+        "This is a provisional capture with no finish evidence — points prefill from the last running order, so check them before posting.",
+      );
     }
     const rows = sessionResults(snap);
     const proposals = autoMatch(league.roster, rows);
     setAttach({
       ...attach,
       error: null,
+      warning: cautions.length > 0 ? cautions.join(" ") : null,
       sessionId: id,
       proposals,
       chosen: Object.fromEntries(proposals.map((p) => [p.key, p.driverId])),
@@ -116,6 +133,11 @@ function AttachDialog({
               Confirm who&apos;s who. Exact matches are quiet; anything uncertain is highlighted —
               corrections are remembered as aliases for next time.
             </p>
+            {attach.warning && (
+              <p className="lg-attachwarn" role="alert">
+                {attach.warning}
+              </p>
+            )}
             <div className="lg-matchlist">
               {attach.proposals.map((p) => {
                 const chosenId = attach.chosen[p.key];
@@ -214,6 +236,7 @@ export function LeagueView() {
       proposals: null,
       chosen: {},
       error: null,
+      warning: null,
     });
     const sessions = await historyList();
     setAttach((a) =>
@@ -241,6 +264,10 @@ export function LeagueView() {
       l.roster = learnAliases(l.roster, a.chosen);
       return l;
     });
+    // Pin the record: pinned sessions survive both retention pruning and the
+    // archiver's supersede-replacement, so a round's source can't silently
+    // vanish out from under it.
+    void setSessionPinned(a.sessionId, true);
     setAttach(null);
   };
 

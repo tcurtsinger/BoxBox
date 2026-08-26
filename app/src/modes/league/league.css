@@ -473,6 +473,17 @@
   font-weight: 600;
 }
 
+/* Non-blocking caution on the picked session (unconfirmed, unknown type). */
+.lg-attachwarn {
+  color: var(--data-caution);
+  background: var(--data-caution-tint);
+  border: 1px solid var(--data-caution);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
 .lg-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
