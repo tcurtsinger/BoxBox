@@ -150,6 +150,11 @@ const FIDELITY_MIN_MOVING_FRAC: f32 = 0.25;
 const FLIP_HOLD_SECS: f64 = EPOCH_SECS;
 /// Re-evaluate a car at most once per eligible second.
 const EVAL_PERIOD_SECS: f64 = 1.0;
+/// A clock step backwards must exceed this to count as a flashback. UDP
+/// datagrams can arrive slightly out of order (tens of ms of skew), and a
+/// transient reorder must not void a verdict that took 45s to earn; a real
+/// flashback rewinds several seconds. Same margin the engineer uses.
+const REWIND_MIN_SECS: f64 = 1.0;
 /// Whether the WHEEL and PAD templates have been calibrated against labeled
 /// full-fidelity traces of BOTH devices. They have not: the only labeled
 /// full-fidelity human trace so far is a controller, and it matches the
@@ -312,9 +317,26 @@ struct VerdictState {
     /// Session-lifetime eligible seconds (epochs reset; this doesn't).
     total_eligible: f64,
     last_eval: f64,
+    /// Last known AI-control state (None until Participants says). A handover
+    /// in either direction voids the car's trace and verdict — see `set_ai`.
+    last_ai: Option<bool>,
+    /// Newest session clock observed for this car, on ANY frame (eligible or
+    /// not). The flashback check compares against THIS, not the epoch
+    /// accumulator's clock — `finish()` zeroes that one, so an epoch closing
+    /// on the last eligible frame before a pit stay would otherwise leave a
+    /// rewind during the stay undetectable while the verdict lives on.
+    last_clock_seen: f64,
 }
 
 impl VerdictState {
+    /// An evaluation ran but produced no qualified verdict (fidelity dip,
+    /// confidence under the gate): a flip candidate's hold is broken — the
+    /// competing class must hold CONTINUOUSLY for a full window, not merely
+    /// bracket a stretch of UNKNOWN with two matching sightings.
+    fn note_unqualified(&mut self) {
+        self.candidate = None;
+    }
+
     fn observe(&mut self, verdict: InputVerdict, confidence: f32, f: SigFeatures, secs: f64) {
         let sig = |flipped| InputSignature {
             verdict,
@@ -383,6 +405,37 @@ impl InputSigTracker {
         }
         let acc = &mut self.cars[idx];
 
+        // A rewound clock (flashback) invalidates the epoch in progress —
+        // and the verdict with it: the current verdict, flip candidate and
+        // lifetime clock were earned on a timeline that partially no longer
+        // exists. Checked BEFORE the eligibility gate (a rewind observed
+        // while the car sits in the pits must still void its state), against
+        // the verdict state's own clock — which, unlike the epoch
+        // accumulator's, survives epoch rollovers and advances on ineligible
+        // frames too. Honest cost: the car re-earns its verdict in 45s.
+        //
+        // A backwards step WITHIN the margin is an out-of-order datagram,
+        // not a flashback: the stale frame is dropped entirely — recording
+        // it would walk the accounting clock backwards and the next fresh
+        // frame would re-add the reordered interval, inflating eligible
+        // time and every per-second feature.
+        let seen = self.verdicts[idx].last_clock_seen;
+        if clock < seen - REWIND_MIN_SECS {
+            let _ = acc.finish();
+            self.verdicts[idx] = VerdictState {
+                last_ai: self.verdicts[idx].last_ai,
+                // The rewound timeline is the new reference — keeping the old
+                // one would read every post-flashback frame as "stale".
+                last_clock_seen: clock,
+                ..VerdictState::default()
+            };
+        } else if clock < seen {
+            return;
+        } else {
+            self.verdicts[idx].last_clock_seen = clock;
+        }
+        let acc = &mut self.cars[idx];
+
         if !eligible {
             // Continuity broken: deltas across a pit visit are meaningless,
             // and a dwell run must not bridge two disconnected traces.
@@ -390,11 +443,6 @@ impl InputSigTracker {
             acc.prev_delta = None;
             acc.dwell_run = 0;
             return;
-        }
-
-        // A rewound clock (flashback) invalidates the epoch in progress.
-        if clock < acc.last_clock {
-            let _ = acc.finish();
         }
 
         // The epoch clock counts ELIGIBLE time only: it advances by the gap to
@@ -447,14 +495,23 @@ impl InputSigTracker {
         if vs.last_eval > acc.eligible_secs {
             vs.last_eval = 0.0;
         }
-        if acc.eligible_secs >= VERDICT_MIN_SECS
+        // While the game's AI drives the car, its trace must never earn a
+        // verdict — an ASSISTED verdict from a disconnect period would
+        // resurface as "evidence" the moment the human takes the car back.
+        // (Counters still accumulate: Phase-0 logging labels rows with
+        // aiControlled at drain time, and AI epochs are tuning data.)
+        if vs.last_ai != Some(true)
+            && acc.eligible_secs >= VERDICT_MIN_SECS
             && acc.eligible_secs - vs.last_eval >= EVAL_PERIOD_SECS
         {
             vs.last_eval = acc.eligible_secs;
             if let Some(counters) = acc.peek() {
-                if let Some((v, conf, f)) = classify(&counters) {
-                    let secs = acc.eligible_secs;
-                    vs.observe(v, conf, f, secs);
+                match classify(&counters) {
+                    Some((v, conf, f)) => {
+                        let secs = acc.eligible_secs;
+                        vs.observe(v, conf, f, secs);
+                    }
+                    None => vs.note_unqualified(),
                 }
             }
         }
@@ -463,6 +520,28 @@ impl InputSigTracker {
             if let Some(c) = acc.finish() {
                 self.pending.push((idx, c));
             }
+        }
+    }
+
+    /// Note the car's AI-control state (from Participants) before sampling.
+    /// A handover in EITHER direction voids the epoch in progress and the
+    /// sticky verdict: a verdict must never span a control change, or the
+    /// AI's trace becomes "evidence" against the human who takes the car
+    /// back (and vice versa).
+    pub fn set_ai(&mut self, idx: usize, ai: bool) {
+        if idx >= 64 {
+            return;
+        }
+        if self.cars.len() <= idx {
+            self.cars.resize_with(idx + 1, CarAcc::default);
+            self.verdicts.resize_with(idx + 1, VerdictState::default);
+        }
+        if self.verdicts[idx].last_ai != Some(ai) {
+            if self.verdicts[idx].last_ai.is_some() {
+                self.cars[idx] = CarAcc::default();
+                self.verdicts[idx] = VerdictState::default();
+            }
+            self.verdicts[idx].last_ai = Some(ai);
         }
     }
 
@@ -820,6 +899,178 @@ mod tests {
         vs.total_eligible = 160.0;
         vs.observe(InputVerdict::Pad, 0.92, f, 50.0);
         assert!(vs.candidate.is_none());
+    }
+
+    #[test]
+    fn an_unknown_gap_breaks_a_flip_candidates_hold() {
+        let mut vs = VerdictState::default();
+        let f = derive_features(&controller_epoch());
+        vs.total_eligible = 60.0;
+        vs.observe(InputVerdict::Wheel, 0.9, f.clone(), 60.0);
+        // A competing sighting starts a candidate…
+        vs.total_eligible = 90.0;
+        vs.observe(InputVerdict::Pad, 0.9, f.clone(), 45.0);
+        assert!(vs.candidate.is_some());
+        // …then 60s of UNKNOWN (fidelity dip): the hold is broken.
+        vs.total_eligible = 155.0;
+        vs.note_unqualified();
+        assert!(vs.candidate.is_none());
+        // One later matching sighting must START OVER, not complete a "hold"
+        // that bracketed a minute of nothing.
+        vs.observe(InputVerdict::Pad, 0.9, f, 45.0);
+        assert_eq!(
+            vs.current.as_ref().unwrap().verdict,
+            InputVerdict::Wheel,
+            "no flip without a continuously-held competing window"
+        );
+    }
+
+    #[test]
+    fn ai_handover_voids_trace_and_verdict() {
+        // AI drives first (disconnect / pit-assist scenario): machine dither
+        // that would classify ASSISTED — but AI trace must never become a
+        // verdict the human inherits on taking the car back.
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        t.set_ai(0, true);
+        for i in 0..3300 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(t.signature(0).is_none(), "AI trace earns no verdict");
+        // The human takes over — the epoch AND verdict state restart, so
+        // nothing shows until 45s of the HUMAN's own trace exists.
+        t.set_ai(0, false);
+        for i in 0..1200 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(
+            t.signature(0).is_none(),
+            "20s after the handover: the AI's 55s must not count"
+        );
+        for i in 0..1800 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(
+            t.signature(0).is_some(),
+            "the human's own 50s of (assist-like) trace earns its verdict"
+        );
+    }
+
+    #[test]
+    fn a_flashback_voids_the_verdict_with_the_epoch() {
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        for i in 0..3000 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(t.signature(0).is_some(), "verdict earned pre-flashback");
+        clock -= 20.0;
+        t.sample(0, 0.01, true, clock);
+        assert!(
+            t.signature(0).is_none(),
+            "the verdict was earned on a timeline that no longer exists"
+        );
+    }
+
+    #[test]
+    fn an_out_of_order_datagram_does_not_void_the_verdict() {
+        // UDP reorder: one sample arrives 200ms stale. That is not a
+        // flashback, and a verdict that took 45s to earn must survive it.
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        for i in 0..3000 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(t.signature(0).is_some());
+        t.sample(0, 0.01, true, clock - 0.2);
+        assert!(
+            t.signature(0).is_some(),
+            "a 200ms reorder is skew, not a flashback"
+        );
+    }
+
+    #[test]
+    fn a_pit_flashback_right_after_an_epoch_rollover_is_still_caught() {
+        // The epoch closes on the very last eligible frame (its accumulator
+        // clock resets to zero), the car enters the pits, and a flashback
+        // lands mid-stay. Detection must run off the verdict state's own
+        // clock — the accumulator's is gone with the rollover.
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        for i in 0..3620 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert_eq!(t.drain().len(), 1, "epoch closed just before the pits");
+        assert!(t.signature(0).is_some(), "verdict earned before the pits");
+        clock -= 20.0;
+        for _ in 0..1500 {
+            t.sample(0, 0.0, false, clock);
+            clock += 1.0 / 60.0; // 25s of pit frames — clock passes the old mark
+        }
+        assert!(
+            t.signature(0).is_none(),
+            "the rewind must be seen even though the epoch clock was reset"
+        );
+    }
+
+    #[test]
+    fn recurring_reorder_does_not_inflate_eligible_time() {
+        // Every other datagram arrives 200ms stale. Dropped, they contribute
+        // nothing; recorded, each stale/fresh pair would re-add the reordered
+        // interval and the 45s gate would pass in a fraction of real time.
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        for i in 0..2640 {
+            let s = (i as f32 * 0.9).sin() * 0.05 + 0.0007;
+            t.sample(0, s, true, clock);
+            t.sample(0, s, true, clock - 0.2); // reordered duplicate
+            clock += 1.0 / 60.0;
+        }
+        // 44s of REAL eligible time: under the gate — any signature here
+        // means stale frames inflated the clock.
+        assert!(
+            t.signature(0).is_none(),
+            "stale frames must not count toward the 45s gate"
+        );
+        for i in 0..240 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(
+            t.signature(0).is_some(),
+            "honest time still earns the verdict"
+        );
+    }
+
+    #[test]
+    fn a_flashback_during_a_pit_stay_still_voids_the_verdict() {
+        // The rewind lands while the car is INELIGIBLE (pits). By the time it
+        // is back on track the session clock has caught up past the old
+        // last_clock — the rewind must have been caught on the ineligible
+        // frames, or the erased timeline's verdict survives.
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        for i in 0..3000 {
+            t.sample(0, (i as f32 * 0.9).sin() * 0.05 + 0.0007, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        assert!(t.signature(0).is_some(), "verdict earned pre-flashback");
+        // Into the pits, then a flashback rewinds 20s mid-stay.
+        clock -= 20.0;
+        for _ in 0..1500 {
+            t.sample(0, 0.0, false, clock);
+            clock += 1.0 / 60.0; // 25s of pit frames — clock passes the old mark
+        }
+        assert!(
+            t.signature(0).is_none(),
+            "the rewind during ineligible frames must void the verdict"
+        );
     }
 
     #[test]

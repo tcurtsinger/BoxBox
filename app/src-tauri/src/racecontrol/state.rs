@@ -1313,7 +1313,7 @@ impl SessionState {
 
     fn ingest_telemetry(&mut self, t: &CarTelemetryData) {
         for c in &t.cars {
-            let eligible;
+            let (eligible, ai);
             {
                 let d = self.driver_mut(c.index as u8);
                 d.speed = c.speed;
@@ -1329,7 +1329,11 @@ impl SessionState {
                     && matches!(d.driver_status, 1 | 4)
                     && !d.network_paused
                     && c.speed >= crate::inputsig::SPEED_MIN_KMH;
+                ai = d.ai_controlled;
             }
+            // AI-control handovers void the car's trace and verdict — the
+            // tracker must know BEFORE the sample lands.
+            self.input_sig.set_ai(c.index, ai);
             self.input_sig
                 .sample(c.index, c.steer, eligible, self.session_time);
         }
@@ -2096,13 +2100,12 @@ impl SessionState {
             // Verdicts attach only where the trace really is the driver's
             // hand: never AI, never a restricted car (its steer arrives
             // zeroed — except the player's own, whose feed is always real).
-            d.input_sig = if d.ai_controlled
-                || (!d.telemetry_public && d.index != self.player_car_index)
-            {
-                None
-            } else {
-                self.input_sig.signature(d.index as usize).cloned()
-            };
+            d.input_sig =
+                if d.ai_controlled || (!d.telemetry_public && d.index != self.player_car_index) {
+                    None
+                } else {
+                    self.input_sig.signature(d.index as usize).cloned()
+                };
         }
         let by_position = |a: &DriverState, b: &DriverState| {
             let pa = if a.position == 0 {
