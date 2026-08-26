@@ -665,7 +665,9 @@ impl SessionState {
     }
 
     /// The staged auto-archive snapshot, if the official classification arrived
-    /// since the last drain. Taken by the listener, which persists it to history.
+    /// since the last drain. Test-only shim: production drains through
+    /// `take_pending_auto_archive_with_announce` (it needs the extras).
+    #[cfg(test)]
     pub fn take_pending_auto_archive(&mut self) -> Option<Box<SessionSnapshot>> {
         self.take_pending_auto_archive_with_announce()
             .map(|(s, _, _)| s)
@@ -2931,7 +2933,7 @@ mod tests {
         st.ingest(&event_at("A", pena(3, 7, 4, 0, 5), 12.0), 0.0);
         let s = st.snapshot();
         assert!(
-            s.incidents[0].detail.get("faultCarIdx").is_none(),
+            !s.incidents[0].detail.contains_key("faultCarIdx"),
             "unrelated offence must not claim the collision"
         );
     }

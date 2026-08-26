@@ -15,6 +15,8 @@ import {
   type SessionMeta,
   type SessionRecord,
 } from "./historyData";
+import { attachedSessionIds } from "../league/leagueData";
+import { listLeagues } from "../league/useLeagues";
 import "./history.css";
 
 type OpenTarget =
@@ -291,11 +293,33 @@ function SessionRow({
       setNameDraft(session.name);
     }
   };
+  // League rounds reference archived sessions by id and rely on the pin to
+  // keep them alive; unpinning or deleting an attached record would orphan
+  // the round's source result. Checked fresh at click time, never cached.
+  const leagueAttached = async () => attachedSessionIds(await listLeagues()).has(session.id);
   const togglePin = async () => {
+    if (
+      session.pinned &&
+      (await leagueAttached()) &&
+      !window.confirm(
+        `"${session.name}" is attached to a league round. Unpinning lets automatic cleanup delete it, and the round would lose its result. Unpin anyway?`,
+      )
+    ) {
+      return;
+    }
     await setSessionPinned(session.id, !session.pinned);
     await onReload();
   };
   const remove = async () => {
+    if (
+      (await leagueAttached()) &&
+      !window.confirm(
+        `"${session.name}" is attached to a league round. Deleting it permanently removes the round's result (points already in the ledger stay). Delete anyway?`,
+      )
+    ) {
+      setConfirmDelete(false);
+      return;
+    }
     await deleteSession(session.id);
     await onReload();
   };

@@ -113,6 +113,19 @@ export function newRound(season: Season): Round {
   };
 }
 
+/** Every History session id some league round references — the records whose
+ *  deletion or unpinning would orphan a round's source result. */
+export function attachedSessionIds(leagues: League[]): Set<string> {
+  const out = new Set<string>();
+  for (const l of leagues)
+    for (const s of l.seasons)
+      for (const r of s.rounds) {
+        if (r.qualiSessionId != null) out.add(r.qualiSessionId);
+        if (r.raceSessionId != null) out.add(r.raceSessionId);
+      }
+  return out;
+}
+
 // --- Identity matching ---------------------------------------------------------
 
 /** The per-session match key. Classified position leads because it is the one

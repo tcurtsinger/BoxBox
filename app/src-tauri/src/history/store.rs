@@ -58,6 +58,13 @@ impl HistoryStore {
         }
     }
 
+    /// Whether the archive's current revision has reached disk. Lets a command
+    /// handler distinguish "save_if_changed returned false because nothing
+    /// changed / another writer already wrote it" from a FAILED write.
+    pub fn is_current(&self, archive: &HistoryArchive) -> bool {
+        self.last_saved.load(Ordering::Relaxed) >= archive.revision()
+    }
+
     pub fn pending_save(&self, archive: &HistoryArchive) -> Option<(u64, HistoryArchive)> {
         let rev = archive.revision();
         if rev == self.last_saved.load(Ordering::Relaxed) {

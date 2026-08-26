@@ -26,25 +26,38 @@ export interface LeaguesApi {
   retrySave: () => void;
 }
 
+/** The stored league documents (empty outside Tauri or on a fresh install). */
+export async function listLeagues(): Promise<League[]> {
+  if (!IN_TAURI) return [];
+  try {
+    return await call<League[]>("league_list");
+  } catch {
+    return [];
+  }
+}
+
 export function useLeagues(): LeaguesApi {
   const [leagues, setLeagues] = useState<League[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  /** The most recent league document that failed to persist. */
-  const failed = useRef<League | null>(null);
+  /** Monotonic stamp per league_save request. Same-id revisions can have
+   *  overlapping in-flight writes, so completions must be ordered by REQUEST,
+   *  not by document id — an older success must never silently confirm a
+   *  newer revision that failed. */
+  const seqRef = useRef(0);
+  /** Newest successfully persisted request per league id. */
+  const okSeq = useRef(new Map<string, number>());
+  /** The newest league document revision that failed to persist. */
+  const failed = useRef<{ league: League; seq: number } | null>(null);
 
   useEffect(() => {
     let active = true;
     (async () => {
-      if (IN_TAURI) {
-        try {
-          const list = await call<League[]>("league_list");
-          if (active) setLeagues(list);
-        } catch {
-          /* fresh install / unreadable store: start empty */
-        }
+      const list = await listLeagues();
+      if (active) {
+        setLeagues(list);
+        setLoaded(true);
       }
-      if (active) setLoaded(true);
     })();
     return () => {
       active = false;
@@ -53,10 +66,13 @@ export function useLeagues(): LeaguesApi {
 
   const persist = useCallback((league: League) => {
     if (!IN_TAURI) return;
+    const seq = ++seqRef.current;
     void call("league_save", { league })
       .then(() => {
-        // Only clear the alarm if a NEWER failure hasn't replaced this doc.
-        if (failed.current?.id === league.id) {
+        okSeq.current.set(league.id, Math.max(okSeq.current.get(league.id) ?? 0, seq));
+        // This success confirms this doc's revisions up to `seq` only: a
+        // failed NEWER revision of the same doc keeps the alarm.
+        if (failed.current && failed.current.league.id === league.id && failed.current.seq <= seq) {
           failed.current = null;
           setSaveError(null);
         }
@@ -64,8 +80,12 @@ export function useLeagues(): LeaguesApi {
       .catch((e) => {
         // The optimistic copy is on screen but NOT on disk — losing a whole
         // race night's points silently is the one unforgivable failure here.
-        failed.current = league;
-        setSaveError(String(e));
+        // A stale failure is moot once a newer revision of the doc saved.
+        if ((okSeq.current.get(league.id) ?? 0) > seq) return;
+        if (failed.current == null || seq >= failed.current.seq) {
+          failed.current = { league, seq };
+          setSaveError(String(e));
+        }
       });
   }, []);
 
@@ -81,7 +101,7 @@ export function useLeagues(): LeaguesApi {
   );
 
   const retrySave = useCallback(() => {
-    if (failed.current) persist(failed.current);
+    if (failed.current) persist(failed.current.league);
   }, [persist]);
 
   const remove = useCallback((id: string) => {
