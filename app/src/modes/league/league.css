@@ -461,6 +461,23 @@
   background: var(--inset);
 }
 
+/* Same driver picked twice: a hard blocker, not a suggestion. */
+.lg-matchrow.is-dupe {
+  border-color: var(--data-danger);
+  background: var(--data-danger-tint);
+}
+
+.lg-dupewarn {
+  color: var(--data-danger);
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+.lg-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .lg-matchcar {
   font-size: var(--text-body);
   font-weight: 600;

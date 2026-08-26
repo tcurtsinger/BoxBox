@@ -131,34 +131,61 @@ export interface CarMatch {
 const norm = (s: string) => s.trim().toLowerCase();
 
 /**
- * Propose a roster driver for every classified car. Names are the strong
- * signal (display name or any learned alias, case-insensitive); a race-number
- * match alone is only "probable" and pre-selected for the steward to confirm.
+ * Propose a roster driver for every classified car — strictly ONE-TO-ONE, so
+ * duplicate race numbers (or duplicate names) in a lobby can never propose
+ * the same roster driver twice and silently overwrite each other's points.
+ * Names claim first (display name or learned alias, case-insensitive); a
+ * race-number match alone is only "probable"; anything left is "none" for the
+ * steward to assign by hand.
  */
 export function autoMatch(roster: LeagueDriver[], rows: ClassRow[]): CarMatch[] {
-  return rows.map((r) => {
+  const used = new Set<string>();
+  const out: CarMatch[] = rows.map((r) => ({
+    identity: carIdentity(r.no, r.name),
+    no: r.no,
+    name: r.name,
+    driverId: null,
+    certainty: "none" as MatchCertainty,
+  }));
+
+  // Pass 1: name claims (the strong signal) in row order.
+  for (const [i, r] of rows.entries()) {
     const name = norm(r.name);
     const byName = roster.find(
-      (d) => norm(d.displayName) === name || d.aliases.some((a) => norm(a) === name),
+      (d) =>
+        !used.has(d.id) &&
+        (norm(d.displayName) === name || d.aliases.some((a) => norm(a) === name)),
     );
     if (byName) {
-      return {
-        identity: carIdentity(r.no, r.name),
-        no: r.no,
-        name: r.name,
-        driverId: byName.id,
-        certainty: "exact",
-      };
+      used.add(byName.id);
+      out[i] = { ...out[i], driverId: byName.id, certainty: "exact" };
     }
-    const byNumber = roster.find((d) => d.raceNumber != null && d.raceNumber === r.no);
-    return {
-      identity: carIdentity(r.no, r.name),
-      no: r.no,
-      name: r.name,
-      driverId: byNumber?.id ?? null,
-      certainty: byNumber ? "probable" : "none",
-    };
-  });
+  }
+  // Pass 2: race-number hints for whoever is left.
+  for (const [i, r] of rows.entries()) {
+    if (out[i].driverId != null) continue;
+    const byNumber = roster.find(
+      (d) => !used.has(d.id) && d.raceNumber != null && d.raceNumber === r.no,
+    );
+    if (byNumber) {
+      used.add(byNumber.id);
+      out[i] = { ...out[i], driverId: byNumber.id, certainty: "probable" };
+    }
+  }
+  return out;
+}
+
+/** Roster driver ids assigned to more than one car in a working match set —
+ *  a confirm blocker (two cars can't be the same person). */
+export function duplicateAssignments(chosen: Record<string, string | null>): Set<string> {
+  const seen = new Set<string>();
+  const dupes = new Set<string>();
+  for (const id of Object.values(chosen)) {
+    if (id == null) continue;
+    if (seen.has(id)) dupes.add(id);
+    seen.add(id);
+  }
+  return dupes;
 }
 
 /** Fold a confirmed match set back into the roster: every confirmed session
@@ -183,10 +210,16 @@ export function learnAliases(
 
 // --- Session results ------------------------------------------------------------
 
-/** Classified rows from an archived snapshot: the official classification when
- *  present, the stacked quali classification for qualifying, else the live
- *  running order as a provisional read. */
+/** Classified rows from an archived snapshot, routed by session category: a
+ *  qualifying archive prefers the STACKED Q1/Q2/Q3 classification (its final
+ *  packet covers only the last segment — knocked-out drivers would vanish);
+ *  everything else prefers the official classification; the live running
+ *  order is the provisional last resort. */
 export function sessionResults(snap: RaceSnapshot): ClassRow[] {
+  if (snap.sessionCategory === "qualifying") {
+    const quali = toQualifyingClassification(snap);
+    if (quali && quali.length > 0) return quali;
+  }
   const final = toFinalClassification(snap);
   if (final && final.length > 0) return final;
   const quali = toQualifyingClassification(snap);

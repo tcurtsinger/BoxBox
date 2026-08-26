@@ -11,6 +11,7 @@ import {
   newRound,
   newId,
   autoMatch,
+  duplicateAssignments,
   learnAliases,
   prefillPoints,
   sessionResults,
@@ -48,6 +49,7 @@ function AttachDialog({
   setAttach: (a: AttachState | null) => void;
   onConfirm: (a: AttachState) => void;
 }) {
+  const dupes = duplicateAssignments(attach.chosen);
   const pick = async (id: string) => {
     const record = await historyGet(id);
     if (!record) return;
@@ -92,8 +94,14 @@ function AttachDialog({
               corrections are remembered as aliases for next time.
             </p>
             <div className="lg-matchlist">
-              {attach.proposals.map((p) => (
-                <label key={p.identity} className={`lg-matchrow is-${p.certainty}`}>
+              {attach.proposals.map((p) => {
+                const chosenId = attach.chosen[p.identity];
+                const isDupe = chosenId != null && dupes.has(chosenId);
+                return (
+                <label
+                  key={p.identity}
+                  className={`lg-matchrow is-${p.certainty}${isDupe ? " is-dupe" : ""}`}
+                >
                   <span className="lg-matchcar">
                     <span className="lg-matchno">{p.no}</span> {p.name}
                   </span>
@@ -114,8 +122,15 @@ function AttachDialog({
                     ))}
                   </select>
                 </label>
-              ))}
+                );
+              })}
             </div>
+            {dupes.size > 0 && (
+              <p className="lg-dupewarn" role="alert">
+                Two cars are assigned to the same driver — fix the highlighted rows before
+                attaching.
+              </p>
+            )}
           </>
         )}
         <div className="lg-dialog-actions">
@@ -123,7 +138,12 @@ function AttachDialog({
             Cancel
           </button>
           {attach.proposals != null && (
-            <button type="button" className="lg-btn is-primary" onClick={() => onConfirm(attach)}>
+            <button
+              type="button"
+              className="lg-btn is-primary"
+              disabled={dupes.size > 0}
+              onClick={() => onConfirm(attach)}
+            >
               Attach &amp; prefill points
             </button>
           )}

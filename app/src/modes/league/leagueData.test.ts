@@ -3,8 +3,10 @@ import {
   newLeague,
   newRound,
   autoMatch,
+  duplicateAssignments,
   learnAliases,
   prefillPoints,
+  sessionResults,
   standings,
   carIdentity,
   roundTotal,
@@ -67,6 +69,33 @@ describe("autoMatch", () => {
     expect(m[2]).toMatchObject({ driverId: null, certainty: "none" });
   });
 
+  it("never proposes the same driver twice (duplicate race numbers)", () => {
+    const l = sampleLeague();
+    const m = autoMatch(l.roster, [
+      row(1, 4, "someone"), // number 4 → lando, claimed here
+      row(2, 4, "someone else"), // same number — must NOT also get lando
+    ]);
+    expect(m[0]).toMatchObject({ driverId: "lando", certainty: "probable" });
+    expect(m[1]).toMatchObject({ driverId: null, certainty: "none" });
+  });
+
+  it("a name claim beats an earlier row's number hint for the same driver", () => {
+    const l = sampleLeague();
+    const m = autoMatch(l.roster, [
+      row(1, 4, "randomer"), // number says lando…
+      row(2, 63, "NORRIS"), // …but the real NORRIS is here by name
+    ]);
+    expect(m[1]).toMatchObject({ driverId: "lando", certainty: "exact" });
+    expect(m[0]).toMatchObject({ driverId: null, certainty: "none" });
+  });
+
+  it("duplicateAssignments flags a steward picking one driver twice", () => {
+    expect(duplicateAssignments({ a: "max", b: "max", c: "lando", d: null }).has("max")).toBe(
+      true,
+    );
+    expect(duplicateAssignments({ a: "max", b: "lando" }).size).toBe(0);
+  });
+
   it("matches learned aliases case-insensitively", () => {
     const l = sampleLeague();
     l.roster[1].aliases.push("l4ndo_official");
@@ -93,6 +122,43 @@ describe("learnAliases", () => {
       [carIdentity(1, "verstappen")]: "max",
     });
     expect(learned.find((d) => d.id === "max")!.aliases).toHaveLength(0);
+  });
+});
+
+describe("sessionResults", () => {
+  it("a qualifying archive uses the stacked Q1–Q3 result, not the last segment's final", () => {
+    // Q3 survivor VERSTAPPEN + Q1 knockout SARGEANT: the final classification
+    // covers only the last segment, so routing by category is what keeps the
+    // knocked-out driver in the result.
+    const snap = {
+      sessionCategory: "qualifying",
+      qualiSegments: [
+        {
+          sessionType: 5,
+          standings: [
+            { index: 1, name: "SARGEANT", nameOverride: null, teamId: 3, raceNumber: 2, position: 2, bestLapMS: 95_000 },
+          ],
+        },
+      ],
+      drivers: [
+        { index: 0, name: "VERSTAPPEN", nameOverride: null, teamId: 2, raceNumber: 1, position: 1, bestLapMS: 90_000, telemetryPublic: true, tyreWear: [], tyreSurfaceTemp: [], liveryColours: [] },
+      ],
+      // A final classification exists (last segment only) — must NOT win here.
+      finalClassification: {
+        numCars: 1,
+        classification: [
+          { index: 0, position: 1, numPitStops: 0, resultStatus: 3, resultReason: 0, points: 0, bestLapTimeInMs: 90_000, totalRaceTime: 0, penaltiesTime: 0, numPenalties: 0, numTyreStints: 1, tyreStintsVisual: [17] },
+        ],
+      },
+      session: { totalLaps: 0 },
+      incidents: [],
+      playerCarIndex: 0,
+      numActiveCars: 1,
+      trackName: "Suzuka",
+    } as unknown as Parameters<typeof sessionResults>[0];
+    const rows = sessionResults(snap);
+    expect(rows.some((r) => r.name === "SARGEANT")).toBe(true);
+    expect(rows.some((r) => r.name === "VERSTAPPEN")).toBe(true);
   });
 });
 
