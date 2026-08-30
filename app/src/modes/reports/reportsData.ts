@@ -40,7 +40,10 @@ export interface ClassRow {
   teamName: string;
   teamColor: string;
   bestMs: number;
-  gapSec: number | null; // null = winner
+  gapSec: number | null; // null = winner (or the gap is whole laps — see lapsDown)
+  /** Whole laps behind the winner; a row with lapsDown > 0 shows "+N L" in the
+   *  gap column instead of a time. 0 for lead-lap cars and qualifying rows. */
+  lapsDown?: number;
   pits: number;
   penalised: boolean;
   /** Official result status from Final Classification (e.g. "DNF", "DSQ", "DNS").
@@ -99,26 +102,31 @@ export function markPenalties(rows: ClassRow[], incidents: UIIncident[]): ClassR
 }
 
 /** The provisional classification from the live timing grid — a projection of the
- *  running order, not the official result (which arrives in Final Classification). */
+ *  running order, not the official result (which arrives in Final Classification).
+ *  The live rows still carry real facts (grid slot, penalties served, tyre stints,
+ *  DNF/DSQ status, laps down), so a lost packet 8 degrades the report to
+ *  "provisional", not to a table of blanks. Points stay 0 — they're only ever
+ *  official. */
 export function buildClassification(grid: DriverRow[]): ClassRow[] {
   return grid.map((d) => ({
     pos: d.pos,
     index: d.index,
-    gridPos: 0,
+    gridPos: d.gridPos ?? 0,
     no: d.no,
     name: d.name,
     teamName: d.teamName,
     teamColor: d.teamColor,
     bestMs: d.bestMs,
     gapSec: d.gapSec,
+    lapsDown: d.lapsDown ?? 0,
     pits: d.pits,
-    penalised: false,
-    status: null,
+    penalised: (d.penSec ?? 0) > 0,
+    status: d.status,
     points: 0,
-    penaltyTimeSec: 0,
+    penaltyTimeSec: d.penSec ?? 0,
     numPenalties: 0,
-    tyreStints: [],
-    tyreStintEndLaps: [],
+    tyreStints: d.stints ?? [],
+    tyreStintEndLaps: d.stintEndLaps ?? [],
     resultReason: null,
   }));
 }
@@ -159,7 +167,8 @@ export function buildDecisions(incidents: UIIncident[]): Decision[] {
     }));
 }
 
-export function gapText(gapSec: number | null): string {
+export function gapText(gapSec: number | null, lapsDown = 0): string {
+  if (lapsDown > 0) return `+${lapsDown} L`;
   return gapSec == null ? "—" : fmtSec(gapSec);
 }
 
@@ -271,7 +280,7 @@ export function buildReportCsv(r: ReportData): string {
         csv(c.name),
         csv(c.teamName),
         fmtLap(c.bestMs),
-        gapText(c.gapSec),
+        gapText(c.gapSec, c.lapsDown),
         c.pits,
         c.points,
         csv(c.tyreStints.join(" ")),
@@ -317,6 +326,7 @@ export function buildReportJson(r: ReportData): string {
         team: c.teamName,
         bestLap: fmtLap(c.bestMs),
         gapSec: c.gapSec,
+        lapsDown: c.lapsDown ?? 0,
         pits: c.pits,
         points: c.points,
         tyreStints: c.tyreStints,

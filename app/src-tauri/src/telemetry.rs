@@ -511,6 +511,21 @@ fn spawn_listener(
                                 continue;
                             }
                             let packet = parse_packet(&buf[..n]);
+                            // Final Classification (id 8) arrives at most a handful
+                            // of times per session, yet every league session so far
+                            // archived "classification: missing" — log every sighting
+                            // with its raw datagram size so the next session settles
+                            // whether the game skips the packet or sends a size the
+                            // parser refused. Byte 6 is packetId in both formats.
+                            if n > 6 && buf[6] == 8 {
+                                let decoded = packet.as_ref().is_some_and(|p| p.data.is_some());
+                                log_event(
+                                    &log_path,
+                                    &format!(
+                                        "final classification datagram: {n} bytes (decoded: {decoded})"
+                                    ),
+                                );
+                            }
                             // Pin (or re-pin) only on a COMPLETE, decoded packet
                             // (P1.1): a valid-but-unhandled packet can't claim the
                             // feed before the real game does, and — for Reopen —

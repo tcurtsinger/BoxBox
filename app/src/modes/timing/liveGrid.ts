@@ -107,6 +107,8 @@ export interface LiveDriver {
 export interface FinalClassificationEntry {
   index: number;
   position: number;
+  /** Laps completed. Optional: sample fixtures predate the field. */
+  numLaps?: number;
   numPitStops: number;
   resultStatus: number;
   resultReason: number;
@@ -379,6 +381,14 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
         ? (d.bestLapMS - overallBest) / 1000
         : null;
 
+    // The game's race deltas can't express a lapped car: deltaToLeader reads 0,
+    // which rendered as a straight-faced "+0.000". No claimable time gap = null,
+    // and the whole-lap deficit rides along so the report can say "+N L" instead.
+    const leaderLap = drivers[0]?.currentLapNum ?? 0;
+    const raceGap = leader || d.deltaToLeaderMS <= 0 ? null : d.deltaToLeaderMS / 1000;
+    const lapsDown =
+      !timed && !leader && leaderLap > d.currentLapNum ? leaderLap - d.currentLapNum : 0;
+
     return {
       pos,
       index: d.index,
@@ -389,7 +399,7 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
       // No grid to gain/lose against until the race itself.
       change: !timed && d.gridPosition > 0 ? d.gridPosition - pos : 0,
       intervalSec: timed ? timedInterval : leader ? null : d.deltaToCarAheadMS / 1000,
-      gapSec: timed ? timedGap : leader ? null : d.deltaToLeaderMS / 1000,
+      gapSec: timed ? timedGap : raceGap,
       qstatus: timed ? DRIVER_STATUS_CHIP[d.driverStatus ?? 4] ?? null : null,
       pit: d.pitStatus > 0,
       lastMs: d.lastLapMS,
@@ -426,6 +436,13 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
             flipped: d.inputSig.flippedThisSession ?? false,
           }
         : null,
+      // Live facts the report falls back on when packet 8 is missing, so a
+      // provisional race report still carries grid/penalties/stints/laps-down.
+      gridPos: d.gridPosition,
+      penSec: d.penaltiesSec,
+      stints: (d.stintHistory ?? []).map((s) => stintCompound(s.visualCompound)),
+      stintEndLaps: (d.stintHistory ?? []).map((s) => s.endLap),
+      lapsDown,
       // `?? []` / `?? 0`: snapshots saved to History before these fields existed
       // replay through this same mapper.
       live: {
@@ -514,11 +531,11 @@ const SESSION_TYPE_LABEL: Record<number, string> = {
   7: "Q3",
   8: "Short Q",
   9: "OSQ",
-  10: "SS1",
-  11: "SS2",
-  12: "SS3",
-  13: "Short SS",
-  14: "One-Shot SS",
+  10: "SQ1",
+  11: "SQ2",
+  12: "SQ3",
+  13: "Sprint Quali",
+  14: "One-Shot SQ",
   15: "Race",
   16: "Race 2",
   17: "Race 3",
@@ -567,6 +584,8 @@ export function toFinalClassification(snap: RaceSnapshot): ClassRow[] | null {
   // time penalties (packet 8), so a penalised P2 would otherwise show a negative gap.
   const winner = rows.find((c) => c.position === 1);
   const winnerTime = winner ? winner.totalRaceTime + winner.penaltiesTime : 0;
+  const winnerLaps = winner?.numLaps ?? 0;
+  // (numLaps is optional only for old sample fixtures; live packet 8 always has it.)
 
   return rows
     .slice()
@@ -574,6 +593,10 @@ export function toFinalClassification(snap: RaceSnapshot): ClassRow[] | null {
     .map((c) => {
       const d = byIndex.get(c.index);
       const finished = c.resultStatus === 3;
+      // Racing convention: a car a lap (or more) down is "+N L", not a
+      // race-time delta that mostly measures where the flag caught them.
+      const laps = c.numLaps ?? 0;
+      const lapsDown = finished && laps > 0 && winnerLaps > laps ? winnerLaps - laps : 0;
       return {
         pos: c.position,
         index: c.index,
@@ -583,11 +606,13 @@ export function toFinalClassification(snap: RaceSnapshot): ClassRow[] | null {
         teamName: d ? teamName(d.teamId) : "—",
         teamColor: d ? teamColor(d.liveryColours) : "oklch(0.62 0.02 250)",
         bestMs: c.bestLapTimeInMs,
-        // Gap to the winner from penalty-inclusive race time, classified finishers only.
+        // Gap to the winner from penalty-inclusive race time, classified
+        // finishers on the lead lap only (lapped cars carry lapsDown instead).
         gapSec:
-          c.position === 1 || !finished || winnerTime <= 0
+          c.position === 1 || !finished || winnerTime <= 0 || lapsDown > 0
             ? null
             : c.totalRaceTime + c.penaltiesTime - winnerTime,
+        lapsDown,
         pits: c.numPitStops,
         // Official penalty straight from packet 8 (time or count), independent of the
         // steward's own decisions, which markPenalties ORs in on top (P2.1).
