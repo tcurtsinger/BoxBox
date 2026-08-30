@@ -384,10 +384,22 @@ export function toDriverRows(snap: RaceSnapshot): DriverRow[] {
     // The game's race deltas can't express a lapped car: deltaToLeader reads 0,
     // which rendered as a straight-faced "+0.000". No claimable time gap = null,
     // and the whole-lap deficit rides along so the report can say "+N L" instead.
-    const leaderLap = drivers[0]?.currentLapNum ?? 0;
+    // A bare lap-number difference isn't evidence, though: the leader's lap
+    // increments at the line before the rest cross, so a one-lap difference
+    // needs corroboration — the delta being unable to express the gap (the
+    // game reports 0 for lapped cars) or exceeding the leader's lap time.
+    // Two or more laps is unambiguous. Same rule the dashboard uses.
+    const leaderDrv = drivers[0];
     const raceGap = leader || d.deltaToLeaderMS <= 0 ? null : d.deltaToLeaderMS / 1000;
+    const lapDiff =
+      !timed && !leader && leaderDrv ? leaderDrv.currentLapNum - d.currentLapNum : 0;
     const lapsDown =
-      !timed && !leader && leaderLap > d.currentLapNum ? leaderLap - d.currentLapNum : 0;
+      lapDiff >= 2 ||
+      (lapDiff === 1 &&
+        (d.deltaToLeaderMS <= 0 ||
+          (leaderDrv != null && leaderDrv.lastLapMS > 0 && d.deltaToLeaderMS >= leaderDrv.lastLapMS)))
+        ? lapDiff
+        : 0;
 
     return {
       pos,

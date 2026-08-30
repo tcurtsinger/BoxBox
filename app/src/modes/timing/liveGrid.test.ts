@@ -167,6 +167,28 @@ describe("race rows", () => {
     expect(lapped[0].lapsDown).toBe(0); // the leader is never down
   });
 
+  it("the leader crossing the line first is not a lapping", () => {
+    // Leader ticks to lap 21 at the line while P2 (3.2s back) is still on lap
+    // 20 — a one-lap difference with a healthy time delta is line-crossing
+    // skew, not evidence. One lap down needs the delta to be inexpressible
+    // (0 for lapped cars) or to exceed the leader's lap time.
+    const rows = toDriverRows(
+      snap(
+        "race",
+        [
+          drv({ index: 0, position: 1, bestLapMS: 80000, currentLapNum: 21, lastLapMS: 81000 }),
+          drv({ index: 1, position: 2, bestLapMS: 80500, currentLapNum: 20, deltaToLeaderMS: 3200 }),
+          drv({ index: 2, position: 3, bestLapMS: 81000, currentLapNum: 20, deltaToLeaderMS: 95000 }),
+        ],
+        15,
+      ),
+    );
+    expect(rows[1].lapsDown).toBe(0);
+    expect(rows[1].gapSec).toBeCloseTo(3.2, 3);
+    // A delta past the leader's lap time IS a real lapping.
+    expect(rows[2].lapsDown).toBe(1);
+  });
+
   it("rows carry the live facts the report falls back on", () => {
     const facts = toDriverRows(
       snap(

@@ -405,6 +405,11 @@ fn spawn_listener(
         let mut last_fwd_warn: Option<Instant> = None;
         // Rate-limit the unknown-UDP-format warning (log + frontend event).
         let mut last_format_warn: Option<Instant> = None;
+        // Rate-limit the packet-8 forensic line: the real classification is a
+        // handful of datagrams per session, but anything that reaches the
+        // socket can put an 8 in byte 6, and an unthrottled synchronous log
+        // append per datagram would let a flood starve the receive loop.
+        let mut last_cls_log: Option<Instant> = None;
         // One-time evidence when an engine's mutex was poisoned by an earlier
         // panic. The ingest below RECOVERS the guard rather than skipping the
         // engine forever — skipping silently froze that engine's UI while its
@@ -517,7 +522,15 @@ fn spawn_listener(
                             // with its raw datagram size so the next session settles
                             // whether the game skips the packet or sends a size the
                             // parser refused. Byte 6 is packetId in both formats.
-                            if n > 6 && buf[6] == 8 {
+                            // Throttled: anything reaching the socket can put an
+                            // 8 in byte 6, and an unthrottled synchronous append
+                            // per datagram would let a flood starve this loop.
+                            if n > 6
+                                && buf[6] == 8
+                                && last_cls_log
+                                    .is_none_or(|t| t.elapsed() >= Duration::from_secs(1))
+                            {
+                                last_cls_log = Some(Instant::now());
                                 let decoded = packet.as_ref().is_some_and(|p| p.data.is_some());
                                 log_event(
                                     &log_path,
