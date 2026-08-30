@@ -170,6 +170,12 @@ const PAD_BIG_FRAC: f32 = 0.004;
 /// Session-aggregate big-jump fraction at or below this reads WHEEL. The band
 /// between the two thresholds stays honestly UNKNOWN.
 const WHEEL_BIG_FRAC: f32 = 0.0015;
+/// The big-jump thresholds were calibrated on a 60 Hz feed. At the game's
+/// lower telemetry rates (10/20/30 Hz) a smooth wheel sweep covers several
+/// times the steering range per frame, so ordinary cornering lands in the
+/// "big jump" buckets and would read PAD. Epochs sampled below this rate
+/// never feed the device aggregate — honest "?" over a rate artifact.
+const DEVICE_MIN_SAMPLE_HZ: f32 = 45.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -236,6 +242,12 @@ fn derive_features(c: &EpochCounters) -> SigFeatures {
 /// sync fakes exactly this signal (an early decimated wheel driver measured
 /// 0.157 — 25× the highest genuine pad).
 pub fn epoch_big_frac(c: &EpochCounters) -> Option<f32> {
+    // Per-frame delta sizes only mean what the calibration measured at the
+    // calibration's sample rate — a 20 Hz feed makes every delta ~3× larger.
+    let rate = c.samples as f32 / (c.span_secs.max(1e-9)) as f32;
+    if rate < DEVICE_MIN_SAMPLE_HZ {
+        return None;
+    }
     let deltas: u32 = c.delta_hist.iter().sum();
     let moving = deltas - c.delta_hist[0];
     if deltas == 0 || (moving as f32 / deltas as f32) < FIDELITY_MIN_MOVING_FRAC {
@@ -315,6 +327,17 @@ impl VerdictState {
     /// re-evaluate the device verdict. Low-fidelity epochs contribute nothing
     /// AND break any flip candidate's hold (an evidence gap is not evidence).
     fn note_epoch(&mut self, c: &EpochCounters) {
+        // An epoch the assist template positively matches is machine dither,
+        // not the driver's hand: it must not feed the device aggregate, and
+        // re-asserting the old device verdict here would clear the ASSISTED
+        // flip candidate at every rollover — the live evals only see assist
+        // in the tail of each epoch (span >= 45s), so the candidate could
+        // never satisfy the flip hold and a mid-session assist switch would
+        // stay hidden behind the stale device verdict forever.
+        if let Some((conf, f)) = classify_assist(c) {
+            self.observe(InputVerdict::Assisted, conf, f, c.span_secs);
+            return;
+        }
         let deltas: u32 = c.delta_hist.iter().sum();
         let moving = deltas - c.delta_hist[0];
         if epoch_big_frac(c).is_none() {
@@ -918,6 +941,54 @@ mod tests {
         }
         assert_eq!(vs.agg_epochs, 0, "decimated epochs contribute nothing");
         assert!(vs.current.is_none());
+    }
+
+    #[test]
+    fn low_rate_epochs_never_feed_the_aggregate() {
+        // The big-jump thresholds are 60 Hz-calibrated: at the game's 20 Hz
+        // setting a smooth wheel sweep covers ~3× the range per frame and
+        // would read PAD. A low-rate epoch must stay out of the aggregate.
+        let mut slow = pad_race_epoch();
+        slow.samples = 1200; // ~20 Hz over the 60 s span
+        assert!(
+            epoch_big_frac(&slow).is_none(),
+            "low-rate epoch unqualified"
+        );
+        let mut vs = VerdictState::default();
+        for _ in 0..DEVICE_MIN_EPOCHS + 3 {
+            vs.note_epoch(&slow);
+        }
+        assert_eq!(vs.agg_epochs, 0, "low-rate epochs contribute nothing");
+        assert!(vs.current.is_none());
+    }
+
+    #[test]
+    fn a_mid_session_assist_switch_flips_a_device_verdict() {
+        // Five clean wheel epochs earn the device verdict...
+        let mut vs = VerdictState::default();
+        for _ in 0..DEVICE_MIN_EPOCHS {
+            vs.total_eligible += EPOCH_SECS;
+            vs.note_epoch(&wheel_race_epoch());
+        }
+        assert_eq!(
+            vs.current.as_ref().map(|s| s.verdict),
+            Some(InputVerdict::Wheel)
+        );
+        // ...then the driver switches steering assist on. Each later epoch is
+        // machine dither: it must be routed to the ASSISTED observation (not
+        // the device aggregate, which would re-assert WHEEL every rollover and
+        // clear the candidate), so the flip hold can actually be satisfied.
+        for _ in 0..3 {
+            vs.total_eligible += EPOCH_SECS;
+            vs.note_epoch(&assist_epoch());
+        }
+        let sig = vs.current.as_ref().expect("verdict");
+        assert_eq!(sig.verdict, InputVerdict::Assisted, "assist surfaced");
+        assert!(sig.flipped_this_session, "the flip is flagged");
+        assert_eq!(
+            vs.agg_epochs, DEVICE_MIN_EPOCHS,
+            "assist epochs never pollute the device aggregate"
+        );
     }
 
     #[test]
