@@ -21,21 +21,26 @@
 //!   signature, not the driver's, so `moving_frac < 0.25` refuses to classify
 //!   (UNKNOWN) — the alternative is convicting wheel drivers who happen to be
 //!   far from the recording seat.
-//! - The one full-fidelity human in the log (39 moves/s) turned out — by the
-//!   league's own ground truth — to be a CONTROLLER: continuous small deltas
-//!   (d50 ≈ 0.02), human-rate corrections (~1.8 sign flips/s in the centre
-//!   band), low second-derivative energy. The game's modern pad filter
-//!   outputs smooth continuous ramps, NOT the folkloric deadzone-park-and-
-//!   snap signature. The one known wheel driver was decimated (correctly
-//!   UNKNOWN), so no full-fidelity wheel trace exists yet — meaning
-//!   wheel-vs-pad separation is UNPROVEN, and device verdicts are
-//!   SUPPRESSED (`DEVICE_TEMPLATES_CALIBRATED = false`) until the league
-//!   test race labels both devices at full fidelity.
+//! - Device verdicts were CALIBRATED against the league's test race
+//!   (2026-08-26 Hungaroring: shootout + two races, 12 humans, ~50 epochs
+//!   each, devices ground-truthed by the league). Per-epoch texture does NOT
+//!   separate wheel from pad in a full lobby — the game's steering sync
+//!   interpolates remote cars hard enough that micro-corrections, deltas and
+//!   dwell all collapse into one cluster (a labeled controller sat dead
+//!   centre of the wheel cloud on every median). What separates PERFECTLY,
+//!   aggregated per session, is `big_frac`: the fraction of value-changing
+//!   frames that jump more than 0.05 in one frame. A thumb flicks a stick
+//!   across its range in a frame; a hand on a wheel physically cannot, and
+//!   the jump survives interpolation. All labeled wheels: ≤0.001. All
+//!   labeled pads: ≥0.006 (12/12 correct, including both prior sessions'
+//!   ground truth). Verdicts therefore come from the SESSION aggregate of
+//!   high-fidelity epochs, never a single window.
 //! - The game's own AI steering (the ASSISTED template — steering assist IS
-//!   the AI controller): machine-rate dither, ~10 flips/s, never holds a
-//!   value (dwell ≈ 0), rarely parks at zero. This template is armed: it is
-//!   confirmed against 24/24 AI epochs, hard to fake by hand, and the assist
-//!   ban is its own league violation.
+//!   the AI controller): machine-rate dither, ~10 flips/s in a small lobby,
+//!   never holds a value, rarely parks at zero. Confirmed against 24/24 AI
+//!   epochs there — but a FULL lobby's interpolation smooths the dither to
+//!   ~0.5 flips/s, so assist detection is honest only in high-rate feeds;
+//!   elsewhere it simply stays quiet.
 //! - Exact-zero fraction is a WEAK discriminator here: the game deadzones
 //!   everyone (humans ~25-33% zero regardless of device).
 
@@ -155,14 +160,22 @@ const EVAL_PERIOD_SECS: f64 = 1.0;
 /// transient reorder must not void a verdict that took 45s to earn; a real
 /// flashback rewinds several seconds. Same margin the engineer uses.
 const REWIND_MIN_SECS: f64 = 1.0;
-/// Whether the WHEEL and PAD templates have been calibrated against labeled
-/// full-fidelity traces of BOTH devices. They have not: the only labeled
-/// full-fidelity human trace so far is a controller, and it matches the
-/// "continuous human input" template that was drafted as wheel-like — so
-/// until the league test race provides both devices, a device verdict would
-/// be a coin flip wearing 90% confidence. While false, classify() emits only
-/// ASSISTED (confirmed, and hard to fake); everything else is UNKNOWN.
-const DEVICE_TEMPLATES_CALIBRATED: bool = false;
+/// Device verdicts need at least this many high-fidelity epochs aggregated
+/// (~1 eligible minute each) — the big-jump signal is a session-level rate,
+/// too sparse to trust from a single window.
+const DEVICE_MIN_EPOCHS: u32 = 5;
+/// Session-aggregate big-jump fraction at or above this reads PAD. Calibrated:
+/// every labeled pad ≥ 0.006; the nearest labeled wheel driver ≤ 0.001.
+const PAD_BIG_FRAC: f32 = 0.004;
+/// Session-aggregate big-jump fraction at or below this reads WHEEL. The band
+/// between the two thresholds stays honestly UNKNOWN.
+const WHEEL_BIG_FRAC: f32 = 0.0015;
+/// The big-jump thresholds were calibrated on a 60 Hz feed. At the game's
+/// lower telemetry rates (10/20/30 Hz) a smooth wheel sweep covers several
+/// times the steering range per frame, so ordinary cornering lands in the
+/// "big jump" buckets and would read PAD. Epochs sampled below this rate
+/// never feed the device aggregate — honest "?" over a rate artifact.
+const DEVICE_MIN_SAMPLE_HZ: f32 = 45.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -222,38 +235,34 @@ fn derive_features(c: &EpochCounters) -> SigFeatures {
     }
 }
 
-/// Median |delta| approximated by its histogram bucket's upper edge.
-fn delta_p50(c: &EpochCounters) -> f32 {
-    const EDGES: [f32; 6] = [0.001, 0.005, 0.02, 0.05, 0.1, 0.2];
-    let deltas: u32 = c.delta_hist.iter().sum();
-    let target = deltas.div_ceil(2);
-    let mut cum = 0u32;
-    for (i, b) in c.delta_hist.iter().enumerate() {
-        cum += b;
-        if cum >= target {
-            return EDGES[i];
-        }
-    }
-    EDGES[5]
-}
-
-/// Classify one window of counters, or None when no honest verdict exists:
-/// too little trace, a decimated feed, no class clearing the confidence
-/// gate — or a device verdict while the device templates are uncalibrated
-/// (see DEVICE_TEMPLATES_CALIBRATED). Pure — the sticky/flip policy lives in
-/// the tracker.
-pub fn classify(c: &EpochCounters) -> Option<(InputVerdict, f32, SigFeatures)> {
-    let (verdict, confidence, f) = classify_uncalibrated(c)?;
-    if !DEVICE_TEMPLATES_CALIBRATED && verdict != InputVerdict::Assisted {
+/// One epoch's big-jump fraction — the calibrated device discriminator: of
+/// the frames whose value actually changed, how many jumped more than 0.05
+/// in a single frame (the top two histogram buckets). None when the epoch is
+/// too thin or below the fidelity gate: a decimated feed's held-then-jump
+/// sync fakes exactly this signal (an early decimated wheel driver measured
+/// 0.157 — 25× the highest genuine pad).
+pub fn epoch_big_frac(c: &EpochCounters) -> Option<f32> {
+    // Per-frame delta sizes only mean what the calibration measured at the
+    // calibration's sample rate — a 20 Hz feed makes every delta ~3× larger.
+    let rate = c.samples as f32 / (c.span_secs.max(1e-9)) as f32;
+    if rate < DEVICE_MIN_SAMPLE_HZ {
         return None;
     }
-    Some((verdict, confidence, f))
+    let deltas: u32 = c.delta_hist.iter().sum();
+    let moving = deltas - c.delta_hist[0];
+    if deltas == 0 || (moving as f32 / deltas as f32) < FIDELITY_MIN_MOVING_FRAC {
+        return None;
+    }
+    Some((c.delta_hist[4] + c.delta_hist[5]) as f32 / moving.max(1) as f32)
 }
 
-/// The full three-way scoring, before the calibration gate. Kept separate so
-/// the template machinery stays tested while device verdicts are suppressed —
-/// arming them later is a one-constant change, not a rewrite.
-fn classify_uncalibrated(c: &EpochCounters) -> Option<(InputVerdict, f32, SigFeatures)> {
+/// The ASSISTED template on one window: the game's AI steering dithers at
+/// machine rate — the positive marker the whole score is gated on, because
+/// its "never holds / never parks" terms would otherwise hand free points to
+/// any clean human trace. None when no honest verdict exists: too little
+/// trace, a decimated feed, or confidence under the gate. Pure — the sticky
+/// policy lives in the tracker.
+pub fn classify_assist(c: &EpochCounters) -> Option<(f32, SigFeatures)> {
     if c.span_secs < VERDICT_MIN_SECS {
         return None;
     }
@@ -261,48 +270,17 @@ fn classify_uncalibrated(c: &EpochCounters) -> Option<(InputVerdict, f32, SigFea
     if f.moving_frac < FIDELITY_MIN_MOVING_FRAC {
         return None;
     }
-    let d50 = delta_p50(c);
     let jps = f.jitter_per_sec;
-
-    // Hand-set from the 2026-08-25 Hungaroring log (see module docs): each
-    // class sums bounded per-feature affinities; confidence is its share.
-    let pad = 0.5 * ramp(f.zero_frac, 0.15, 0.35)
-        + 1.5 * ramp(f.pin_frac, 0.0005, 0.01)
-        + (1.0 - ramp(jps, 0.05, 0.8))
-        + ramp(f.dwell_frac, 0.02, 0.08);
-    // Human-rate corrections required (× ramp) and machine-rate excluded:
-    // the AI dithers at ~10 flips/s, hands live around 1-3.
-    let wheel = (ramp(jps, 0.3, 1.2)
-        + (1.0 - ramp(f.smoothness, 0.9, 1.6))
-        + (1.0 - ramp(f.dwell_frac, 0.02, 0.08))
-        + ramp(d50, 0.002, 0.012))
-        * ramp(jps, 0.1, 0.3)
-        * (1.0 - ramp(jps, 4.5, 6.5));
-    // Assist REQUIRES its positive marker — machine-rate dither. Without the
-    // × gate, its "never holds / never parks" terms hand free points to any
-    // clean wheel trace and drag real wheel verdicts under the gate.
     let assist = (ramp(jps, 5.0, 8.0)
         + (1.0 - ramp(f.dwell_frac, 0.005, 0.03))
         + (1.0 - ramp(f.zero_frac, 0.10, 0.25))
         + ramp(f.smoothness, 0.7, 0.95) * (1.0 - ramp(f.smoothness, 1.0, 1.3)))
         * ramp(jps, 3.5, 5.5);
-
-    let total = pad + wheel + assist;
-    if total <= 0.0 {
-        return None;
-    }
-    let (verdict, top) = if wheel >= pad && wheel >= assist {
-        (InputVerdict::Wheel, wheel)
-    } else if pad >= assist {
-        (InputVerdict::Pad, pad)
-    } else {
-        (InputVerdict::Assisted, assist)
-    };
-    let confidence = top / total;
+    let confidence = assist / 4.0;
     if confidence < VERDICT_MIN_CONF {
         return None;
     }
-    Some((verdict, confidence, f))
+    Some((confidence, f))
 }
 
 /// Sticky per-car verdict state: once issued, a verdict only flips after the
@@ -326,6 +304,46 @@ struct VerdictState {
     /// on the last eligible frame before a pit stay would otherwise leave a
     /// rewind during the stay undetectable while the verdict lives on.
     last_clock_seen: f64,
+    /// Session aggregate for the device verdict: big-jump deltas and moving
+    /// deltas summed across HIGH-FIDELITY completed epochs, plus the eligible
+    /// seconds and epoch count they cover. The big-jump rate is a per-session
+    /// statistic — single windows are too sparse to convict on.
+    agg_big: u64,
+    agg_moving: u64,
+    agg_epochs: u32,
+    agg_secs: f64,
+    /// The last DEVICE_MIN_EPOCHS hi-fi epochs' (big, moving, secs), for
+    /// device-SWITCH detection: a lifetime ratio alone buries a mid-session
+    /// device change under the old history (a long wheel record takes ~2× as
+    /// many pad epochs just to drag the ratio across the threshold). When
+    /// this window contradicts the lifetime verdict, the aggregate rebases
+    /// onto it — the flip then lands within a bounded number of epochs no
+    /// matter how long the prior history was.
+    recent: std::collections::VecDeque<(u32, u32, f64)>,
+}
+
+/// The calibrated big-jump banding on a (big, moving) sum: PAD at/above the
+/// pad threshold, WHEEL at/below the wheel threshold, the band between is
+/// honestly None. Confidence maps the margin from the threshold into the
+/// displayed 85–98%.
+fn device_band(big: u64, moving: u64) -> Option<(InputVerdict, f32)> {
+    if moving == 0 {
+        return None;
+    }
+    let ratio = big as f32 / moving as f32;
+    if ratio >= PAD_BIG_FRAC {
+        Some((
+            InputVerdict::Pad,
+            0.85 + 0.13 * ramp(ratio, PAD_BIG_FRAC, 0.010),
+        ))
+    } else if ratio <= WHEEL_BIG_FRAC {
+        Some((
+            InputVerdict::Wheel,
+            0.98 - 0.13 * ramp(ratio, 0.0, WHEEL_BIG_FRAC),
+        ))
+    } else {
+        None
+    }
 }
 
 impl VerdictState {
@@ -335,6 +353,79 @@ impl VerdictState {
     /// bracket a stretch of UNKNOWN with two matching sightings.
     fn note_unqualified(&mut self) {
         self.candidate = None;
+    }
+
+    /// Fold one COMPLETED epoch into the session device aggregate and
+    /// re-evaluate the device verdict. Low-fidelity epochs contribute nothing
+    /// AND break any flip candidate's hold (an evidence gap is not evidence).
+    fn note_epoch(&mut self, c: &EpochCounters) {
+        // An epoch the assist template positively matches is machine dither,
+        // not the driver's hand: it must not feed the device aggregate, and
+        // re-asserting the old device verdict here would clear the ASSISTED
+        // flip candidate at every rollover — the live evals only see assist
+        // in the tail of each epoch (span >= 45s), so the candidate could
+        // never satisfy the flip hold and a mid-session assist switch would
+        // stay hidden behind the stale device verdict forever.
+        if let Some((conf, f)) = classify_assist(c) {
+            self.observe(InputVerdict::Assisted, conf, f, c.span_secs);
+            return;
+        }
+        let deltas: u32 = c.delta_hist.iter().sum();
+        let moving = deltas - c.delta_hist[0];
+        if epoch_big_frac(c).is_none() {
+            self.note_unqualified();
+            return;
+        }
+        let big = c.delta_hist[4] + c.delta_hist[5];
+        self.agg_big += u64::from(big);
+        self.agg_moving += u64::from(moving);
+        self.agg_epochs += 1;
+        self.agg_secs += c.span_secs;
+        self.recent.push_back((big, moving, c.span_secs));
+        if self.recent.len() > DEVICE_MIN_EPOCHS as usize {
+            self.recent.pop_front();
+        }
+        // A full recent window that lands in a clear band the lifetime ratio
+        // does NOT confirm means the device changed mid-session: rebase the
+        // aggregate onto the window so the old history stops outvoting the
+        // new device, and let the ordinary flip hold do the flagging.
+        if let Some((rv, _)) = self.recent_verdict() {
+            if self.device_verdict().is_none_or(|(lv, _)| lv != rv) {
+                self.agg_big = self.recent.iter().map(|&(b, _, _)| u64::from(b)).sum();
+                self.agg_moving = self.recent.iter().map(|&(_, m, _)| u64::from(m)).sum();
+                self.agg_epochs = self.recent.len() as u32;
+                self.agg_secs = self.recent.iter().map(|&(_, _, s)| s).sum();
+            }
+        }
+        if let Some((verdict, confidence)) = self.device_verdict() {
+            let f = derive_features(c);
+            let secs = self.agg_secs;
+            self.observe(verdict, confidence, f, secs);
+        } else if self.agg_epochs >= DEVICE_MIN_EPOCHS {
+            // Enough evidence, no clear device: the ambiguous band. Breaks a
+            // flip candidate's hold like any other unqualified evaluation.
+            self.note_unqualified();
+        }
+    }
+
+    /// The banded device verdict over the rolling recent window, if it is
+    /// full and lands clear of the ambiguous band.
+    fn recent_verdict(&self) -> Option<(InputVerdict, f32)> {
+        if self.recent.len() < DEVICE_MIN_EPOCHS as usize {
+            return None;
+        }
+        let big: u64 = self.recent.iter().map(|&(b, _, _)| u64::from(b)).sum();
+        let moving: u64 = self.recent.iter().map(|&(_, m, _)| u64::from(m)).sum();
+        device_band(big, moving)
+    }
+
+    /// The calibrated session-level device verdict, if the aggregate has
+    /// enough epochs and lands clear of the ambiguous band.
+    fn device_verdict(&self) -> Option<(InputVerdict, f32)> {
+        if self.agg_epochs < DEVICE_MIN_EPOCHS {
+            return None;
+        }
+        device_band(self.agg_big, self.agg_moving)
     }
 
     fn observe(&mut self, verdict: InputVerdict, confidence: f32, f: SigFeatures, secs: f64) {
@@ -500,24 +591,30 @@ impl InputSigTracker {
         // resurface as "evidence" the moment the human takes the car back.
         // (Counters still accumulate: Phase-0 logging labels rows with
         // aiControlled at drain time, and AI epochs are tuning data.)
+        //
+        // The per-second live evaluation runs the ASSISTED template only;
+        // device verdicts are session-level statistics folded in at epoch
+        // completion (note_epoch). An assist sighting competes with a device
+        // verdict through the same sticky/flip machinery; assist ABSENCE is
+        // not evidence against a device verdict, so it clears nothing.
         if vs.last_ai != Some(true)
             && acc.eligible_secs >= VERDICT_MIN_SECS
             && acc.eligible_secs - vs.last_eval >= EVAL_PERIOD_SECS
         {
             vs.last_eval = acc.eligible_secs;
             if let Some(counters) = acc.peek() {
-                match classify(&counters) {
-                    Some((v, conf, f)) => {
-                        let secs = acc.eligible_secs;
-                        vs.observe(v, conf, f, secs);
-                    }
-                    None => vs.note_unqualified(),
+                if let Some((conf, f)) = classify_assist(&counters) {
+                    let secs = acc.eligible_secs;
+                    vs.observe(InputVerdict::Assisted, conf, f, secs);
                 }
             }
         }
 
         if acc.eligible_secs >= EPOCH_SECS {
             if let Some(c) = acc.finish() {
+                if self.verdicts[idx].last_ai != Some(true) {
+                    self.verdicts[idx].note_epoch(&c);
+                }
                 self.pending.push((idx, c));
             }
         }
@@ -781,63 +878,225 @@ mod tests {
         }
     }
 
-    /// A high-fidelity pad per the plan's signature table (synthetic — the
-    /// tuning log had no local pad; the league test race supplies that).
-    /// Parks at exact zero, pins full lock, rate-limited ramps, no jitter.
-    fn pad_epoch() -> EpochCounters {
+    /// A REAL wheel epoch from the test race (PKnowlez, ground-truthed by the
+    /// league): full-lobby interpolation, zero big jumps.
+    fn wheel_race_epoch() -> EpochCounters {
         EpochCounters {
-            samples: 3600,
-            zero: 1800,
-            pin: 108,
-            delta_hist: [1700, 100, 200, 1400, 140, 60],
-            jitter_flips: 5,
-            jitter_samples: 2000,
-            dwell_max: 400,
-            sum_d1: 50.0,
-            sum_d2: 55.0,
+            samples: 3602,
+            zero: 1077,
+            pin: 0,
+            delta_hist: [2625, 129, 829, 18, 0, 0],
+            jitter_flips: 4,
+            jitter_samples: 2512,
+            dwell_max: 446,
+            sum_d1: 10.183,
+            sum_d2: 6.615,
+            span_secs: 60.0,
+        }
+    }
+
+    /// A REAL controller epoch from the test race (jaden-__12, ground-truthed
+    /// by the league): same interpolated texture as the wheels on every other
+    /// feature — but 6 big single-frame jumps the wheels never produce.
+    fn pad_race_epoch() -> EpochCounters {
+        EpochCounters {
+            samples: 3602,
+            zero: 1267,
+            pin: 0,
+            delta_hist: [2588, 108, 799, 100, 5, 1],
+            jitter_flips: 3,
+            jitter_samples: 2381,
+            dwell_max: 552,
+            sum_d1: 12.659,
+            sum_d2: 6.060,
             span_secs: 60.0,
         }
     }
 
     #[test]
-    fn device_verdicts_are_suppressed_until_calibrated() {
-        // The full scoring matches this real trace to the continuous-human
-        // template (drafted as "wheel") at high confidence…
-        let (v, conf, f) = classify_uncalibrated(&controller_epoch()).expect("template match");
-        assert_eq!(v, InputVerdict::Wheel);
-        assert!(conf >= VERDICT_MIN_CONF, "{conf}");
-        assert!(f.moving_frac > 0.5);
-        // …but the driver was on a CONTROLLER (league ground truth), which is
-        // exactly why an uncalibrated device verdict must never reach the UI.
+    fn big_jump_fraction_separates_the_labeled_devices() {
+        // The calibrated discriminator on the real ground-truthed epochs:
+        // wheels produce essentially zero big single-frame jumps; pads and
+        // decimated feeds both produce them — which is why the fidelity gate
+        // must answer before the ratio may be read.
+        let wheel = epoch_big_frac(&wheel_race_epoch()).expect("hi-fi");
+        assert!(wheel <= WHEEL_BIG_FRAC, "{wheel}");
+        let pad = epoch_big_frac(&pad_race_epoch()).expect("hi-fi");
+        assert!(pad >= PAD_BIG_FRAC, "{pad}");
+        let travis = epoch_big_frac(&controller_epoch()).expect("hi-fi");
+        assert!(travis >= PAD_BIG_FRAC, "quali-night controller: {travis}");
         assert!(
-            classify(&controller_epoch()).is_none(),
-            "a confident wrong verdict is the one unforgivable output"
+            epoch_big_frac(&decimated_epoch()).is_none(),
+            "a decimated feed fakes big jumps — the gate must refuse it"
         );
+    }
+
+    #[test]
+    fn a_wheel_session_aggregates_to_a_wheel_verdict() {
+        let mut vs = VerdictState::default();
+        for _ in 0..DEVICE_MIN_EPOCHS {
+            vs.note_epoch(&wheel_race_epoch());
+        }
+        let sig = vs
+            .current
+            .clone()
+            .expect("device verdict at the epoch minimum");
+        assert_eq!(sig.verdict, InputVerdict::Wheel);
+        assert!(sig.confidence >= VERDICT_MIN_CONF);
+
+        // Below the minimum: no verdict yet.
+        let mut early = VerdictState::default();
+        for _ in 0..DEVICE_MIN_EPOCHS - 1 {
+            early.note_epoch(&wheel_race_epoch());
+        }
+        assert!(early.current.is_none(), "one epoch short of the minimum");
+    }
+
+    #[test]
+    fn a_pad_session_aggregates_to_a_pad_verdict() {
+        let mut vs = VerdictState::default();
+        for _ in 0..DEVICE_MIN_EPOCHS {
+            vs.note_epoch(&pad_race_epoch());
+        }
+        let sig = vs.current.clone().expect("device verdict");
+        assert_eq!(sig.verdict, InputVerdict::Pad);
+        assert!(sig.confidence >= VERDICT_MIN_CONF);
+    }
+
+    #[test]
+    fn the_ambiguous_band_stays_unknown() {
+        // Aggregate ratio between the wheel and pad thresholds: enough
+        // evidence, no honest answer — and it must not manufacture one.
+        let mut mid = wheel_race_epoch();
+        mid.delta_hist[4] = 2; // 2 / ~979 moving ≈ 0.002: between the bands
+        let mut vs = VerdictState::default();
+        for _ in 0..DEVICE_MIN_EPOCHS + 2 {
+            vs.note_epoch(&mid);
+        }
+        assert!(
+            vs.current.is_none(),
+            "the band between thresholds is UNKNOWN"
+        );
+    }
+
+    #[test]
+    fn low_fidelity_epochs_never_feed_the_aggregate() {
+        let mut vs = VerdictState::default();
+        for _ in 0..DEVICE_MIN_EPOCHS + 3 {
+            vs.note_epoch(&decimated_epoch());
+        }
+        assert_eq!(vs.agg_epochs, 0, "decimated epochs contribute nothing");
+        assert!(vs.current.is_none());
+    }
+
+    #[test]
+    fn low_rate_epochs_never_feed_the_aggregate() {
+        // The big-jump thresholds are 60 Hz-calibrated: at the game's 20 Hz
+        // setting a smooth wheel sweep covers ~3× the range per frame and
+        // would read PAD. A low-rate epoch must stay out of the aggregate.
+        let mut slow = pad_race_epoch();
+        slow.samples = 1200; // ~20 Hz over the 60 s span
+        assert!(
+            epoch_big_frac(&slow).is_none(),
+            "low-rate epoch unqualified"
+        );
+        let mut vs = VerdictState::default();
+        for _ in 0..DEVICE_MIN_EPOCHS + 3 {
+            vs.note_epoch(&slow);
+        }
+        assert_eq!(vs.agg_epochs, 0, "low-rate epochs contribute nothing");
+        assert!(vs.current.is_none());
+    }
+
+    #[test]
+    fn a_mid_session_assist_switch_flips_a_device_verdict() {
+        // Five clean wheel epochs earn the device verdict...
+        let mut vs = VerdictState::default();
+        for _ in 0..DEVICE_MIN_EPOCHS {
+            vs.total_eligible += EPOCH_SECS;
+            vs.note_epoch(&wheel_race_epoch());
+        }
+        assert_eq!(
+            vs.current.as_ref().map(|s| s.verdict),
+            Some(InputVerdict::Wheel)
+        );
+        // ...then the driver switches steering assist on. Each later epoch is
+        // machine dither: it must be routed to the ASSISTED observation (not
+        // the device aggregate, which would re-assert WHEEL every rollover and
+        // clear the candidate), so the flip hold can actually be satisfied.
+        for _ in 0..3 {
+            vs.total_eligible += EPOCH_SECS;
+            vs.note_epoch(&assist_epoch());
+        }
+        let sig = vs.current.as_ref().expect("verdict");
+        assert_eq!(sig.verdict, InputVerdict::Assisted, "assist surfaced");
+        assert!(sig.flipped_this_session, "the flip is flagged");
+        assert_eq!(
+            vs.agg_epochs, DEVICE_MIN_EPOCHS,
+            "assist epochs never pollute the device aggregate"
+        );
+    }
+
+    #[test]
+    fn a_mid_session_device_switch_flips_within_bounded_epochs() {
+        // A LONG wheel history, then the driver picks up a pad. The lifetime
+        // ratio alone would need the pad epochs to outweigh the whole wheel
+        // record before the hold could even start; the rolling recent window
+        // must rebase the aggregate so the flip lands within a bounded number
+        // of epochs regardless of how long the prior history was.
+        let mut vs = VerdictState::default();
+        for _ in 0..12 {
+            vs.total_eligible += EPOCH_SECS;
+            vs.note_epoch(&wheel_race_epoch());
+        }
+        assert_eq!(
+            vs.current.as_ref().map(|s| s.verdict),
+            Some(InputVerdict::Wheel)
+        );
+        let mut flipped_after = None;
+        for i in 1..=8 {
+            vs.total_eligible += EPOCH_SECS;
+            vs.note_epoch(&pad_race_epoch());
+            if vs.current.as_ref().map(|s| s.verdict) == Some(InputVerdict::Pad) {
+                flipped_after = Some(i);
+                break;
+            }
+        }
+        // Window fills with pad epochs at 5, rebase + candidate; hold met one
+        // epoch later. 7 leaves headroom without being meaninglessly loose.
+        let n = flipped_after.expect("the switch must surface");
+        assert!(n <= 7, "flip took {n} epochs");
+        assert!(vs.current.as_ref().unwrap().flipped_this_session);
+    }
+
+    #[test]
+    fn a_steady_device_never_rebases_or_flips() {
+        // The switch detector must not destabilise an ordinary session: a
+        // driver on one device keeps the lifetime aggregate and never flags.
+        let mut vs = VerdictState::default();
+        for _ in 0..20 {
+            vs.total_eligible += EPOCH_SECS;
+            vs.note_epoch(&wheel_race_epoch());
+        }
+        let sig = vs.current.as_ref().expect("verdict");
+        assert_eq!(sig.verdict, InputVerdict::Wheel);
+        assert!(!sig.flipped_this_session);
+        assert_eq!(vs.agg_epochs, 20, "no rebase on a steady device");
     }
 
     #[test]
     fn real_ai_dither_classifies_assisted() {
-        let (v, conf, _) = classify(&assist_epoch()).expect("verdict");
-        assert_eq!(v, InputVerdict::Assisted);
+        let (conf, _) = classify_assist(&assist_epoch()).expect("verdict");
         assert!(conf >= VERDICT_MIN_CONF, "{conf}");
     }
 
     #[test]
-    fn a_decimated_feed_never_convicts() {
-        // The false-accusation case that matters most: a far car's decimated
-        // trace is pad-shaped, and the driver may well be on a wheel.
-        assert!(classify(&decimated_epoch()).is_none());
-    }
-
-    #[test]
-    fn synthetic_pad_template_scores_pad_but_stays_suppressed() {
-        let (v, conf, _) = classify_uncalibrated(&pad_epoch()).expect("template match");
-        assert_eq!(v, InputVerdict::Pad);
-        assert!(conf >= VERDICT_MIN_CONF, "{conf}");
-        assert!(
-            classify(&pad_epoch()).is_none(),
-            "uncalibrated: no device verdicts"
-        );
+    fn human_traces_never_read_as_assisted() {
+        // The assist template's machine-rate gate: real wheel, real pad and
+        // the quali-night controller all sit far below it.
+        assert!(classify_assist(&wheel_race_epoch()).is_none());
+        assert!(classify_assist(&pad_race_epoch()).is_none());
+        assert!(classify_assist(&controller_epoch()).is_none());
     }
 
     #[test]
@@ -845,14 +1104,13 @@ mod tests {
         // Even the armed ASSISTED template needs enough trace first.
         let mut c = assist_epoch();
         c.span_secs = 30.0; // under VERDICT_MIN_SECS
-        assert!(classify(&c).is_none());
+        assert!(classify_assist(&c).is_none());
     }
 
     #[test]
     fn restricted_zeroed_steer_never_convicts() {
         // A telemetry-restricted car's steer arrives as constant zero: no
-        // movement at all — the fidelity gate refuses it long before any
-        // pad-shaped score could.
+        // movement at all — the fidelity gate refuses it on both paths.
         let c = EpochCounters {
             samples: 3600,
             zero: 3600,
@@ -865,7 +1123,8 @@ mod tests {
             sum_d2: 0.0,
             span_secs: 60.0,
         };
-        assert!(classify(&c).is_none());
+        assert!(classify_assist(&c).is_none());
+        assert!(epoch_big_frac(&c).is_none());
     }
 
     #[test]
@@ -1074,12 +1333,12 @@ mod tests {
     }
 
     #[test]
-    fn live_tracker_issues_only_assisted_while_uncalibrated() {
+    fn live_tracker_assist_now_device_only_after_enough_epochs() {
         let mut t = InputSigTracker::default();
         let mut clock = 0.0;
         for i in 0..3000 {
-            // Car 0: a continuous human trace (human-rate corrections) — a
-            // device verdict the calibration gate must keep suppressed.
+            // Car 0: a continuous human trace — 50s is under the first
+            // epoch, so no device verdict can exist yet.
             let secs = i as f32 / 60.0;
             let human = (secs * 4.0).sin() * 0.02 + (secs * 0.65).sin() * 0.05 + 0.0011;
             t.sample(0, human, true, clock);
@@ -1090,12 +1349,35 @@ mod tests {
         }
         assert!(
             t.signature(0).is_none(),
-            "no device verdict while wheel/pad are uncalibrated"
+            "no device verdict before the aggregate has its epochs"
         );
         let sig = t.signature(1).expect("assisted verdict issued");
         assert_eq!(sig.verdict, InputVerdict::Assisted);
         assert!(sig.confidence >= VERDICT_MIN_CONF);
         assert!(!sig.flipped_this_session);
+    }
+
+    #[test]
+    fn live_tracker_earns_device_verdicts_over_a_session() {
+        // Six-plus eligible minutes end-to-end through the tracker: a smooth
+        // wheel-like trace aggregates to WHEEL; the same trace with a stick
+        // flick every ~1.7s aggregates to PAD.
+        let mut t = InputSigTracker::default();
+        let mut clock = 0.0;
+        for i in 0..23000 {
+            let secs = i as f32 / 60.0;
+            let base = (secs * 1.1).sin() * 0.3 + (secs * 4.0).sin() * 0.02;
+            t.sample(0, base, true, clock);
+            let flick = if i % 100 == 0 { 0.12 } else { 0.0 };
+            t.sample(1, base + flick, true, clock);
+            clock += 1.0 / 60.0;
+        }
+        let wheel = t.signature(0).expect("wheel verdict");
+        assert_eq!(wheel.verdict, InputVerdict::Wheel);
+        assert!(wheel.confidence >= VERDICT_MIN_CONF);
+        let pad = t.signature(1).expect("pad verdict");
+        assert_eq!(pad.verdict, InputVerdict::Pad);
+        assert!(pad.confidence >= VERDICT_MIN_CONF);
     }
 
     #[test]
