@@ -58,11 +58,13 @@ pub fn session_label(t: u8) -> &'static str {
         7 => "Q3",
         8 => "Short Qualifying",
         9 => "One-Shot Qualifying",
-        10 => "Sprint Shootout 1",
-        11 => "Sprint Shootout 2",
-        12 => "Sprint Shootout 3",
-        13 => "Short Sprint Shootout",
-        14 => "One-Shot Sprint Shootout",
+        // The spec calls 10-14 "Sprint Shootout"; the game's own UI (and every
+        // league) says "Sprint Qualifying", so the labels do too.
+        10 => "Sprint Qualifying 1",
+        11 => "Sprint Qualifying 2",
+        12 => "Sprint Qualifying 3",
+        13 => "Sprint Qualifying",
+        14 => "One-Shot Sprint Qualifying",
         15 => "Race",
         16 => "Race 2",
         17 => "Race 3",

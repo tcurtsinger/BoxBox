@@ -148,6 +148,75 @@ describe("race rows", () => {
     expect(rows[1].gapSec).toBeCloseTo(2.5, 3);
     expect(rows[1].qstatus).toBeNull(); // no activity chips in a race
   });
+
+  it("a lapped car claims laps down, never a +0.000 gap", () => {
+    const lapped = toDriverRows(
+      snap(
+        "race",
+        [
+          drv({ index: 0, position: 1, bestLapMS: 80000, currentLapNum: 20 }),
+          // The game reports deltaToLeader 0 for a lapped car — that is not a
+          // real 0.000s gap.
+          drv({ index: 1, position: 2, bestLapMS: 82000, currentLapNum: 18, deltaToLeaderMS: 0 }),
+        ],
+        15,
+      ),
+    );
+    expect(lapped[1].gapSec).toBeNull();
+    expect(lapped[1].lapsDown).toBe(2);
+    expect(lapped[0].lapsDown).toBe(0); // the leader is never down
+  });
+
+  it("the leader crossing the line first is not a lapping", () => {
+    // Leader ticks to lap 21 at the line while P2 (3.2s back) is still on lap
+    // 20 — a one-lap difference with a healthy time delta is line-crossing
+    // skew, not evidence. One lap down needs the delta to be inexpressible
+    // (0 for lapped cars) or to exceed the leader's lap time.
+    const rows = toDriverRows(
+      snap(
+        "race",
+        [
+          drv({ index: 0, position: 1, bestLapMS: 80000, currentLapNum: 21, lastLapMS: 81000 }),
+          drv({ index: 1, position: 2, bestLapMS: 80500, currentLapNum: 20, deltaToLeaderMS: 3200 }),
+          drv({ index: 2, position: 3, bestLapMS: 81000, currentLapNum: 20, deltaToLeaderMS: 95000 }),
+        ],
+        15,
+      ),
+    );
+    expect(rows[1].lapsDown).toBe(0);
+    expect(rows[1].gapSec).toBeCloseTo(3.2, 3);
+    // A delta past the leader's lap time IS a real lapping.
+    expect(rows[2].lapsDown).toBe(1);
+  });
+
+  it("rows carry the live facts the report falls back on", () => {
+    const facts = toDriverRows(
+      snap(
+        "race",
+        [
+          drv({ index: 0, position: 1, bestLapMS: 80000, gridPosition: 4, currentLapNum: 20 }),
+          drv({
+            index: 1,
+            position: 2,
+            bestLapMS: 81000,
+            gridPosition: 1,
+            currentLapNum: 20,
+            deltaToLeaderMS: 3000,
+            penaltiesSec: 5,
+            stintHistory: [
+              { endLap: 12, actualCompound: 18, visualCompound: 16 },
+              { endLap: 20, actualCompound: 19, visualCompound: 17 },
+            ],
+          }),
+        ],
+        15,
+      ),
+    );
+    expect(facts[1].gridPos).toBe(1);
+    expect(facts[1].penSec).toBe(5);
+    expect(facts[1].stints).toEqual(["S", "M"]);
+    expect(facts[1].stintEndLaps).toEqual([12, 20]);
+  });
 });
 
 describe("session header info", () => {

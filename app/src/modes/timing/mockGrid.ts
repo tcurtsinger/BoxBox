@@ -124,6 +124,17 @@ export interface DriverRow {
   /** Real per-car detail, present only on live rows (never the sample grid). The
    *  driver panel renders this instead of the synthesized placeholder detail. */
   live?: LiveDetail;
+  /** Live facts the report falls back on when the official classification
+   *  (packet 8) is missing — present only on live race rows. */
+  gridPos?: number;
+  /** Total time penalties in seconds (excludes unserved drive-throughs). */
+  penSec?: number;
+  /** Visual compounds in stint order (e.g. ["S", "M"]) + the lap each ended. */
+  stints?: string[];
+  stintEndLaps?: number[];
+  /** Whole laps behind the leader when the game's time delta can't express the
+   *  gap (lapped cars report deltaToLeader 0); 0/undefined otherwise. */
+  lapsDown?: number;
 }
 
 /** An estimated input-device verdict for the tower's INPUT column. Every

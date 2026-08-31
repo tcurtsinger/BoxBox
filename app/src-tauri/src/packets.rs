@@ -78,6 +78,34 @@ fn expected_packet_size(format: u16, id: u8) -> Option<usize> {
     Some(size)
 }
 
+/// One car's slice of the Final Classification packet — identical stride in the
+/// 2025 and 2026 formats (7 u8 + u32 + f64 + 3 u8 + 3×8 stint bytes).
+const FINAL_CLASSIFICATION_ENTRY_BYTES: usize = 46;
+
+/// True for a size-trimmed Final Classification datagram: header + numCars +
+/// a whole number of per-car entries, between 1 and the format's car cap. The
+/// spec documents a fixed-size array (1042/1134 bytes), and solo sessions send
+/// exactly that — but every league lobby session archived "classification:
+/// missing", which is consistent with the game trimming the array to the cars
+/// actually present online. The checks keep this strict: the body must be an
+/// exact whole-entry multiple AND the datagram's own numCars byte must equal
+/// the entries actually present — an aligned buffer advertising a different
+/// car count is malformed or hostile, not a trim, and must not be allowed to
+/// decode into a "complete" classification (or pin the source).
+fn final_classification_trimmed(format: u16, buf: &[u8]) -> bool {
+    let Some(body) = buf.len().checked_sub(HEADER_SIZE + 1) else {
+        return false;
+    };
+    if body % FINAL_CLASSIFICATION_ENTRY_BYTES != 0 {
+        return false;
+    }
+    let entries = body / FINAL_CLASSIFICATION_ENTRY_BYTES;
+    (1..=max_cars_for_format(format)).contains(&entries)
+        && buf
+            .get(HEADER_SIZE)
+            .is_some_and(|&n| usize::from(n) == entries)
+}
+
 // --- Reader -------------------------------------------------------------------
 // Cursor-based little-endian reader mirroring `reader.ts`. Reads are bounds-safe:
 // a read past the end yields a zero value (and empty string/array) rather than
@@ -1297,7 +1325,14 @@ fn parse_final_classification(rd: &mut Reader, header: &PacketHeader) -> FinalCl
     let num_cars = rd.u8();
     let mut classification = Vec::with_capacity(max_cars);
 
+    // A spec-size datagram carries the full fixed array; a trimmed one (seen from
+    // online lobbies) carries only the cars present. Stop at whichever runs out
+    // first — reading the fixed count from a trimmed buffer would zero-fill the
+    // tail AND trip `overran`, discarding the real entries with the phantom ones.
     for i in 0..max_cars {
+        if rd.remaining() < FINAL_CLASSIFICATION_ENTRY_BYTES {
+            break;
+        }
         let position = rd.u8();
         let num_laps = rd.u8();
         let grid_position = rd.u8();
@@ -1549,7 +1584,9 @@ pub fn parse_packet(buf: &[u8]) -> Option<ParsedPacket> {
     // long) is malformed or spoofed. Defence in depth above the overran drop; it
     // also gates the upstream source pinning in the listener.
     let expected = expected_packet_size(header.packet_format, id)?;
-    if buf.len() != expected {
+    if buf.len() != expected
+        && !(id == 8 && final_classification_trimmed(header.packet_format, buf))
+    {
         return None;
     }
 
@@ -1644,6 +1681,106 @@ mod tests {
         long.extend_from_slice(&vec![0u8; 24 * 10 + 1]);
         assert_eq!(long.len(), 269 + 1);
         assert!(parse_packet(&long).is_none(), "too-long rejected");
+    }
+
+    /// A Final Classification datagram with `entries` populated per-car slots.
+    fn final_classification_bytes(format: u16, entries: usize) -> Vec<u8> {
+        let mut buf = header_bytes(format, 8);
+        buf.push(entries as u8); // numCars
+        for i in 0..entries {
+            let mut e = [0u8; 46];
+            e[0] = (i + 1) as u8; // position
+            e[1] = 35; // numLaps
+            e[2] = (i + 2) as u8; // gridPosition
+            e[3] = 25; // points
+            e[4] = 2; // numPitStops
+            e[5] = 3; // resultStatus: finished
+            e[6] = 2; // resultReason: finished
+            e[7..11].copy_from_slice(&78419u32.to_le_bytes()); // bestLapTimeInMS
+            e[11..19].copy_from_slice(&4830.5f64.to_le_bytes()); // totalRaceTime
+            e[19] = 5; // penaltiesTime
+            e[20] = 1; // numPenalties
+            e[21] = 2; // numTyreStints
+            buf.extend_from_slice(&e);
+        }
+        buf
+    }
+
+    #[test]
+    fn full_size_final_classification_decodes() {
+        let buf = final_classification_bytes(2026, 24);
+        assert_eq!(buf.len(), 1134, "spec size for the 2026 format");
+        let p = parse_packet(&buf).expect("spec-size packet 8 decodes");
+        let Some(Body::FinalClassification(f)) = p.data else {
+            panic!("expected a FinalClassification body");
+        };
+        assert_eq!(f.num_cars, 24);
+        assert_eq!(f.classification.len(), 24);
+        assert_eq!(f.classification[0].position, 1);
+        assert_eq!(f.classification[0].num_laps, 35);
+        assert_eq!(f.classification[0].best_lap_time_in_ms, 78419);
+        assert_eq!(f.classification[0].total_race_time, 4830.5);
+    }
+
+    #[test]
+    fn trimmed_final_classification_from_a_small_lobby_decodes() {
+        // Online lobbies don't fill the grid, and every league session archived
+        // "classification: missing" — consistent with the game trimming the
+        // fixed array to the cars present. A whole-entry-multiple datagram must
+        // decode instead of being dropped by the exact-size gate.
+        for format in [2025u16, 2026] {
+            let buf = final_classification_bytes(format, 12);
+            assert_eq!(buf.len(), HEADER_SIZE + 1 + 12 * 46);
+            let p = parse_packet(&buf).unwrap_or_else(|| panic!("trimmed packet 8 ({format})"));
+            let Some(Body::FinalClassification(f)) = p.data else {
+                panic!("expected a FinalClassification body ({format})");
+            };
+            assert_eq!(f.num_cars, 12);
+            assert_eq!(f.classification.len(), 12, "only the sent entries exist");
+            assert_eq!(f.classification[11].position, 12);
+            assert_eq!(f.classification[11].grid_position, 13);
+        }
+    }
+
+    #[test]
+    fn misaligned_final_classification_is_still_rejected() {
+        // The trimmed acceptance is strict: anything that isn't header + numCars
+        // + a whole number of 46-byte entries stays malformed.
+        let mut off_by_one = final_classification_bytes(2026, 12);
+        off_by_one.push(0);
+        assert!(parse_packet(&off_by_one).is_none(), "off-by-one rejected");
+
+        let mut partial_entry = final_classification_bytes(2026, 12);
+        partial_entry.extend_from_slice(&[0u8; 45]);
+        assert!(
+            parse_packet(&partial_entry).is_none(),
+            "partial entry rejected"
+        );
+
+        // Zero entries carries no classification at all — not a valid trim.
+        let empty = final_classification_bytes(2026, 0);
+        assert!(parse_packet(&empty).is_none(), "entry-less packet rejected");
+
+        // More entries than the format's car cap is impossible, not a trim.
+        let overfull = final_classification_bytes(2026, 25);
+        assert!(parse_packet(&overfull).is_none(), "over-cap rejected");
+        let overfull_25 = final_classification_bytes(2025, 23);
+        assert!(
+            parse_packet(&overfull_25).is_none(),
+            "over-cap rejected (2025)"
+        );
+
+        // A trimmed body whose numCars byte disagrees with the entries present
+        // is malformed or hostile — it must not decode into a "complete"
+        // classification (or pin the source) on the strength of alignment alone.
+        let mut lying = final_classification_bytes(2026, 1);
+        lying[HEADER_SIZE] = 24; // advertises a full grid, carries one entry
+        assert!(parse_packet(&lying).is_none(), "count mismatch rejected");
+        // The spec-size fixed array keeps its own rule: numCars < capacity is
+        // normal there (a 12-car lobby still sends all 24 slots).
+        let mut full = final_classification_bytes(2026, 24);
+        full[HEADER_SIZE] = 12;
+        assert!(parse_packet(&full).is_some(), "fixed-size form unaffected");
     }
 
     #[test]

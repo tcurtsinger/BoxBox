@@ -135,7 +135,7 @@ export function ReportContent({
                   <span className={`cls-a-r mono${c.bestMs > 0 && c.bestMs === fastestMs ? " cls-fl" : ""}`} role="gridcell">
                     {fmtLap(c.bestMs)}
                   </span>
-                  <span className="cls-a-r mono cls-gap" role="gridcell">{gapText(c.gapSec)}</span>
+                  <span className="cls-a-r mono cls-gap" role="gridcell">{gapText(c.gapSec, c.lapsDown)}</span>
                   <span className="cls-a-r mono" role="gridcell">{c.pits}</span>
                   {!isQualifying && (
                     <span className="cls-a-r mono cls-pts" role="gridcell">{c.points || "—"}</span>
