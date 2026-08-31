@@ -312,6 +312,38 @@ struct VerdictState {
     agg_moving: u64,
     agg_epochs: u32,
     agg_secs: f64,
+    /// The last DEVICE_MIN_EPOCHS hi-fi epochs' (big, moving, secs), for
+    /// device-SWITCH detection: a lifetime ratio alone buries a mid-session
+    /// device change under the old history (a long wheel record takes ~2× as
+    /// many pad epochs just to drag the ratio across the threshold). When
+    /// this window contradicts the lifetime verdict, the aggregate rebases
+    /// onto it — the flip then lands within a bounded number of epochs no
+    /// matter how long the prior history was.
+    recent: std::collections::VecDeque<(u32, u32, f64)>,
+}
+
+/// The calibrated big-jump banding on a (big, moving) sum: PAD at/above the
+/// pad threshold, WHEEL at/below the wheel threshold, the band between is
+/// honestly None. Confidence maps the margin from the threshold into the
+/// displayed 85–98%.
+fn device_band(big: u64, moving: u64) -> Option<(InputVerdict, f32)> {
+    if moving == 0 {
+        return None;
+    }
+    let ratio = big as f32 / moving as f32;
+    if ratio >= PAD_BIG_FRAC {
+        Some((
+            InputVerdict::Pad,
+            0.85 + 0.13 * ramp(ratio, PAD_BIG_FRAC, 0.010),
+        ))
+    } else if ratio <= WHEEL_BIG_FRAC {
+        Some((
+            InputVerdict::Wheel,
+            0.98 - 0.13 * ramp(ratio, 0.0, WHEEL_BIG_FRAC),
+        ))
+    } else {
+        None
+    }
 }
 
 impl VerdictState {
@@ -344,10 +376,27 @@ impl VerdictState {
             self.note_unqualified();
             return;
         }
-        self.agg_big += u64::from(c.delta_hist[4] + c.delta_hist[5]);
+        let big = c.delta_hist[4] + c.delta_hist[5];
+        self.agg_big += u64::from(big);
         self.agg_moving += u64::from(moving);
         self.agg_epochs += 1;
         self.agg_secs += c.span_secs;
+        self.recent.push_back((big, moving, c.span_secs));
+        if self.recent.len() > DEVICE_MIN_EPOCHS as usize {
+            self.recent.pop_front();
+        }
+        // A full recent window that lands in a clear band the lifetime ratio
+        // does NOT confirm means the device changed mid-session: rebase the
+        // aggregate onto the window so the old history stops outvoting the
+        // new device, and let the ordinary flip hold do the flagging.
+        if let Some((rv, _)) = self.recent_verdict() {
+            if self.device_verdict().is_none_or(|(lv, _)| lv != rv) {
+                self.agg_big = self.recent.iter().map(|&(b, _, _)| u64::from(b)).sum();
+                self.agg_moving = self.recent.iter().map(|&(_, m, _)| u64::from(m)).sum();
+                self.agg_epochs = self.recent.len() as u32;
+                self.agg_secs = self.recent.iter().map(|&(_, _, s)| s).sum();
+            }
+        }
         if let Some((verdict, confidence)) = self.device_verdict() {
             let f = derive_features(c);
             let secs = self.agg_secs;
@@ -359,27 +408,24 @@ impl VerdictState {
         }
     }
 
-    /// The calibrated session-level device verdict, if the aggregate has
-    /// enough epochs and lands clear of the ambiguous band. Confidence maps
-    /// the margin from the threshold into the displayed 85–98%.
-    fn device_verdict(&self) -> Option<(InputVerdict, f32)> {
-        if self.agg_epochs < DEVICE_MIN_EPOCHS || self.agg_moving == 0 {
+    /// The banded device verdict over the rolling recent window, if it is
+    /// full and lands clear of the ambiguous band.
+    fn recent_verdict(&self) -> Option<(InputVerdict, f32)> {
+        if self.recent.len() < DEVICE_MIN_EPOCHS as usize {
             return None;
         }
-        let ratio = self.agg_big as f32 / self.agg_moving as f32;
-        if ratio >= PAD_BIG_FRAC {
-            Some((
-                InputVerdict::Pad,
-                0.85 + 0.13 * ramp(ratio, PAD_BIG_FRAC, 0.010),
-            ))
-        } else if ratio <= WHEEL_BIG_FRAC {
-            Some((
-                InputVerdict::Wheel,
-                0.98 - 0.13 * ramp(ratio, 0.0, WHEEL_BIG_FRAC),
-            ))
-        } else {
-            None
+        let big: u64 = self.recent.iter().map(|&(b, _, _)| u64::from(b)).sum();
+        let moving: u64 = self.recent.iter().map(|&(_, m, _)| u64::from(m)).sum();
+        device_band(big, moving)
+    }
+
+    /// The calibrated session-level device verdict, if the aggregate has
+    /// enough epochs and lands clear of the ambiguous band.
+    fn device_verdict(&self) -> Option<(InputVerdict, f32)> {
+        if self.agg_epochs < DEVICE_MIN_EPOCHS {
+            return None;
         }
+        device_band(self.agg_big, self.agg_moving)
     }
 
     fn observe(&mut self, verdict: InputVerdict, confidence: f32, f: SigFeatures, secs: f64) {
@@ -989,6 +1035,53 @@ mod tests {
             vs.agg_epochs, DEVICE_MIN_EPOCHS,
             "assist epochs never pollute the device aggregate"
         );
+    }
+
+    #[test]
+    fn a_mid_session_device_switch_flips_within_bounded_epochs() {
+        // A LONG wheel history, then the driver picks up a pad. The lifetime
+        // ratio alone would need the pad epochs to outweigh the whole wheel
+        // record before the hold could even start; the rolling recent window
+        // must rebase the aggregate so the flip lands within a bounded number
+        // of epochs regardless of how long the prior history was.
+        let mut vs = VerdictState::default();
+        for _ in 0..12 {
+            vs.total_eligible += EPOCH_SECS;
+            vs.note_epoch(&wheel_race_epoch());
+        }
+        assert_eq!(
+            vs.current.as_ref().map(|s| s.verdict),
+            Some(InputVerdict::Wheel)
+        );
+        let mut flipped_after = None;
+        for i in 1..=8 {
+            vs.total_eligible += EPOCH_SECS;
+            vs.note_epoch(&pad_race_epoch());
+            if vs.current.as_ref().map(|s| s.verdict) == Some(InputVerdict::Pad) {
+                flipped_after = Some(i);
+                break;
+            }
+        }
+        // Window fills with pad epochs at 5, rebase + candidate; hold met one
+        // epoch later. 7 leaves headroom without being meaninglessly loose.
+        let n = flipped_after.expect("the switch must surface");
+        assert!(n <= 7, "flip took {n} epochs");
+        assert!(vs.current.as_ref().unwrap().flipped_this_session);
+    }
+
+    #[test]
+    fn a_steady_device_never_rebases_or_flips() {
+        // The switch detector must not destabilise an ordinary session: a
+        // driver on one device keeps the lifetime aggregate and never flags.
+        let mut vs = VerdictState::default();
+        for _ in 0..20 {
+            vs.total_eligible += EPOCH_SECS;
+            vs.note_epoch(&wheel_race_epoch());
+        }
+        let sig = vs.current.as_ref().expect("verdict");
+        assert_eq!(sig.verdict, InputVerdict::Wheel);
+        assert!(!sig.flipped_this_session);
+        assert_eq!(vs.agg_epochs, 20, "no rebase on a steady device");
     }
 
     #[test]
